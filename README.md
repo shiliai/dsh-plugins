@@ -69,7 +69,7 @@ pnpm run e2e:rc6
 pnpm run release:check
 ```
 
-Requires Node `^22.19.0 || >=24.0.0`, pnpm, and a DSH `0.1.0-rc.6` Web profile. React is supplied by the DSH host; the package keeps React only for development builds and tests.
+Requires Node `^22.19.0 || >=24.0.0`, pnpm, and a DSH `0.1.0-rc.6` Web profile. The rc.6 Playwright check uses the installed stable Chrome channel. React is supplied by the DSH host; the package keeps React only for development builds and tests.
 
 ## Recovery
 
