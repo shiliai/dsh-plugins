@@ -18,7 +18,9 @@ test('keeps note workflow and composer routing usable across session transitions
   if (await configureLater.waitFor({ state: 'visible', timeout: 5_000 }).then(() => true).catch(() => false)) {
     await configureLater.click()
   }
-  await page.getByRole('button', { name: 'New session', exact: true }).last().click()
+  await page.getByRole('button', { name: 'Choose workspace', exact: true }).click()
+  await page.getByText('Obsidian rc.6 fixture', { exact: true }).click()
+  await expect(page.getByRole('textbox', { name: 'Choose workspace' })).toBeVisible()
   await page.getByLabel('Obsidian notes').click()
   await page.getByRole('treeitem', { name: /Home/u }).click()
   await expect(page.getByLabel('Note editor')).toBeVisible()
