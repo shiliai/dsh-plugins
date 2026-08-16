@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { execFileSync, spawn } from 'node:child_process'
 import { createServer } from 'node:net'
-import { cp, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -30,6 +30,7 @@ try {
   const archiveSha = createHash('sha256').update(await readFile(archive)).digest('hex')
 
   await cp(join(root, 'tests/fixtures/vault'), vault, { recursive: true })
+  await seedWorkspace(dshHome, vault)
   runDsh(['plugin', '--profile', 'web', 'add', archive], vault, env)
   server = spawn(process.execPath, [dshBin, 'web', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: vault,
@@ -63,6 +64,28 @@ try {
 
 function runDsh(args, cwd, processEnv) {
   execFileSync(process.execPath, [dshBin, ...args], { cwd, env: processEnv, stdio: 'inherit' })
+}
+
+async function seedWorkspace(home, path) {
+  const now = new Date().toISOString()
+  const storage = {
+    unit: { name: 'workspace', version: 2 },
+    global: { initialized: true, workspaceIds: ['obsidian-rc6-fixture'], archivedSessionIds: [] },
+    tables: {
+      workspaces: {
+        'obsidian-rc6-fixture': {
+          path,
+          title: 'Obsidian rc.6 fixture',
+          sessionIds: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+    },
+  }
+  const directory = join(home, 'storages')
+  await mkdir(directory, { recursive: true })
+  await writeFile(join(directory, 'workspace.json'), `${JSON.stringify(storage, null, 2)}\n`)
 }
 
 function availablePort() {
