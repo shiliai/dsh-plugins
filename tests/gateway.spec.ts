@@ -11,6 +11,7 @@ const roots: string[] = []
 const servers: Server[] = []
 const gateways: RemoteGateway[] = []
 const webSocketServers: WebSocketServer[] = []
+const webSocketOrigins: Array<string | undefined> = []
 
 afterEach(async () => {
   await Promise.all(gateways.splice(0).map(gateway => gateway.close()))
@@ -22,11 +23,12 @@ afterEach(async () => {
     server.close(error => error === undefined ? resolve() : reject(error))
   })))
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+  webSocketOrigins.length = 0
 })
 
-async function fixture(): Promise<{ baseUrl: string; state: RemoteStateStore; gateway: RemoteGateway }> {
+async function fixture(): Promise<{ baseUrl: string; state: RemoteStateStore; gateway: RemoteGateway; upstreamOrigin: string }> {
   const target = createServer((request, response) => {
-    const body = JSON.stringify({ path: request.url, cookie: request.headers.cookie ?? null })
+    const body = JSON.stringify({ path: request.url, cookie: request.headers.cookie ?? null, origin: request.headers.origin ?? null })
     response.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) })
     response.end(body)
   })
@@ -34,6 +36,7 @@ async function fixture(): Promise<{ baseUrl: string; state: RemoteStateStore; ga
   webSocketServers.push(webSocketServer)
   target.on('upgrade', (request, socket, head) => {
     webSocketServer.handleUpgrade(request, socket, head, connection => {
+      webSocketOrigins.push(request.headers.origin)
       connection.on('message', message => { connection.send(message) })
     })
   })
@@ -48,12 +51,12 @@ async function fixture(): Promise<{ baseUrl: string; state: RemoteStateStore; ga
   const gateway = new RemoteGateway({ targetPort: address.port, remoteOrigin: 'https://zsh.onlyservice.io', state })
   await gateway.listen()
   gateways.push(gateway)
-  return { baseUrl: `http://127.0.0.1:${gateway.port}`, state, gateway }
+  return { baseUrl: `http://127.0.0.1:${gateway.port}`, state, gateway, upstreamOrigin: `http://127.0.0.1:${address.port}` }
 }
 
 describe('RemoteGateway', () => {
   it('exchanges a fragment bearer for a hardened cookie then proxies authenticated HTTP without forwarding it', async () => {
-    const { baseUrl, state } = await fixture()
+    const { baseUrl, state, upstreamOrigin } = await fixture()
     const bootstrap = await fetch(`${baseUrl}/`)
     expect(bootstrap.status).toBe(200)
     expect(bootstrap.headers.get('cache-control')).toBe('no-store')
@@ -77,16 +80,17 @@ describe('RemoteGateway', () => {
     const cookie = session.headers.getSetCookie()[0]?.split(';', 1)[0]
     expect(cookie).toMatch(/^__Host-dsh_remote=\d+\.[A-Za-z0-9_-]{43}$/u)
 
-    const proxied = await fetch(`${baseUrl}/complete`, { headers: { cookie: `${cookie}; dsh=preserved` } })
+    const proxied = await fetch(`${baseUrl}/complete`, { headers: { cookie: `${cookie}; dsh=preserved`, origin: 'https://zsh.onlyservice.io' } })
     expect(proxied.status).toBe(200)
-    expect(await proxied.json()).toEqual({ path: '/complete', cookie: 'dsh=preserved' })
+    expect(await proxied.json()).toEqual({ path: '/complete', cookie: 'dsh=preserved', origin: upstreamOrigin })
   })
 
   it('authenticates each WebSocket upgrade and closes every old upgraded socket before rotation returns', async () => {
-    const { baseUrl, state, gateway } = await fixture()
+    const { baseUrl, state, gateway, upstreamOrigin } = await fixture()
     const cookie = await issueSession(baseUrl, state.accessToken())
-    const socket = new WebSocket(baseUrl.replace('http:', 'ws:'), { headers: { cookie } })
+    const socket = new WebSocket(baseUrl.replace('http:', 'ws:'), { headers: { cookie }, origin: 'https://zsh.onlyservice.io' })
     await once(socket, 'open')
+    expect(webSocketOrigins.at(-1)).toBe(upstreamOrigin)
     socket.send('realtime')
     await expectMessage(socket, 'realtime')
 

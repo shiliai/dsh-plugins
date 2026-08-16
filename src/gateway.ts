@@ -104,7 +104,7 @@ export class RemoteGateway {
     }
     this.proxy.web(request, response, {
       target: this.target(),
-      headers: withoutRemoteCookie(request.headers),
+      headers: upstreamHeaders(request.headers, this.target()),
     })
   }
 
@@ -150,7 +150,7 @@ export class RemoteGateway {
     try {
       this.proxy.ws(request, socket, head, {
         target: this.target(),
-        headers: withoutRemoteCookie(request.headers),
+        headers: upstreamHeaders(request.headers, this.target()),
       })
     } catch {
       release()
@@ -192,6 +192,12 @@ function withoutRemoteCookie(headers: IncomingMessage['headers']): Record<string
   const kept = cookie.split(';').filter(part => !part.trim().startsWith(`${REMOTE_COOKIE}=`)).join(';').trim()
   if (kept === '') delete normalized.cookie
   else normalized.cookie = kept
+  return normalized
+}
+
+function upstreamHeaders(headers: IncomingMessage['headers'], target: string): Record<string, string> {
+  const normalized = withoutRemoteCookie(headers)
+  if (normalized.origin !== undefined) normalized.origin = target
   return normalized
 }
 
