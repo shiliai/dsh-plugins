@@ -27,9 +27,15 @@ argument arrays with no local shell, and multiple simultaneous local DSH
 instances remain outside the approved first-release scope. No sshd configuration
 or public listener is changed.
 
+Live deployment also showed that Compose `group_add` reaches the Nginx master
+process but is discarded when Nginx workers call `initgroups` while switching to
+the `nginx` user. A managed container-entrypoint script now resolves the mounted
+socket directory GID, adds the `nginx` account to that group before startup, and
+deployment verifies the resulting membership after every container recreation.
+Directory mode `2770` and socket mode `0660` remain unchanged.
+
 ## Alignment
 
 This correction restores the transport required by `US-R1` and the reachable
 edge/offline behavior required by `US-R3`. It does not change user roles, goals,
 values, workflows, observable results, constraints, or non-goals. Drift score: 0.
-

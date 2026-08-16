@@ -37,8 +37,9 @@ when its socket directory is empty. A live or stale socket blocks rollback befor
 any restore write; stop the local DSH tunnel first. Repeating rollback is a no-op.
 
 `status` distinguishes `configured` from `ready`. Configured means DNS-independent
-edge files, certificate, mount, directory, and Nginx validation are present.
-Ready additionally requires the reverse-tunnel socket to exist.
+edge files, certificate, mounts, directory, Nginx validation, and verified
+membership of the Nginx user in the socket GID are present. Ready additionally
+requires the reverse-tunnel socket to exist.
 
 The VPS sshd applies its server-side stream-local mask (`0177`) to remote socket
 creation, so client `StreamLocalBindMask` does not produce the required group
@@ -46,6 +47,13 @@ mode. The plugin therefore removes only its dedicated stale socket before bind,
 starts forwarding, then runs a fixed `chmod 0660` over a second strict SSH
 command. Tunnel status becomes online only after that command succeeds. The
 setgid socket directory supplies the managed group inherited by the socket.
+
+Docker Compose `group_add` applies to the container entry process, but Nginx
+workers call `initgroups` when dropping from root to the `nginx` user. The
+managed executable in `/docker-entrypoint.d` therefore resolves the mounted
+socket directory GID inside the container and adds `nginx` to that group before
+Nginx starts. Deployment fails and rolls back if this membership is not
+observable after container recreation.
 
 The scripts never change unrelated server blocks, containers, certificate names,
 DNS records, or firewall rules. DNS creation and local DSH profile installation

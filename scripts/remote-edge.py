@@ -103,7 +103,9 @@ def load_compose(path: Path) -> dict[str, Any]:
     return value
 
 
-def update_compose(value: dict[str, Any], host_dir: str, group_id: int, offline_host: str) -> dict[str, Any]:
+def update_compose(
+    value: dict[str, Any], host_dir: str, group_id: int, offline_host: str, group_init_host: str
+) -> dict[str, Any]:
     service = value["services"]["nginx"]
     volumes = service.setdefault("volumes", [])
     if not isinstance(volumes, list):
@@ -111,9 +113,14 @@ def update_compose(value: dict[str, Any], host_dir: str, group_id: int, offline_
     managed_mounts = {
         f"{host_dir}:/run/dsh-remote:ro",
         f"{offline_host}:/usr/share/nginx/html/dsh-remote-offline.html:ro",
+        f"{group_init_host}:/docker-entrypoint.d/05-dsh-remote-socket-group.sh:ro",
     }
     volumes[:] = [entry for entry in volumes if not (
-        isinstance(entry, str) and (entry.endswith(":/run/dsh-remote:ro") or entry.endswith(":/usr/share/nginx/html/dsh-remote-offline.html:ro"))
+        isinstance(entry, str) and (
+            entry.endswith(":/run/dsh-remote:ro")
+            or entry.endswith(":/usr/share/nginx/html/dsh-remote-offline.html:ro")
+            or entry.endswith(":/docker-entrypoint.d/05-dsh-remote-socket-group.sh:ro")
+        )
     )]
     volumes.extend(sorted(managed_mounts))
     groups = service.setdefault("group_add", [])
@@ -195,12 +202,18 @@ def compose_recreate(compose_file: Path) -> None:
     run(["docker", "compose", "-f", str(compose_file), "up", "-d", "--force-recreate", "nginx"])
 
 
-def activate_bound_config(compose_file: Path, container: str) -> None:
+def nginx_worker_group_validate(container: str, group_id: int) -> None:
+    command = f"id -G nginx | tr ' ' '\\n' | grep -Fxq {group_id}"
+    run(["docker", "exec", container, "sh", "-c", command])
+
+
+def activate_bound_config(compose_file: Path, container: str, group_id: int) -> None:
     # Atomic host-file replacement changes the inode behind Docker's single-file
     # bind mount. Recreate the container so it binds the new inode before testing.
     compose_validate(compose_file)
     compose_recreate(compose_file)
     nginx_validate(container)
+    nginx_worker_group_validate(container, group_id)
 
 
 def issue_certificate(args: argparse.Namespace) -> None:
@@ -269,7 +282,7 @@ def restore_from(args: argparse.Namespace, directory: Path, receipt: dict[str, A
 def preflight(args: argparse.Namespace, *, require_dns: bool = True) -> dict[str, Any]:
     nginx = Path(args.nginx_config)
     compose = Path(args.compose_file)
-    for path in (nginx, compose, Path(args.site_template), Path(args.offline_template)):
+    for path in (nginx, compose, Path(args.site_template), Path(args.offline_template), Path(args.group_init_template)):
         if not path.is_file():
             raise EdgeError(f"Required file is missing: {path}")
     ips = resolve_ipv4(args.domain)
@@ -303,11 +316,16 @@ def apply(args: argparse.Namespace) -> dict[str, Any]:
         os.chmod(socket_dir, 0o2770)
 
         offline_host = str(Path(args.nginx_site_dir) / "dsh-remote-offline.html")
+        group_init_host = str(Path(args.nginx_site_dir) / "nginx-socket-group.sh")
         Path(offline_host).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(args.offline_template, offline_host)
         os.chmod(offline_host, 0o644)
+        shutil.copy2(args.group_init_template, group_init_host)
+        os.chmod(group_init_host, 0o755)
 
-        compose_value = update_compose(load_compose(compose), args.socket_host_dir, group_id, offline_host)
+        compose_value = update_compose(
+            load_compose(compose), args.socket_host_dir, group_id, offline_host, group_init_host
+        )
         atomic_write(compose, yaml.safe_dump(compose_value, sort_keys=False), 0o644)
         template = Path(args.site_template).read_text(encoding="utf-8")
         original = nginx.read_text(encoding="utf-8")
@@ -315,10 +333,11 @@ def apply(args: argparse.Namespace) -> dict[str, Any]:
         compose_validate(compose)
         compose_recreate(compose)
         nginx_validate(args.nginx_container)
+        nginx_worker_group_validate(args.nginx_container, group_id)
         issue_certificate(args)
         current = nginx.read_text(encoding="utf-8")
         atomic_write(nginx, replace_managed(current, render_site(template, args, https=True)), 0o644)
-        activate_bound_config(compose, args.nginx_container)
+        activate_bound_config(compose, args.nginx_container, group_id)
         receipt["applied"] = True
         receipt["post"] = {"nginx_sha256": sha256(nginx), "compose_sha256": sha256(compose)}
         receipt["facts"] = facts
@@ -336,17 +355,31 @@ def status(args: argparse.Namespace) -> dict[str, Any]:
     text = nginx.read_text(encoding="utf-8")
     socket_dir = Path(args.socket_host_dir)
     cert = Path(args.certbot_config) / "live" / args.domain / "fullchain.pem"
+    group_result = run(["getent", "group", args.socket_group], check=False)
+    group_fields = group_result.stdout.strip().split(":") if group_result.returncode == 0 else []
+    group_id = int(group_fields[2]) if len(group_fields) >= 3 else None
     result = {
         "domain": args.domain,
         "dns_ipv4": resolve_ipv4(args.domain),
         "managed_config": BEGIN in text and END in text,
         "socket_mount": any(isinstance(item, str) and item.endswith(":/run/dsh-remote:ro") for item in service.get("volumes", [])),
+        "group_init_mount": any(
+            isinstance(item, str) and item.endswith(":/docker-entrypoint.d/05-dsh-remote-socket-group.sh:ro")
+            for item in service.get("volumes", [])
+        ),
         "socket_directory": socket_dir.is_dir(),
         "socket_present": (socket_dir / "tunnel.sock").is_socket() if socket_dir.exists() else False,
         "certificate_present": cert.is_file(),
         "nginx_config_valid": run(["docker", "exec", args.nginx_container, "nginx", "-t"], check=False).returncode == 0,
+        "nginx_worker_group": group_id is not None and run([
+            "docker", "exec", args.nginx_container, "sh", "-c",
+            f"id -G nginx | tr ' ' '\\n' | grep -Fxq {group_id}",
+        ], check=False).returncode == 0,
     }
-    result["configured"] = all(result[key] for key in ("managed_config", "socket_mount", "socket_directory", "certificate_present", "nginx_config_valid"))
+    result["configured"] = all(result[key] for key in (
+        "managed_config", "socket_mount", "group_init_mount", "socket_directory",
+        "certificate_present", "nginx_config_valid", "nginx_worker_group",
+    ))
     result["ready"] = result["configured"] and result["socket_present"]
     return result
 
@@ -383,6 +416,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--ssh-uid", type=int, default=1002)
     value.add_argument("--site-template", required=True)
     value.add_argument("--offline-template", required=True)
+    value.add_argument("--group-init-template", required=True)
     value.add_argument("--receipt", default="")
     return value
 

@@ -39,12 +39,25 @@ class RemoteEdgeTests(unittest.TestCase):
                 "other": {"image": "example:latest"},
             }
         }
-        updated = remote_edge.update_compose(value, "/srv/socket", 991, "/srv/offline.html")
-        updated = remote_edge.update_compose(updated, "/srv/socket", 991, "/srv/offline.html")
+        updated = remote_edge.update_compose(
+            value, "/srv/socket", 991, "/srv/offline.html", "/srv/nginx-socket-group.sh"
+        )
+        updated = remote_edge.update_compose(
+            updated, "/srv/socket", 991, "/srv/offline.html", "/srv/nginx-socket-group.sh"
+        )
         nginx = updated["services"]["nginx"]
         self.assertIn("other", updated["services"])
         self.assertEqual(nginx["volumes"].count("/srv/socket:/run/dsh-remote:ro"), 1)
+        self.assertEqual(nginx["volumes"].count(
+            "/srv/nginx-socket-group.sh:/docker-entrypoint.d/05-dsh-remote-socket-group.sh:ro"
+        ), 1)
         self.assertEqual(nginx["group_add"], ["991"])
+
+    def test_group_initializer_adds_nginx_to_the_mounted_socket_gid(self) -> None:
+        script = (ROOT / "templates" / "nginx-socket-group.sh").read_text(encoding="utf-8")
+        self.assertIn('group_id=$(stat -c %g "$socket_dir")', script)
+        self.assertIn('addgroup nginx "$group_name"', script)
+        self.assertNotIn("chmod", script)
 
     def test_rendered_https_site_has_socket_upgrade_offline_and_no_access_log(self) -> None:
         args = types.SimpleNamespace(
@@ -80,9 +93,10 @@ class RemoteEdgeTests(unittest.TestCase):
         calls: list[str] = []
         with patch.object(remote_edge, "compose_validate", side_effect=lambda _path: calls.append("compose")), \
              patch.object(remote_edge, "compose_recreate", side_effect=lambda _path: calls.append("recreate")), \
-             patch.object(remote_edge, "nginx_validate", side_effect=lambda _container: calls.append("nginx")):
-            remote_edge.activate_bound_config(Path("/fixture/compose.yml"), "nginx-fixture")
-        self.assertEqual(calls, ["compose", "recreate", "nginx"])
+             patch.object(remote_edge, "nginx_validate", side_effect=lambda _container: calls.append("nginx")), \
+             patch.object(remote_edge, "nginx_worker_group_validate", side_effect=lambda _container, _gid: calls.append("group")):
+            remote_edge.activate_bound_config(Path("/fixture/compose.yml"), "nginx-fixture", 991)
+        self.assertEqual(calls, ["compose", "recreate", "nginx", "group"])
 
 
 if __name__ == "__main__":

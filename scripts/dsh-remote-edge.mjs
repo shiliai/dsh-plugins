@@ -25,6 +25,7 @@ const files = [
   path.join(root, 'scripts/remote-edge.py'),
   path.join(root, 'templates/nginx-site.conf'),
   path.join(root, 'templates/offline.html'),
+  path.join(root, 'templates/nginx-socket-group.sh'),
 ]
 
 try {
@@ -35,6 +36,7 @@ try {
     '--domain', domain,
     '--site-template', `${stage}/nginx-site.conf`,
     '--offline-template', `${stage}/offline.html`,
+    '--group-init-template', `${stage}/nginx-socket-group.sh`,
   ]
   if (receipt) remoteArgs.push('--receipt', receipt)
   execute('ssh', ['-o', 'BatchMode=yes', host, remoteArgs.map(shellWord).join(' ')])
@@ -57,4 +59,3 @@ function fail(message) {
   console.error(`dsh-remote-edge: ${message}`)
   process.exit(1)
 }
-
