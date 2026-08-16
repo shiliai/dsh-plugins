@@ -37,7 +37,7 @@ test('keeps note workflow and composer routing usable across session transitions
   await expect(page.locator('body')).toBeVisible()
   await expect(page.getByLabel('Note editor').locator('input[type="checkbox"]').first()).toBeDisabled()
   await page.setViewportSize({ width: 390, height: 844 })
-  await expect(page.getByRole('button', { name: /expand sidebar/i })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Open sidebar', exact: true })).toBeVisible()
   await expect(page.getByLabel('Note editor')).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('mobile-vault-note.png'), fullPage: true })
   await page.setViewportSize({ width: 1440, height: 900 })
