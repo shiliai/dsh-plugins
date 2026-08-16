@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Check, Copy, RefreshCw, RotateCcw, X } from 'lucide-react'
 import type { RemoteStatus } from '../contracts.ts'
 import { remoteApi } from './api.ts'
@@ -14,10 +14,16 @@ export function RemotePanel({ close }: Props) {
   const [rotating, setRotating] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [copied, setCopied] = useState(false)
+  const statusRef = useRef<RemoteStatus | null>(null)
+
+  const updateStatus = (next: RemoteStatus): void => {
+    statusRef.current = next
+    setStatus(next)
+  }
 
   const refresh = async (): Promise<void> => {
     try {
-      setStatus(await remoteApi.status())
+      updateStatus(await remoteApi.status())
       setError(null)
     } catch {
       setError('Remote status is unavailable.')
@@ -31,9 +37,10 @@ export function RemotePanel({ close }: Props) {
   }, [])
 
   const copy = async (): Promise<void> => {
-    if (status === null) return
+    const latest = statusRef.current
+    if (latest === null) return
     try {
-      await navigator.clipboard.writeText(status.accessUrl)
+      await navigator.clipboard.writeText(latest.accessUrl)
       setCopied(true)
       window.setTimeout(() => { setCopied(false) }, 1500)
     } catch {
@@ -44,7 +51,7 @@ export function RemotePanel({ close }: Props) {
   const rotate = async (): Promise<void> => {
     setRotating(true)
     try {
-      setStatus(await remoteApi.rotate())
+      updateStatus(await remoteApi.rotate())
       setError(null)
       setConfirming(false)
     } catch {
