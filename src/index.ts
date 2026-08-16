@@ -1,0 +1,31 @@
+import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-host-webserver'
+import type {} from '@deepseek-ai/dsh-tools'
+import { registerVaultApi } from './http-api.ts'
+import { registerNoteTools } from './tools.ts'
+import { VaultService } from './vault-service.ts'
+
+export const name = 'dsh-obsidian'
+export const inject = ['webServer', 'tools']
+
+export interface Config {
+  vaultRoot: string
+  maxNoteBytes?: number
+  searchResultLimit?: number
+}
+
+export async function apply(ctx: Context, config: Config): Promise<void> {
+  if (typeof config.vaultRoot !== 'string' || config.vaultRoot.trim() === '') {
+    throw new Error('dsh-obsidian: vaultRoot is required')
+  }
+  const vault = await VaultService.create(
+    config.vaultRoot,
+    config.maxNoteBytes ?? 2 * 1024 * 1024,
+    config.searchResultLimit ?? 100,
+  )
+  ctx.effect(() => registerVaultApi(ctx.webServer, vault), 'dsh-obsidian: vault HTTP API')
+  registerNoteTools(ctx, vault)
+}
+
+export { VaultError, VaultService } from './vault-service.ts'
+export type { NoteDocument, NoteSearchResult, VaultTreeNode } from './contracts.ts'
