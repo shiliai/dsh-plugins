@@ -18,7 +18,12 @@ const port = await availablePort()
 const origin = `http://127.0.0.1:${port}`
 const vault = join(temp, 'vault')
 const dshHome = join(temp, 'home')
-const env = { ...process.env, DSH_HOME: dshHome, DSH_OBSIDIAN_ORIGIN: origin }
+const env = {
+  ...process.env,
+  DSH_HOME: dshHome,
+  DSH_OBSIDIAN_ORIGIN: origin,
+  DEEPSEEK_API_KEY: 'dsh-obsidian-rc6-invalid-key',
+}
 let server
 
 try {
