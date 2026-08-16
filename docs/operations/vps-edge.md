@@ -35,6 +35,13 @@ any restore write; stop the local DSH tunnel first. Repeating rollback is a no-o
 edge files, certificate, mount, directory, and Nginx validation are present.
 Ready additionally requires the reverse-tunnel socket to exist.
 
+The VPS sshd applies its server-side stream-local mask (`0177`) to remote socket
+creation, so client `StreamLocalBindMask` does not produce the required group
+mode. The plugin therefore removes only its dedicated stale socket before bind,
+starts forwarding, then runs a fixed `chmod 0660` over a second strict SSH
+command. Tunnel status becomes online only after that command succeeds. The
+setgid socket directory supplies the managed group inherited by the socket.
+
 The scripts never change unrelated server blocks, containers, certificate names,
 DNS records, or firewall rules. DNS creation and local DSH profile installation
 are separate, independently reversible delivery actions.

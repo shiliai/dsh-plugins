@@ -24,8 +24,9 @@ gateway must both bind to `127.0.0.1`; the plugin rejects any public bind.
 The default reverse-forward target is
 `/home/chriswang/.local/share/dsh-remote/tunnel.sock`, matching the edge socket
 directory. The supervisor permits only a safe SSH alias or `user@host` target,
-uses strict host-key checks, and keeps a new child in `starting` until its
-stability window has elapsed.
+uses strict host-key checks, removes the dedicated stale socket before binding,
+and keeps a new child in `starting` until a fixed remote `chmod 0660` succeeds.
+If permission preparation fails, it terminates that tunnel before bounded retry.
 
 ## Private Link
 
