@@ -20,7 +20,10 @@ test('keeps note workflow and composer routing usable across session transitions
   }
   await page.getByRole('button', { name: 'Choose workspace', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Obsidian rc.6 fixture', exact: true }).click()
-  await expect(page.getByRole('textbox', { name: 'Choose workspace' })).toBeVisible()
+  const bootstrapComposer = page.getByRole('textbox', { name: 'Choose workspace' })
+  await bootstrapComposer.fill('Create the rc.6 fixture session.')
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await page.getByRole('button', { name: 'New session', exact: true }).last().click()
   await page.getByLabel('Obsidian notes').click()
   await page.getByRole('treeitem', { name: /Home/u }).click()
   await expect(page.getByLabel('Note editor')).toBeVisible()
