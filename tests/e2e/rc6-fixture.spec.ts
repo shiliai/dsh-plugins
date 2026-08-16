@@ -10,8 +10,12 @@ test('keeps note workflow and composer routing usable across session transitions
   })
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/')
+  const testingNotice = page.getByRole('dialog', { name: 'Internal Testing Notice' })
+  if (await testingNotice.isVisible().catch(() => false)) {
+    await testingNotice.getByRole('button', { name: 'Continue' }).click()
+  }
   const configureLater = page.getByRole('button', { name: /configure later/i })
-  if (await configureLater.isVisible().catch(() => false)) await configureLater.click()
+  if (await configureLater.isVisible({ timeout: 3_000 }).catch(() => false)) await configureLater.click()
   await page.getByLabel('Obsidian notes').click()
   await page.getByRole('treeitem', { name: /Home/u }).click()
   await expect(page.getByLabel('Note editor')).toBeVisible()
