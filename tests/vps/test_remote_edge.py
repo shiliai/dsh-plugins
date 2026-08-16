@@ -72,8 +72,12 @@ class RemoteEdgeTests(unittest.TestCase):
         self.assertIn("proxy_set_header Upgrade $http_upgrade", rendered)
         self.assertIn("access_log off", rendered)
         self.assertIn("proxy_request_buffering off", rendered)
-        self.assertIn("proxy_intercept_errors off", rendered)
-        self.assertIn("error_page 502 503 504 =503 @dsh_remote_offline", rendered)
+        self.assertIn("server 127.0.0.1:18081 backup", rendered)
+        self.assertIn("proxy_next_upstream error timeout invalid_header", rendered)
+        self.assertIn("proxy_next_upstream_tries 2", rendered)
+        self.assertIn("listen 127.0.0.1:18081", rendered)
+        self.assertIn("error_page 503 =503 @dsh_remote_offline", rendered)
+        self.assertNotIn("proxy_intercept_errors", rendered)
         self.assertNotIn("__DOMAIN__", rendered)
 
     def test_atomic_write_replaces_content_and_mode(self) -> None:

@@ -169,9 +169,23 @@ def render_site(template: str, args: argparse.Namespace, *, https: bool) -> str:
         proxy_connect_timeout 10s;
         proxy_send_timeout 3600s;
         proxy_read_timeout 3600s;
-        proxy_intercept_errors off;
-        error_page 502 503 504 =503 @dsh_remote_offline;
+        proxy_next_upstream error timeout invalid_header;
+        proxy_next_upstream_tries 2;
     }}
+}}
+
+server {{
+    listen 127.0.0.1:18081;
+    server_name _;
+
+    access_log off;
+    server_tokens off;
+
+    location / {{
+        return 503;
+    }}
+
+    error_page 503 =503 @dsh_remote_offline;
 
     location @dsh_remote_offline {{
         internal;

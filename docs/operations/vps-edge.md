@@ -25,10 +25,10 @@ the marked HTTPS site and managed certificate-renewal schedule. Any failed step
 invokes automatic restoration from the same receipt.
 
 The HTTPS proxy disables request and response buffering, so large DSH uploads and
-streaming responses are not staged by Nginx. It also disables upstream error
-interception: a reachable DSH response, including an application `503`, passes
-through unchanged. Connection failures such as a missing tunnel socket are mapped
-to the branded retryable `503` page.
+streaming responses are not staged by Nginx. A reachable DSH response, including
+an application `502`, `503`, or `504`, passes through unchanged. Only a connection
+error, timeout, or invalid upstream header retries to a container-loopback backup
+that serves the branded retryable `503` page; the backup has no public listener.
 
 The Nginx config is a single-file Docker bind mount. Atomic replacement changes
 the host inode, so both the HTTP staging write and final HTTPS write recreate the
