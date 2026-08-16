@@ -11,7 +11,7 @@ test('keeps note workflow and composer routing usable across session transitions
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/')
   const testingNotice = page.getByRole('dialog', { name: 'Internal Testing Notice' })
-  if (await testingNotice.isVisible().catch(() => false)) {
+  if (await testingNotice.waitFor({ state: 'visible', timeout: 5_000 }).then(() => true).catch(() => false)) {
     await testingNotice.getByRole('button', { name: 'Continue' }).click()
   }
   const configureLater = page.getByRole('button', { name: /configure later/i })
