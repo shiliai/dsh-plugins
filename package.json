@@ -48,12 +48,12 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
-    "@deepseek-ai/dsh-client-runtime": ">=0.0.1-rc.1",
-    "@deepseek-ai/dsh-client-ui-layout": ">=0.0.1-rc.1",
-    "@deepseek-ai/dsh-client-ui-sidebar": ">=0.0.1-rc.1",
-    "@deepseek-ai/dsh-client-ui-slots": ">=0.0.1-rc.1",
-    "@deepseek-ai/dsh-host-webserver": ">=0.0.1-rc.1",
-    "@deepseek-ai/dsh-tools": ">=0.0.1-rc.1",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-layout": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-sidebar": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
     "react": ">=18.2.0"
   },
   "peerDependenciesMeta": {
@@ -71,6 +71,8 @@
     "marked": "^16.2.1"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh": "0.1.0-rc.6",
+    "@playwright/test": "^1.55.0",
     "@types/node": "^24.0.0",
     "@types/react": "~18.3.1",
     "@types/react-dom": "~18.3.0",

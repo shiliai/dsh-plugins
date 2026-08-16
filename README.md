@@ -7,7 +7,7 @@
 Build the plugin checkout, then add it to the Web profile:
 
 ```sh
-pnpm install --config.auto-install-peers=false
+pnpm install
 pnpm run build
 dsh plugin --profile web add /Users/chris/project/dsh-plugins/dsh-obsidian
 ```
@@ -19,7 +19,7 @@ cd /path/to/obsidian-vault
 dsh web
 ```
 
-Open **Obsidian notes** from the sidebar footer. The notes view temporarily replaces the session browser; the back button restores it. Opening a note uses the right details panel, and closing the note restores DSH's normal tool details.
+Open **Obsidian notes** from the sidebar footer. The notes view temporarily replaces the session browser; the back button restores it. Opening a note uses the right details panel after the current session has a message, or the center panel before the first message. Closing the note restores DSH's normal surface.
 
 ## Note workflow
 

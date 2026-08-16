@@ -34,6 +34,14 @@ declare module '@deepseek-ai/dsh-client-runtime/client' {
       openDetails(): void
       closeDetails(): void
     }
+    sessions: {
+      list: {
+        getSnapshot(): {
+          current: string | undefined
+          byId: Record<string, { blank: boolean }>
+        }
+      }
+    }
     effect(disposer: () => (() => void), label: string): void
   }
 }

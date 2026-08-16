@@ -4,6 +4,10 @@ import { vaultApi } from './api.ts'
 
 export type NoteMode = 'edit' | 'preview'
 
+export type PendingDiscardAction =
+  | { kind: 'open'; path: string }
+  | { kind: 'close' }
+
 export interface VaultSnapshot {
   vaultName: string
   vaultRoot: string
@@ -16,6 +20,7 @@ export interface VaultSnapshot {
   loadingTree: boolean
   loadingNote: boolean
   saving: boolean
+  pendingDiscard: PendingDiscardAction | null
   error: string | null
 }
 
@@ -36,6 +41,7 @@ const INITIAL: VaultSnapshot = {
   loadingTree: false,
   loadingNote: false,
   saving: false,
+  pendingDiscard: null,
   error: null,
 }
 
@@ -75,7 +81,11 @@ export class VaultStore {
   }
 
   async openNote(path: string): Promise<void> {
-    if (this.dirty && !window.confirm('Discard unsaved changes?')) return
+    if (this.snapshot.pendingDiscard !== null || this.snapshot.active?.path === path) return
+    if (this.dirty) {
+      this.update({ pendingDiscard: { kind: 'open', path } })
+      return
+    }
     this.panel.open()
     this.update({ loadingNote: true, error: null })
     try {
@@ -87,9 +97,27 @@ export class VaultStore {
   }
 
   closeNote(): void {
-    if (this.dirty && !window.confirm('Discard unsaved changes?')) return
+    if (this.snapshot.pendingDiscard !== null) return
+    if (this.dirty) {
+      this.update({ pendingDiscard: { kind: 'close' } })
+      return
+    }
     this.update({ active: null, draft: '', error: null })
     this.panel.close()
+  }
+
+  cancelPendingDiscard(): void {
+    if (this.snapshot.pendingDiscard !== null) this.update({ pendingDiscard: null })
+  }
+
+  async discardPendingChanges(): Promise<void> {
+    const pending = this.snapshot.pendingDiscard
+    const active = this.snapshot.active
+    if (pending === null || active === null) return
+
+    this.update({ draft: active.content, pendingDiscard: null })
+    if (pending.kind === 'open') await this.openNote(pending.path)
+    else this.closeNote()
   }
 
   setDraft(draft: string): void { this.update({ draft }) }
@@ -123,9 +151,14 @@ export class VaultStore {
 
   async renameActive(to: string): Promise<void> {
     const active = this.snapshot.active
-    if (active === null) return
-    if (this.dirty) await this.save()
-    const normalized = to.trim().endsWith('.md') ? to.trim() : `${to.trim()}.md`
+    const trimmed = to.trim()
+    if (active === null || trimmed === '') return
+    if (this.dirty) {
+      await this.save()
+      if (this.dirty) return
+    }
+    const normalized = trimmed.endsWith('.md') ? trimmed : `${trimmed}.md`
+    if (normalized === active.path) return
     try {
       const note = await vaultApi.move(active.path, normalized)
       this.update({ active: note, draft: note.content, error: null })
@@ -137,7 +170,7 @@ export class VaultStore {
 
   async deleteActive(): Promise<void> {
     const active = this.snapshot.active
-    if (active === null || !window.confirm(`Delete ${active.path}?`)) return
+    if (active === null) return
     try {
       await vaultApi.delete(active.path)
       this.update({ active: null, draft: '', error: null })

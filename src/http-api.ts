@@ -104,9 +104,16 @@ function requiredQuery(url: URL, key: string): string {
 function assertSameOrigin(request: IncomingMessage): void {
   const origin = request.headers.origin
   const host = request.headers.host
-  if (origin === undefined || host === undefined || new URL(origin).host !== host) {
+  if (origin === undefined || host === undefined) {
     throw new VaultError('Note mutations require a same-origin browser request.', 'ORIGIN_DENIED', 403)
   }
+  try {
+    const originUrl = new URL(origin)
+    if ((originUrl.protocol === 'http:' || originUrl.protocol === 'https:') && originUrl.host === host) return
+  } catch {
+    // A malformed Origin is not a valid same-origin browser request.
+  }
+  throw new VaultError('Note mutations require a same-origin browser request.', 'ORIGIN_DENIED', 403)
 }
 
 async function readJson<T>(request: IncomingMessage, limit: number): Promise<T> {

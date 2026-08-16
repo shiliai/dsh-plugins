@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import ArrowLeft from 'lucide-react/dist/esm/icons/arrow-left'
+import Check from 'lucide-react/dist/esm/icons/check'
 import ChevronDown from 'lucide-react/dist/esm/icons/chevron-down'
 import ChevronRight from 'lucide-react/dist/esm/icons/chevron-right'
 import FilePlus2 from 'lucide-react/dist/esm/icons/file-plus-2'
@@ -57,6 +58,7 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar }: Props
           setNewPath(null)
         }}>
           <input autoFocus value={newPath} placeholder="Folder/Note.md" aria-label="New note path" onChange={event => { setNewPath(event.target.value) }} />
+          <button className={css.iconButton} type="submit" title="Create note" aria-label="Create note" disabled={newPath.trim() === ''}><Check size={14} /></button>
           <button className={css.iconButton} type="button" title="Cancel" aria-label="Cancel" onClick={() => { setNewPath(null) }}><X size={14} /></button>
         </form>
       )}

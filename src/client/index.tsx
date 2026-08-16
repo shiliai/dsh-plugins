@@ -7,7 +7,7 @@ import { VaultBrowser } from './VaultBrowser.tsx'
 import { VaultStore } from './store.ts'
 import css from './styles.module.css?dsh-inline'
 
-export const inject = ['slots', 'layout']
+export const inject = ['slots', 'layout', 'sessions']
 
 interface FooterProps {
   wide: boolean
@@ -25,22 +25,28 @@ function FooterButton({ wide, openBrowser }: FooterProps) {
 export function apply(ctx: ClientContext): void {
   let browserDispose: (() => void) | undefined
   let panelDispose: (() => void) | undefined
+  let panelTarget: 'conversation' | 'details' | undefined
 
   const closePanel = (): void => {
     panelDispose?.()
     panelDispose = undefined
-    ctx.layout.closeDetails()
+    if (panelTarget === 'details') ctx.layout.closeDetails()
+    panelTarget = undefined
   }
 
   const store = new VaultStore({
     open: () => {
       if (panelDispose === undefined) {
+        const sessions = ctx.sessions.list.getSnapshot()
+        const current = sessions.current
+        panelTarget = current !== undefined && sessions.byId[current]?.blank === false ? 'details' : 'conversation'
         panelDispose = ctx.slots.register({
-          name: 'details',
+          name: panelTarget,
+          priority: -10,
           inject: () => ({ store }),
         }, NotePanel)
       }
-      ctx.layout.openDetails()
+      if (panelTarget === 'details') ctx.layout.openDetails()
     },
     close: closePanel,
   })
@@ -53,6 +59,7 @@ export function apply(ctx: ClientContext): void {
     if (browserDispose !== undefined) return
     browserDispose = ctx.slots.register({
       name: 'sidebar.workspaces',
+      priority: -10,
       inject: () => ({ store, closeBrowser }),
     }, VaultBrowser)
   }
