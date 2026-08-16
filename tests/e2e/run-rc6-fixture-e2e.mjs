@@ -73,9 +73,13 @@ async function verifySidebar(origin) {
     const page = await browser.newPage()
     await page.goto(origin)
     const notice = page.getByRole('dialog', { name: 'Internal Testing Notice' })
-    if (await notice.isVisible().catch(() => false)) await notice.getByRole('button', { name: 'Continue' }).click()
+    if (await notice.waitFor({ state: 'visible', timeout: 5_000 }).then(() => true).catch(() => false)) {
+      await notice.getByRole('button', { name: 'Continue' }).click()
+    }
     const configureLater = page.getByRole('button', { name: /configure later/i })
-    if (await configureLater.isVisible().catch(() => false)) await configureLater.click()
+    if (await configureLater.waitFor({ state: 'visible', timeout: 5_000 }).then(() => true).catch(() => false)) {
+      await configureLater.click()
+    }
     await page.getByLabel('Remote access').first().click()
     await page.getByLabel('Remote access').last().waitFor({ state: 'visible' })
   } finally {
