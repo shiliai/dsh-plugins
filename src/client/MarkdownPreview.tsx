@@ -64,7 +64,7 @@ export function renderMarkdown(content: string, notePath: string, notePaths: rea
     image.loading = 'lazy'
   }
   for (const input of template.content.querySelectorAll<HTMLInputElement>('input')) {
-    if (input.type !== 'checkbox' || input.closest('li.task-list-item') === null) input.remove()
+    if (input.type !== 'checkbox' || !input.disabled) input.remove()
     else {
       input.disabled = true
       input.tabIndex = -1
