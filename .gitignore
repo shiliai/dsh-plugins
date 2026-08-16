@@ -1,0 +1,9 @@
+/node_modules/
+/lib/
+/dist/
+/coverage/
+/test-results/
+/playwright-report/
+/planning/01-raw/
+.DS_Store
+
