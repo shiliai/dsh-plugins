@@ -6,6 +6,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -74,6 +75,14 @@ class RemoteEdgeTests(unittest.TestCase):
             args = types.SimpleNamespace(socket_host_dir=str(socket_dir))
             with self.assertRaisesRegex(remote_edge.EdgeError, "Stop the DSH remote tunnel"):
                 remote_edge.restore_from(args, Path(directory), {"group_created": True}, automatic=False)
+
+    def test_final_config_recreates_bind_mount_before_live_validation(self) -> None:
+        calls: list[str] = []
+        with patch.object(remote_edge, "compose_validate", side_effect=lambda _path: calls.append("compose")), \
+             patch.object(remote_edge, "compose_recreate", side_effect=lambda _path: calls.append("recreate")), \
+             patch.object(remote_edge, "nginx_validate", side_effect=lambda _container: calls.append("nginx")):
+            remote_edge.activate_bound_config(Path("/fixture/compose.yml"), "nginx-fixture")
+        self.assertEqual(calls, ["compose", "recreate", "nginx"])
 
 
 if __name__ == "__main__":

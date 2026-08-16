@@ -19,9 +19,14 @@ reports pre-state hashes.
 creates the dedicated socket group and mode-2770 host directory, adds only the
 managed socket/offline mounts and supplementary group to the Nginx service,
 installs the marked HTTP ACME site, recreates and validates Nginx, obtains the
-certificate through the existing Certbot volumes, then installs and reloads the
-marked HTTPS site. Any failed step invokes automatic restoration from the same
-receipt.
+certificate through the existing Certbot volumes, then installs and activates
+the marked HTTPS site. Any failed step invokes automatic restoration from the
+same receipt.
+
+The Nginx config is a single-file Docker bind mount. Atomic replacement changes
+the host inode, so both the HTTP staging write and final HTTPS write recreate the
+Nginx container before validation. A reload alone would keep the stale mounted
+inode and is intentionally not used.
 
 Receipts are stored under
 `/home/chriswang/.local/state/dsh-remote/backups/<receipt-id>/receipt.json` with

@@ -195,8 +195,12 @@ def compose_recreate(compose_file: Path) -> None:
     run(["docker", "compose", "-f", str(compose_file), "up", "-d", "--force-recreate", "nginx"])
 
 
-def nginx_reload(container: str) -> None:
-    run(["docker", "exec", container, "nginx", "-s", "reload"])
+def activate_bound_config(compose_file: Path, container: str) -> None:
+    # Atomic host-file replacement changes the inode behind Docker's single-file
+    # bind mount. Recreate the container so it binds the new inode before testing.
+    compose_validate(compose_file)
+    compose_recreate(compose_file)
+    nginx_validate(container)
 
 
 def issue_certificate(args: argparse.Namespace) -> None:
@@ -314,8 +318,7 @@ def apply(args: argparse.Namespace) -> dict[str, Any]:
         issue_certificate(args)
         current = nginx.read_text(encoding="utf-8")
         atomic_write(nginx, replace_managed(current, render_site(template, args, https=True)), 0o644)
-        nginx_validate(args.nginx_container)
-        nginx_reload(args.nginx_container)
+        activate_bound_config(compose, args.nginx_container)
         receipt["applied"] = True
         receipt["post"] = {"nginx_sha256": sha256(nginx), "compose_sha256": sha256(compose)}
         receipt["facts"] = facts
