@@ -45,4 +45,36 @@ describe('RemoteStateStore', () => {
     await writeFile(path, JSON.stringify({ schema: 1, token: 'a'.repeat(43), sessionVersion: 1, createdAt: 'now', rotatedAt: 'now' }), { mode: 0o644 })
     await expect(RemoteStateStore.open(path)).rejects.toThrow('mode 0600')
   })
+
+  it('rejects malformed bearers without throwing and remains usable', async () => {
+    const path = await statePath()
+    const store = await RemoteStateStore.open(path)
+    expect(store.verifyBearer('界'.repeat(43))).toBe(false)
+    expect(store.verifyBearer('!'.repeat(43))).toBe(false)
+    expect(store.verifyBearer('a'.repeat(44))).toBe(false)
+    expect(store.verifyBearer(store.accessToken())).toBe(true)
+  })
+
+  it('serializes rotations and keeps reopened disk state aligned', async () => {
+    const path = await statePath()
+    const store = await RemoteStateStore.open(path)
+    const [first, second] = await Promise.all([store.rotate(), store.rotate()])
+    expect(first.sessionVersion).toBe(2)
+    expect(second.sessionVersion).toBe(3)
+    expect((await RemoteStateStore.open(path)).current()).toEqual(store.current())
+  })
+
+  it('preserves the old state before rename and publishes post-rename failures', async () => {
+    const path = await statePath()
+    const initial = await RemoteStateStore.open(path)
+    const before = initial.current()
+    const failing = await RemoteStateStore.open(path, { beforeRename: async () => { throw new Error('before rename') } })
+    await expect(failing.rotate()).rejects.toThrow('before rename')
+    expect((await RemoteStateStore.open(path)).current()).toEqual(before)
+
+    const committed = await RemoteStateStore.open(path, { afterRename: async () => { throw new Error('after rename') } })
+    const next = await committed.rotate()
+    expect(next.sessionVersion).toBe(before.sessionVersion + 1)
+    expect((await RemoteStateStore.open(path)).current()).toEqual(next)
+  })
 })

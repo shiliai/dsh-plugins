@@ -70,6 +70,13 @@ describe('RemoteGateway', () => {
       headers: { origin: 'https://attacker.invalid', 'content-type': 'application/json' },
       body: JSON.stringify(Object.fromEntries([['token', state.accessToken()]])),
     })).status).toBe(403)
+    for (const malformed of ['界'.repeat(43), '!'.repeat(43), 'a'.repeat(44)]) {
+      expect((await fetch(`${baseUrl}/__dsh_remote/session`, {
+        method: 'POST',
+        headers: { origin: 'https://zsh.onlyservice.io', 'content-type': 'application/json' },
+        body: JSON.stringify({ token: malformed }),
+      })).status).toBe(403)
+    }
 
     const session = await fetch(`${baseUrl}/__dsh_remote/session`, {
       method: 'POST',
@@ -83,11 +90,24 @@ describe('RemoteGateway', () => {
     const proxied = await fetch(`${baseUrl}/complete`, { headers: { cookie: `${cookie}; dsh=preserved`, origin: 'https://zsh.onlyservice.io' } })
     expect(proxied.status).toBe(200)
     expect(await proxied.json()).toEqual({ path: '/complete', cookie: 'dsh=preserved', origin: upstreamOrigin })
+    expect((await fetch(`${baseUrl}/mutate`, {
+      method: 'POST',
+      headers: { cookie: `${cookie}`, origin: 'https://evil.onlyservice.io' },
+    })).status).toBe(403)
+    expect((await fetch(`${baseUrl}/mutate`, {
+      method: 'POST',
+      headers: { cookie: `${cookie}` },
+    })).status).toBe(403)
   })
 
   it('authenticates each WebSocket upgrade and closes every old upgraded socket before rotation returns', async () => {
     const { baseUrl, state, gateway, upstreamOrigin } = await fixture()
     const cookie = await issueSession(baseUrl, state.accessToken())
+    await expectRejectedUpgrade(new WebSocket(baseUrl.replace('http:', 'ws:'), {
+      headers: { cookie }, origin: 'https://evil.onlyservice.io',
+    }), 403)
+    await expectRejectedUpgrade(new WebSocket(baseUrl.replace('http:', 'ws:'), { headers: { cookie } }), 403)
+    expect(webSocketOrigins).toHaveLength(0)
     const socket = new WebSocket(baseUrl.replace('http:', 'ws:'), { headers: { cookie }, origin: 'https://zsh.onlyservice.io' })
     await once(socket, 'open')
     expect(webSocketOrigins.at(-1)).toBe(upstreamOrigin)
@@ -139,5 +159,16 @@ function expectMessage(socket: WebSocket, expected: string): Promise<void> {
   return new Promise((resolve, reject) => {
     socket.once('message', message => { message.toString() === expected ? resolve() : reject(new Error('Unexpected WebSocket message.')) })
     socket.once('error', reject)
+  })
+}
+
+function expectRejectedUpgrade(socket: WebSocket, status: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    socket.once('unexpected-response', (_request, response) => {
+      response.resume()
+      response.once('end', () => { response.statusCode === status ? resolve() : reject(new Error(`Unexpected status ${response.statusCode}`)) })
+    })
+    socket.once('open', () => reject(new Error('Rejected WebSocket unexpectedly opened.')))
+    socket.once('error', () => undefined)
   })
 }

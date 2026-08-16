@@ -23,6 +23,7 @@ BEGIN = "# BEGIN DSH-REMOTE MANAGED"
 END = "# END DSH-REMOTE MANAGED"
 DOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$")
 ABS_PATH_RE = re.compile(r"^/[A-Za-z0-9._/-]+$")
+SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 class EdgeError(RuntimeError):
@@ -80,10 +81,15 @@ def replace_managed(original: str, managed: str | None) -> str:
 def validate_inputs(args: argparse.Namespace) -> None:
     if not DOMAIN_RE.fullmatch(args.domain) or ".." in args.domain:
         raise EdgeError("Invalid domain")
-    for name in ("nginx_config", "compose_file", "socket_host_dir", "state_dir"):
+    for name in (
+        "nginx_config", "compose_file", "nginx_site_dir", "certbot_config",
+        "certbot_webroot", "socket_host_dir", "state_dir", "renewal_cron",
+    ):
         value = getattr(args, name)
         if not ABS_PATH_RE.fullmatch(value) or ".." in Path(value).parts:
             raise EdgeError(f"Invalid absolute path for {name}")
+    if not SAFE_NAME_RE.fullmatch(args.nginx_container):
+        raise EdgeError("Invalid Nginx container name")
 
 
 def resolve_ipv4(domain: str) -> list[str]:
@@ -159,10 +165,11 @@ def render_site(template: str, args: argparse.Namespace, *, https: bool) -> str:
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $dsh_remote_connection;
         proxy_buffering off;
+        proxy_request_buffering off;
         proxy_connect_timeout 10s;
         proxy_send_timeout 3600s;
         proxy_read_timeout 3600s;
-        proxy_intercept_errors on;
+        proxy_intercept_errors off;
         error_page 502 503 504 =503 @dsh_remote_offline;
     }}
 
@@ -188,6 +195,42 @@ def ensure_group(name: str) -> tuple[int, bool]:
     if len(fields) < 3:
         raise EdgeError("Cannot resolve dsh-remote group")
     return int(fields[2]), created
+
+
+def render_renewal_script(template: str, args: argparse.Namespace) -> str:
+    return (template.replace("__DOMAIN__", args.domain)
+            .replace("__CERTBOT_CONFIG__", args.certbot_config)
+            .replace("__CERTBOT_WEBROOT__", args.certbot_webroot)
+            .replace("__NGINX_CONTAINER__", args.nginx_container))
+
+
+def render_renewal_cron(args: argparse.Namespace, script_path: str) -> str:
+    log = str(Path(args.state_dir) / "certificate-renewal.log")
+    return f"17 3 * * * root {script_path} >> {log} 2>&1\n"
+
+
+def renewal_paths(args: argparse.Namespace) -> dict[str, Path]:
+    return {
+        "renewal_script": Path(args.nginx_site_dir) / "renew-certificate.sh",
+        "renewal_cron": Path(args.renewal_cron),
+    }
+
+
+def install_renewal(args: argparse.Namespace) -> None:
+    paths = renewal_paths(args)
+    template = Path(args.renewal_template).read_text(encoding="utf-8")
+    atomic_write(paths["renewal_script"], render_renewal_script(template, args), 0o700)
+    atomic_write(paths["renewal_cron"], render_renewal_cron(args, str(paths["renewal_script"])), 0o644)
+
+
+def certificate_valid(args: argparse.Namespace, minimum_seconds: int = 30 * 24 * 60 * 60) -> bool:
+    certificate = Path(args.certbot_config) / "live" / args.domain / "fullchain.pem"
+    if not certificate.is_file():
+        return False
+    return (
+        run(["openssl", "x509", "-checkhost", args.domain, "-noout", "-in", str(certificate)], check=False).returncode == 0
+        and run(["openssl", "x509", "-checkend", str(minimum_seconds), "-noout", "-in", str(certificate)], check=False).returncode == 0
+    )
 
 
 def compose_validate(compose_file: Path) -> None:
@@ -218,7 +261,7 @@ def activate_bound_config(compose_file: Path, container: str, group_id: int) -> 
 
 def issue_certificate(args: argparse.Namespace) -> None:
     live = Path(args.certbot_config) / "live" / args.domain / "fullchain.pem"
-    if live.exists():
+    if certificate_valid(args):
         return
     run([
         "docker", "run", "--rm",
@@ -228,8 +271,8 @@ def issue_certificate(args: argparse.Namespace) -> None:
         "--non-interactive", "--agree-tos", "--no-eff-email", "--keep-until-expiring",
         "-d", args.domain,
     ], capture=False)
-    if not live.exists():
-        raise EdgeError("Certificate issuance completed without the expected certificate")
+    if not certificate_valid(args):
+        raise EdgeError("Certificate issuance completed without a valid domain certificate")
 
 
 def backup(args: argparse.Namespace, nginx: Path, compose: Path) -> tuple[Path, dict[str, Any]]:
@@ -253,15 +296,41 @@ def backup(args: argparse.Namespace, nginx: Path, compose: Path) -> tuple[Path, 
         "group_created": False,
         "applied": False,
         "rolled_back": False,
+        "managed_files": {},
     }
+    for label, path in renewal_paths(args).items():
+        if path.exists() and not path.is_file():
+            raise EdgeError(f"Managed renewal path is not a regular file: {path}")
+        existed = path.is_file()
+        receipt["managed_files"][label] = {
+            "path": str(path),
+            "existed": existed,
+            "mode": (path.stat().st_mode & 0o777) if existed else None,
+            "sha256": sha256(path) if existed else None,
+        }
+        if existed:
+            shutil.copy2(path, destination / f"{label}.backup")
     atomic_write(destination / "receipt.json", json.dumps(receipt, indent=2, sort_keys=True) + "\n", 0o600)
     return destination, receipt
 
 
+def restore_managed_files(directory: Path, receipt: dict[str, Any]) -> None:
+    for label, details in receipt.get("managed_files", {}).items():
+        path = Path(details["path"])
+        if details["existed"]:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(directory / f"{label}.backup", path)
+            os.chmod(path, int(details["mode"]))
+        else:
+            path.unlink(missing_ok=True)
+
+
 def restore_from(args: argparse.Namespace, directory: Path, receipt: dict[str, Any], *, automatic: bool) -> None:
     socket_dir = Path(args.socket_host_dir)
-    if receipt.get("group_created") and socket_dir.exists() and any(socket_dir.iterdir()):
+    if not automatic and socket_dir.exists() and any(socket_dir.iterdir()):
         raise EdgeError("Stop the DSH remote tunnel before rollback; the socket directory is not empty")
+    if automatic and receipt.get("group_created") and socket_dir.exists() and any(socket_dir.iterdir()):
+        raise EdgeError("Automatic rollback cannot remove an in-use newly created socket group")
     nginx = Path(receipt["paths"]["nginx"])
     compose = Path(receipt["paths"]["compose"])
     shutil.copy2(directory / "nginx.conf", nginx)
@@ -269,6 +338,7 @@ def restore_from(args: argparse.Namespace, directory: Path, receipt: dict[str, A
     compose_validate(compose)
     compose_recreate(compose)
     nginx_validate(args.nginx_container)
+    restore_managed_files(directory, receipt)
     if receipt.get("group_created"):
         if socket_dir.exists():
             socket_dir.rmdir()
@@ -282,9 +352,17 @@ def restore_from(args: argparse.Namespace, directory: Path, receipt: dict[str, A
 def preflight(args: argparse.Namespace, *, require_dns: bool = True) -> dict[str, Any]:
     nginx = Path(args.nginx_config)
     compose = Path(args.compose_file)
-    for path in (nginx, compose, Path(args.site_template), Path(args.offline_template), Path(args.group_init_template)):
+    for path in (
+        nginx, compose, Path(args.site_template), Path(args.offline_template),
+        Path(args.group_init_template), Path(args.renewal_template),
+    ):
         if not path.is_file():
             raise EdgeError(f"Required file is missing: {path}")
+    for executable in ("openssl", "curl", "docker"):
+        if shutil.which(executable) is None:
+            raise EdgeError(f"Required executable is missing: {executable}")
+    if not Path("/usr/sbin/cron").is_file():
+        raise EdgeError("Required cron daemon is missing")
     ips = resolve_ipv4(args.domain)
     if require_dns and args.expected_ipv4 not in ips:
         raise EdgeError(f"DNS is not ready for {args.domain}; observed {ips or ['no A record']}")
@@ -335,17 +413,66 @@ def apply(args: argparse.Namespace) -> dict[str, Any]:
         nginx_validate(args.nginx_container)
         nginx_worker_group_validate(args.nginx_container, group_id)
         issue_certificate(args)
+        install_renewal(args)
         current = nginx.read_text(encoding="utf-8")
         atomic_write(nginx, replace_managed(current, render_site(template, args, https=True)), 0o644)
         activate_bound_config(compose, args.nginx_container, group_id)
         receipt["applied"] = True
-        receipt["post"] = {"nginx_sha256": sha256(nginx), "compose_sha256": sha256(compose)}
+        receipt["post"] = {
+            "nginx_sha256": sha256(nginx),
+            "compose_sha256": sha256(compose),
+            "renewal_script_sha256": sha256(renewal_paths(args)["renewal_script"]),
+            "renewal_cron_sha256": sha256(renewal_paths(args)["renewal_cron"]),
+        }
         receipt["facts"] = facts
         atomic_write(directory / "receipt.json", json.dumps(receipt, indent=2, sort_keys=True) + "\n", 0o600)
         return {"status": "applied", "receipt": str(directory / "receipt.json"), "group_id": group_id, **receipt["post"]}
     except Exception:
         restore_from(args, directory, receipt, automatic=True)
         raise
+
+
+def secure_path(path: Path, *, mode: int, uid: int, gid: int, socket_required: bool = False) -> bool:
+    if socket_required:
+        if not path.is_socket():
+            return False
+    elif not path.is_dir():
+        return False
+    details = path.stat()
+    return (details.st_mode & 0o7777) == mode and details.st_uid == uid and details.st_gid == gid
+
+
+def renewal_configured(args: argparse.Namespace) -> bool:
+    paths = renewal_paths(args)
+    if not all(path.is_file() for path in paths.values()):
+        return False
+    expected_script = render_renewal_script(Path(args.renewal_template).read_text(encoding="utf-8"), args)
+    expected_cron = render_renewal_cron(args, str(paths["renewal_script"]))
+    return (
+        paths["renewal_script"].read_text(encoding="utf-8") == expected_script
+        and (paths["renewal_script"].stat().st_mode & 0o777) == 0o700
+        and paths["renewal_cron"].read_text(encoding="utf-8") == expected_cron
+        and (paths["renewal_cron"].stat().st_mode & 0o777) == 0o644
+    )
+
+
+def gateway_probe(args: argparse.Namespace) -> bool:
+    result = run([
+        "curl", "--silent", "--show-error", "--fail", "--max-time", "5",
+        "--resolve", f"{args.domain}:443:127.0.0.1", f"https://{args.domain}/",
+        "--output", "/dev/null",
+    ], check=False)
+    return result.returncode == 0
+
+
+def renewal_check(args: argparse.Namespace) -> dict[str, Any]:
+    script = renewal_paths(args)["renewal_script"]
+    if not script.is_file() or not renewal_configured(args):
+        raise EdgeError("Managed certificate renewal is not configured")
+    run([str(script), "--dry-run"], capture=False)
+    if not certificate_valid(args):
+        raise EdgeError("Certificate failed SAN or remaining-validity verification")
+    return {"status": "passed", "domain": args.domain, "certificate_valid": True, "nginx_valid": True}
 
 
 def status(args: argparse.Namespace) -> dict[str, Any]:
@@ -358,6 +485,13 @@ def status(args: argparse.Namespace) -> dict[str, Any]:
     group_result = run(["getent", "group", args.socket_group], check=False)
     group_fields = group_result.stdout.strip().split(":") if group_result.returncode == 0 else []
     group_id = int(group_fields[2]) if len(group_fields) >= 3 else None
+    socket_path = socket_dir / "tunnel.sock"
+    directory_secure = group_id is not None and secure_path(
+        socket_dir, mode=0o2770, uid=args.ssh_uid, gid=group_id,
+    )
+    socket_secure = group_id is not None and secure_path(
+        socket_path, mode=0o660, uid=args.ssh_uid, gid=group_id, socket_required=True,
+    )
     result = {
         "domain": args.domain,
         "dns_ipv4": resolve_ipv4(args.domain),
@@ -368,8 +502,12 @@ def status(args: argparse.Namespace) -> dict[str, Any]:
             for item in service.get("volumes", [])
         ),
         "socket_directory": socket_dir.is_dir(),
-        "socket_present": (socket_dir / "tunnel.sock").is_socket() if socket_dir.exists() else False,
+        "socket_directory_secure": directory_secure,
+        "socket_present": socket_path.is_socket() if socket_dir.exists() else False,
+        "socket_secure": socket_secure,
         "certificate_present": cert.is_file(),
+        "certificate_valid": certificate_valid(args),
+        "renewal_configured": renewal_configured(args),
         "nginx_config_valid": run(["docker", "exec", args.nginx_container, "nginx", "-t"], check=False).returncode == 0,
         "nginx_worker_group": group_id is not None and run([
             "docker", "exec", args.nginx_container, "sh", "-c",
@@ -378,9 +516,11 @@ def status(args: argparse.Namespace) -> dict[str, Any]:
     }
     result["configured"] = all(result[key] for key in (
         "managed_config", "socket_mount", "group_init_mount", "socket_directory",
-        "certificate_present", "nginx_config_valid", "nginx_worker_group",
+        "socket_directory_secure", "certificate_valid", "renewal_configured",
+        "nginx_config_valid", "nginx_worker_group",
     ))
-    result["ready"] = result["configured"] and result["socket_present"]
+    result["gateway_probe"] = result["configured"] and socket_secure and gateway_probe(args)
+    result["ready"] = result["configured"] and socket_secure and result["gateway_probe"]
     return result
 
 
@@ -400,7 +540,7 @@ def rollback(args: argparse.Namespace) -> dict[str, Any]:
 
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser()
-    value.add_argument("action", choices=("preflight", "apply", "status", "rollback"))
+    value.add_argument("action", choices=("preflight", "apply", "status", "renewal-check", "rollback"))
     value.add_argument("--domain", default="zsh.onlyservice.io")
     value.add_argument("--expected-ipv4", default="43.167.173.46")
     value.add_argument("--nginx-config", default="/home/chriswang/docker/nginx/nginx.conf")
@@ -413,10 +553,12 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--socket-container-path", default="/run/dsh-remote/tunnel.sock")
     value.add_argument("--socket-group", default="dsh-remote")
     value.add_argument("--state-dir", default="/home/chriswang/.local/state/dsh-remote")
+    value.add_argument("--renewal-cron", default="/etc/cron.d/dsh-remote-cert-renew")
     value.add_argument("--ssh-uid", type=int, default=1002)
     value.add_argument("--site-template", required=True)
     value.add_argument("--offline-template", required=True)
     value.add_argument("--group-init-template", required=True)
+    value.add_argument("--renewal-template", required=True)
     value.add_argument("--receipt", default="")
     return value
 
@@ -431,6 +573,8 @@ def main() -> int:
             result = apply(args)
         elif args.action == "status":
             result = status(args)
+        elif args.action == "renewal-check":
+            result = renewal_check(args)
         else:
             result = rollback(args)
         print(json.dumps(result, sort_keys=True))

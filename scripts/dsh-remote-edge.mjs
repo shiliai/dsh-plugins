@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const allowedActions = new Set(['preflight', 'apply', 'status', 'rollback'])
+const allowedActions = new Set(['preflight', 'apply', 'status', 'renewal-check', 'rollback'])
 const action = process.argv[2] ?? 'status'
 if (!allowedActions.has(action)) fail(`Unknown action: ${action}`)
 
@@ -26,6 +26,7 @@ const files = [
   path.join(root, 'templates/nginx-site.conf'),
   path.join(root, 'templates/offline.html'),
   path.join(root, 'templates/nginx-socket-group.sh'),
+  path.join(root, 'templates/renew-certificate.sh'),
 ]
 
 try {
@@ -37,6 +38,7 @@ try {
     '--site-template', `${stage}/nginx-site.conf`,
     '--offline-template', `${stage}/offline.html`,
     '--group-init-template', `${stage}/nginx-socket-group.sh`,
+    '--renewal-template', `${stage}/renew-certificate.sh`,
   ]
   if (receipt) remoteArgs.push('--receipt', receipt)
   execute('ssh', ['-o', 'BatchMode=yes', host, remoteArgs.map(shellWord).join(' ')])

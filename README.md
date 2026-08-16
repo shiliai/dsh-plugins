@@ -34,8 +34,12 @@ The sidebar footer opens remote status, copies the persistent private URL, and
 confirms rotation. The URL keeps its 256-bit bearer token in the fragment. The
 gateway exchanges that fragment for a secure, HTTP-only session cookie, removes
 the fragment from browser history, and verifies the cookie on every HTTP request
-and WebSocket upgrade. Rotation atomically changes the persistent token and
-closes earlier authenticated WebSockets before reporting success.
+and WebSocket upgrade. Authenticated browser requests and upgrades must carry the
+exact configured public Origin; state-changing requests without Origin are denied.
+Rotation is serialized and the atomic state-file rename is its commit point. A
+failure before rename preserves the old link; a failure after rename reports the
+already committed replacement. Successful rotation closes earlier authenticated
+WebSockets before reporting success.
 
 ## Edge Operations
 
@@ -46,12 +50,15 @@ the managed VPS edge operations:
 dsh-remote-edge preflight
 dsh-remote-edge apply
 dsh-remote-edge status
+dsh-remote-edge renewal-check
 dsh-remote-edge rollback --receipt <receipt-id>
 ```
 
-`preflight` is read-only. `apply` is backup-first and stops before reload on a
-failed validation. `status` distinguishes configured from ready, and `rollback`
-restores the receipt's exact Nginx and Compose backups. See
+`preflight` is read-only. `apply` is backup-first and stops before activation on a
+failed validation. Nginx streams request and response bodies without proxy
+buffering. `status` distinguishes installed configuration from a functionally
+ready gateway, `renewal-check` exercises Certbot's dry run and certificate checks,
+and `rollback` restores the receipt's exact managed files. See
 [`docs/operations/vps-edge.md`](docs/operations/vps-edge.md) for the managed
 scope, socket permissions, and recovery details.
 

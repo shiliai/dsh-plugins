@@ -50,7 +50,7 @@ try {
   if (typeof status?.sessionVersion !== 'number' || typeof status?.tunnel?.phase !== 'string') {
     throw new Error('dsh-remote lifecycle did not return a valid status snapshot.')
   }
-  await verifySidebar(origin)
+  await verifyRemotePanel(origin, status.sessionVersion)
 
   await stop(server)
   server = undefined
@@ -67,10 +67,11 @@ function runDsh(args, cwd, processEnv) {
   execFileSync(process.execPath, [dshBin, ...args], { cwd, env: processEnv, stdio: 'inherit' })
 }
 
-async function verifySidebar(origin) {
+async function verifyRemotePanel(origin, initialSessionVersion) {
   const browser = await chromium.launch({ channel: 'chrome' })
   try {
-    const page = await browser.newPage()
+    const context = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] })
+    const page = await context.newPage()
     await page.goto(origin)
     const notice = page.getByRole('dialog', { name: 'Internal Testing Notice' })
     if (await notice.waitFor({ state: 'visible', timeout: 5_000 }).then(() => true).catch(() => false)) {
@@ -80,11 +81,51 @@ async function verifySidebar(origin) {
     if (await configureLater.waitFor({ state: 'visible', timeout: 5_000 }).then(() => true).catch(() => false)) {
       await configureLater.click()
     }
-    await page.getByLabel('Remote access').first().click()
-    await page.getByLabel('Remote access').last().waitFor({ state: 'visible' })
+    await page.getByRole('button', { name: 'Remote access', exact: true }).click()
+    const panel = page.locator('section[aria-label="Remote access"]')
+    await panel.waitFor({ state: 'visible' }).catch(async error => {
+      const labels = await page.locator('[aria-label]').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label')))
+      const buttons = await page.getByRole('button').allTextContents()
+      throw new Error(`Remote panel did not open; labels=${JSON.stringify(labels)} buttons=${JSON.stringify(buttons)}`, { cause: error })
+    })
+    await panel.getByText(/starting|online|reconnecting|failed|stopped/iu).waitFor({ state: 'visible' })
+
+    const copy = panel.getByRole('button', { name: 'Copy private link' })
+    await copy.click()
+    const firstUrl = await page.evaluate(() => navigator.clipboard.readText())
+    assertPrivateUrl(firstUrl)
+
+    await panel.getByRole('button', { name: 'Rotate', exact: true }).click()
+    const confirmation = panel.getByRole('alertdialog', { name: 'Rotate remote link confirmation' })
+    await confirmation.waitFor({ state: 'visible' })
+    await confirmation.getByRole('button', { name: 'Rotate', exact: true }).click()
+    await confirmation.waitFor({ state: 'hidden' })
+    await waitForSessionVersion(origin, initialSessionVersion + 1)
+
+    await copy.click()
+    const replacementUrl = await page.evaluate(() => navigator.clipboard.readText())
+    assertPrivateUrl(replacementUrl)
+    if (replacementUrl === firstUrl) throw new Error('Visible rotation did not replace the copied private URL.')
   } finally {
     await browser.close()
   }
+}
+
+function assertPrivateUrl(value) {
+  const url = new URL(value)
+  if (url.origin !== 'https://fixture.invalid' || !/^#\/access\/[A-Za-z0-9_-]{43}$/u.test(url.hash)) {
+    throw new Error('Copied private URL does not match the configured origin and fragment shape.')
+  }
+}
+
+async function waitForSessionVersion(origin, expected) {
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    const response = await fetch(`${origin}/dsh-remote/api/status`)
+    if (response.ok && (await response.json()).sessionVersion === expected) return
+    await delay(100)
+  }
+  throw new Error(`Remote session version did not reach ${expected}.`)
 }
 
 async function waitForRemoteStatus(origin, child, output) {

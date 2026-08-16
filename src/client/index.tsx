@@ -5,7 +5,24 @@ import { Radio } from 'lucide-react'
 import { RemotePanel } from './RemotePanel.tsx'
 import css from './styles.module.css?dsh-inline'
 
-export const inject = ['slots', 'layout']
+export const inject = ['slots']
+const ACCESS_FRAGMENT = /^#\/access\/[A-Za-z0-9_-]{43}$/u
+
+export interface BrowserLocation {
+  hash: string
+  pathname: string
+  search: string
+}
+
+export interface BrowserHistory {
+  replaceState(data: unknown, unused: string, url?: string | URL | null): void
+}
+
+export function clearAccessFragment(location: BrowserLocation, history: BrowserHistory): boolean {
+  if (!ACCESS_FRAGMENT.test(location.hash)) return false
+  history.replaceState(null, '', `${location.pathname}${location.search}`)
+  return true
+}
 
 interface FooterProps {
   wide: boolean
@@ -21,20 +38,20 @@ function FooterButton({ wide, open }: FooterProps) {
 }
 
 export function apply(ctx: ClientContext): void {
+  clearAccessFragment(window.location, window.history)
   let panelDispose: (() => void) | undefined
   const close = (): void => {
     panelDispose?.()
     panelDispose = undefined
-    ctx.layout.closeDetails()
   }
   const open = (): void => {
     if (panelDispose !== undefined) return
     panelDispose = ctx.slots.register({
-      name: 'details',
-      priority: -10,
+      name: 'shell.overlay',
+      id: 'dsh-remote-panel',
+      order: 50,
       inject: () => ({ close }),
     }, RemotePanel)
-    ctx.layout.openDetails()
   }
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
     name: 'sidebar.footer.action',

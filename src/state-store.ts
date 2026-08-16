@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, open, readFile, rename } from 'node:fs/promises'
+import { lstat, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import type { RemoteState } from './contracts.ts'
@@ -6,17 +6,25 @@ import type { RemoteState } from './contracts.ts'
 export const REMOTE_COOKIE = '__Host-dsh_remote'
 const TOKEN_BYTES = 32
 const FILE_MODE = 0o600
+const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/u
+
+export interface RemoteStateStoreHooks {
+  beforeRename?(): Promise<void>
+  afterRename?(): Promise<void>
+}
 
 export class RemoteStateStore {
-  private constructor(readonly filePath: string, private state: RemoteState) {}
+  private rotationQueue: Promise<void> = Promise.resolve()
 
-  static async open(filePath: string): Promise<RemoteStateStore> {
+  private constructor(readonly filePath: string, private state: RemoteState, private readonly hooks: RemoteStateStoreHooks) {}
+
+  static async open(filePath: string, hooks: RemoteStateStoreHooks = {}): Promise<RemoteStateStore> {
     await mkdir(dirname(filePath), { recursive: true, mode: 0o700 })
     try {
       const details = await lstat(filePath)
       if (!details.isFile() || details.isSymbolicLink()) throw new Error('Remote state must be a regular file.')
       if ((details.mode & 0o077) !== 0) throw new Error('Remote state permissions must be mode 0600.')
-      return new RemoteStateStore(filePath, parseState(await readFile(filePath, 'utf8')))
+      return new RemoteStateStore(filePath, parseState(await readFile(filePath, 'utf8')), hooks)
     } catch (error) {
       if (isNotFound(error)) {
         const now = new Date().toISOString()
@@ -27,8 +35,8 @@ export class RemoteStateStore {
           createdAt: now,
           rotatedAt: now,
         }
-        const store = new RemoteStateStore(filePath, state)
-        await store.write(state)
+        const store = new RemoteStateStore(filePath, state, hooks)
+        await store.commit(state)
         return store
       }
       throw error
@@ -44,8 +52,10 @@ export class RemoteStateStore {
   }
 
   verifyBearer(candidate: unknown): boolean {
-    if (typeof candidate !== 'string' || candidate.length !== this.state.token.length) return false
-    return timingSafeEqual(Buffer.from(candidate), Buffer.from(this.state.token))
+    if (typeof candidate !== 'string' || !isToken(candidate)) return false
+    const supplied = Buffer.from(candidate, 'base64url')
+    const expected = Buffer.from(this.state.token, 'base64url')
+    return supplied.length === expected.length && timingSafeEqual(supplied, expected)
   }
 
   sessionCookie(): string {
@@ -65,14 +75,19 @@ export class RemoteStateStore {
   }
 
   async rotate(): Promise<Readonly<RemoteState>> {
+    const operation = this.rotationQueue.then(async () => this.rotateOnce())
+    this.rotationQueue = operation.then(() => undefined, () => undefined)
+    return operation
+  }
+
+  private async rotateOnce(): Promise<Readonly<RemoteState>> {
     const next: RemoteState = {
       ...this.state,
       token: token(),
       sessionVersion: this.state.sessionVersion + 1,
       rotatedAt: new Date().toISOString(),
     }
-    await this.write(next)
-    this.state = next
+    await this.commit(next)
     return this.current()
   }
 
@@ -82,23 +97,35 @@ export class RemoteStateStore {
       .digest('base64url')
   }
 
-  private async write(state: RemoteState): Promise<void> {
+  private async commit(state: RemoteState): Promise<void> {
     const temporary = `${this.filePath}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`
+    let renamed = false
     const handle = await open(temporary, 'wx', FILE_MODE)
     try {
-      await handle.chmod(FILE_MODE)
-      await handle.writeFile(`${JSON.stringify(state)}\n`, 'utf8')
-      await handle.sync()
+      try {
+        await handle.chmod(FILE_MODE)
+        await handle.writeFile(`${JSON.stringify(state)}\n`, 'utf8')
+        await handle.sync()
+      } finally {
+        await handle.close()
+      }
+      await this.hooks.beforeRename?.()
+      await rename(temporary, this.filePath)
+      renamed = true
+      this.state = state
+      try {
+        await this.hooks.afterRename?.()
+        const directory = await open(dirname(this.filePath), 'r')
+        try {
+          await directory.sync()
+        } finally {
+          await directory.close()
+        }
+      } catch {
+        // Rename is the commit point; callers must receive the committed link.
+      }
     } finally {
-      await handle.close()
-    }
-    await rename(temporary, this.filePath)
-    await chmod(this.filePath, FILE_MODE)
-    const directory = await open(dirname(this.filePath), 'r')
-    try {
-      await directory.sync()
-    } finally {
-      await directory.close()
+      if (!renamed) await rm(temporary, { force: true })
     }
   }
 }
@@ -126,7 +153,7 @@ function token(): string {
 
 function isToken(value: string): boolean {
   try {
-    return value.length === 43 && Buffer.from(value, 'base64url').length === TOKEN_BYTES
+    return TOKEN_PATTERN.test(value) && Buffer.from(value, 'base64url').length === TOKEN_BYTES
   } catch {
     return false
   }

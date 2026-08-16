@@ -8,6 +8,7 @@ the remote helper through passwordless sudo, and removes the staging directory.
 node scripts/dsh-remote-edge.mjs preflight
 node scripts/dsh-remote-edge.mjs apply
 node scripts/dsh-remote-edge.mjs status
+node scripts/dsh-remote-edge.mjs renewal-check
 node scripts/dsh-remote-edge.mjs rollback --receipt <receipt-id>
 ```
 
@@ -20,8 +21,14 @@ creates the dedicated socket group and mode-2770 host directory, adds only the
 managed socket/offline mounts and supplementary group to the Nginx service,
 installs the marked HTTP ACME site, recreates and validates Nginx, obtains the
 certificate through the existing Certbot volumes, then installs and activates
-the marked HTTPS site. Any failed step invokes automatic restoration from the
-same receipt.
+the marked HTTPS site and managed certificate-renewal schedule. Any failed step
+invokes automatic restoration from the same receipt.
+
+The HTTPS proxy disables request and response buffering, so large DSH uploads and
+streaming responses are not staged by Nginx. It also disables upstream error
+interception: a reachable DSH response, including an application `503`, passes
+through unchanged. Connection failures such as a missing tunnel socket are mapped
+to the branded retryable `503` page.
 
 The Nginx config is a single-file Docker bind mount. Atomic replacement changes
 the host inode, so both the HTTP staging write and final HTTPS write recreate the
@@ -31,15 +38,27 @@ inode and is intentionally not used.
 Receipts are stored under
 `/home/chriswang/.local/state/dsh-remote/backups/<receipt-id>/receipt.json` with
 mode 0600. They contain pre/post file hashes and no access credential. `rollback`
-restores the exact files, validates Compose, recreates Nginx, validates the live
-configuration, and removes a group created by the failed or reverted apply only
-when its socket directory is empty. A live or stale socket blocks rollback before
-any restore write; stop the local DSH tunnel first. Repeating rollback is a no-op.
+restores the exact Nginx, Compose, renewal-script, and cron pre-state, validates
+Compose, recreates Nginx, validates the live configuration, and removes a group
+created by the failed or reverted apply only when its socket directory is empty.
+A live or stale socket blocks every manual rollback before any restore write;
+stop the local DSH tunnel and remove only its dedicated stale socket first.
+Receipts form a state chain: roll back newest to oldest when returning across
+multiple applies. Repeating one completed rollback is a no-op.
 
-`status` distinguishes `configured` from `ready`. Configured means DNS-independent
-edge files, certificate, mounts, directory, Nginx validation, and verified
-membership of the Nginx user in the socket GID are present. Ready additionally
-requires the reverse-tunnel socket to exist.
+`status` distinguishes `configured` from `ready`. Configured means the exact
+managed edge files and renewal schedule are installed, the certificate matches
+the domain with at least 30 days remaining, the socket directory has exact owner,
+group and mode, Nginx validates, and its worker belongs to the socket GID. Ready
+additionally requires a real mode-0660 socket with the exact owner/group and a
+successful HTTPS loopback request through Nginx and the gateway. A regular file
+at the socket path never counts as ready.
+
+The managed cron entry runs daily at `03:17` VPS time and appends to
+`/home/chriswang/.local/state/dsh-remote/certificate-renewal.log`. It uses Certbot
+webroot renewal, validates Nginx, and reloads only after success. Run
+`renewal-check` after deployment and periodically during operations; it performs
+a Certbot dry run and then verifies certificate SAN and remaining validity.
 
 The VPS sshd applies its server-side stream-local mask (`0177`) to remote socket
 creation, so client `StreamLocalBindMask` does not produce the required group

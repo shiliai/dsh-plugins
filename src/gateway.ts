@@ -29,7 +29,12 @@ export class RemoteGateway {
   private boundPort: number | undefined
 
   constructor(private readonly options: RemoteGatewayOptions) {
-    this.server = createServer((request, response) => { void this.handle(request, response) })
+    this.server = createServer((request, response) => {
+      void this.handle(request, response).catch(() => {
+        if (response.headersSent) response.destroy()
+        else send(response, 500, 'Remote service unavailable.')
+      })
+    })
     this.server.on('connection', socket => {
       this.connections.add(socket)
       socket.once('close', () => { this.connections.delete(socket) })
@@ -102,6 +107,10 @@ export class RemoteGateway {
       send(response, 401, 'Access denied.')
       return
     }
+    if (!this.allowedHttpOrigin(request)) {
+      send(response, 403, 'Access denied.')
+      return
+    }
     this.proxy.web(request, response, {
       target: this.target(),
       headers: upstreamHeaders(request.headers, this.target()),
@@ -135,8 +144,8 @@ export class RemoteGateway {
 
   private handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
     const version = this.options.state.authenticateCookie(request.headers.cookie)
-    if (version === null) {
-      rejectUpgrade(socket, 401)
+    if (version === null || request.headers.origin !== this.options.remoteOrigin) {
+      rejectUpgrade(socket, version === null ? 401 : 403)
       return
     }
     const sockets = this.upgradedSockets.get(version) ?? new Set<Duplex>()
@@ -160,6 +169,12 @@ export class RemoteGateway {
 
   private target(): string {
     return `http://127.0.0.1:${this.options.targetPort}`
+  }
+
+  private allowedHttpOrigin(request: IncomingMessage): boolean {
+    const origin = request.headers.origin
+    if (origin !== undefined) return origin === this.options.remoteOrigin
+    return ['GET', 'HEAD', 'OPTIONS'].includes(request.method ?? '')
   }
 }
 
