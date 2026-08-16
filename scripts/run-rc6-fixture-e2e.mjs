@@ -43,6 +43,7 @@ try {
   })
   const serverOutput = collectOutput(server)
   await waitForReady(origin, server, serverOutput)
+  await waitForApi(origin, server, serverOutput)
   const workspace = await rpc(origin, 'workspace.create', { path: vault })
   const session = await rpc(origin, 'session.create', { workspaceId: workspace.workspace.workspaceId })
 
@@ -125,6 +126,21 @@ async function waitForReady(origin, child, output) {
     await new Promise(resolveDelay => setTimeout(resolveDelay, 250))
   }
   throw new Error(`DSH did not become ready at ${origin}\n${output()}`)
+}
+
+async function waitForApi(origin, child, output) {
+  const deadline = Date.now() + 45_000
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) throw new Error(`DSH exited before API readiness (${child.exitCode})\n${output()}`)
+    try {
+      await rpc(origin, 'host.describe', {})
+      return
+    } catch {
+      // The static app can be ready before the API proxy is mounted.
+    }
+    await new Promise(resolveDelay => setTimeout(resolveDelay, 250))
+  }
+  throw new Error(`DSH API did not become ready at ${origin}\n${output()}`)
 }
 
 async function stop(child) {
