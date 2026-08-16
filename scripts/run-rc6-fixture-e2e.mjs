@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { execFileSync, spawn } from 'node:child_process'
 import { createServer } from 'node:net'
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -35,7 +35,6 @@ try {
   const archiveSha = createHash('sha256').update(await readFile(archive)).digest('hex')
 
   await cp(join(root, 'tests/fixtures/vault'), vault, { recursive: true })
-  await seedWorkspace(dshHome, vault)
   runDsh(['plugin', '--profile', 'web', 'add', archive], vault, env)
   server = spawn(process.execPath, [dshBin, 'web', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: vault,
@@ -44,6 +43,8 @@ try {
   })
   const serverOutput = collectOutput(server)
   await waitForReady(origin, server, serverOutput)
+  const workspace = await rpc(origin, 'workspace.create', { path: vault })
+  const session = await rpc(origin, 'session.create', { workspaceId: workspace.workspace.workspaceId })
 
   const result = spawn(process.execPath, [playwrightBin, 'test'], {
     cwd: root,
@@ -52,6 +53,7 @@ try {
       PLAYWRIGHT_BASE_URL: origin,
       DSH_OBSIDIAN_E2E_COMMIT: commit,
       DSH_OBSIDIAN_E2E_PACKAGE_SHA: archiveSha,
+      DSH_OBSIDIAN_E2E_SESSION_ID: session.sessionId,
     },
     stdio: 'inherit',
   })
@@ -71,26 +73,19 @@ function runDsh(args, cwd, processEnv) {
   execFileSync(process.execPath, [dshBin, ...args], { cwd, env: processEnv, stdio: 'inherit' })
 }
 
-async function seedWorkspace(home, path) {
-  const now = new Date().toISOString()
-  const storage = {
-    unit: { name: 'workspace', version: 2 },
-    global: { initialized: true, workspaceIds: ['obsidian-rc6-fixture'], archivedSessionIds: [] },
-    tables: {
-      workspaces: {
-        'obsidian-rc6-fixture': {
-          path,
-          title: 'Obsidian rc.6 fixture',
-          sessionIds: [],
-          createdAt: now,
-          updatedAt: now,
-        },
-      },
-    },
+async function rpc(origin, method, payload) {
+  const rpcId = `dsh-obsidian-e2e-${randomUUID()}`
+  const response = await fetch(`${origin}/api/${method}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'client-request', rpcId, method, payload }),
+  })
+  if (!response.ok) throw new Error(`${method} transport failed with HTTP ${response.status}`)
+  const envelope = await response.json()
+  if (envelope?.type !== 'server-response' || envelope.rpcId !== rpcId || envelope.result?.ok !== true) {
+    throw new Error(`${method} failed: ${JSON.stringify(envelope)}`)
   }
-  const directory = join(home, 'storages')
-  await mkdir(directory, { recursive: true })
-  await writeFile(join(directory, 'workspace.json'), `${JSON.stringify(storage, null, 2)}\n`)
+  return envelope.result.value
 }
 
 function availablePort() {

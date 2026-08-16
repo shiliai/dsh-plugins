@@ -1,11 +1,11 @@
 import { expect, test } from '@playwright/test'
 
 test('keeps note workflow and composer routing usable across session transitions', async ({ page }, testInfo) => {
-  test.skip(process.env.DSH_OBSIDIAN_E2E_COMMIT === undefined || process.env.DSH_OBSIDIAN_E2E_PACKAGE_SHA === undefined, 'rc.6 harness supplies immutable identities')
+  test.skip(process.env.DSH_OBSIDIAN_E2E_COMMIT === undefined || process.env.DSH_OBSIDIAN_E2E_PACKAGE_SHA === undefined || process.env.DSH_OBSIDIAN_E2E_SESSION_ID === undefined, 'rc.6 harness supplies immutable identities')
   expect(process.env.DSH_OBSIDIAN_E2E_COMMIT).toMatch(/^[0-9a-f]{40}$/u)
   expect(process.env.DSH_OBSIDIAN_E2E_PACKAGE_SHA).toMatch(/^[0-9a-f]{64}$/u)
   await testInfo.attach('immutable-subject.json', {
-    body: JSON.stringify({ commit: process.env.DSH_OBSIDIAN_E2E_COMMIT, packageSha256: process.env.DSH_OBSIDIAN_E2E_PACKAGE_SHA }),
+    body: JSON.stringify({ commit: process.env.DSH_OBSIDIAN_E2E_COMMIT, packageSha256: process.env.DSH_OBSIDIAN_E2E_PACKAGE_SHA, sessionId: process.env.DSH_OBSIDIAN_E2E_SESSION_ID }),
     contentType: 'application/json',
   })
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -18,12 +18,6 @@ test('keeps note workflow and composer routing usable across session transitions
   if (await configureLater.waitFor({ state: 'visible', timeout: 5_000 }).then(() => true).catch(() => false)) {
     await configureLater.click()
   }
-  await page.getByRole('button', { name: 'Choose workspace', exact: true }).click()
-  await page.getByRole('menuitem', { name: 'Obsidian rc.6 fixture', exact: true }).click()
-  const bootstrapComposer = page.getByRole('textbox', { name: 'Choose workspace' })
-  await bootstrapComposer.fill('Create the rc.6 fixture session.')
-  await page.getByRole('button', { name: 'Send message' }).click()
-  await page.getByRole('button', { name: 'New session', exact: true }).last().click()
   await page.getByLabel('Obsidian notes').click()
   await page.getByRole('treeitem', { name: /Home/u }).click()
   await expect(page.getByLabel('Note editor')).toBeVisible()
