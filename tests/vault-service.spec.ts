@@ -67,4 +67,64 @@ describe('VaultService', () => {
     await expect(vault.writeNote('Home.md', '# Stale editor', note.modifiedMs))
       .rejects.toMatchObject({ code: 'NOTE_CONFLICT', status: 409 })
   })
+
+  it('serializes concurrent replacements and never overwrites a concurrent move target', async () => {
+    const { vault } = await fixture()
+    const note = await vault.readNote('Home.md')
+    const writes = await Promise.allSettled([
+      vault.writeNote('Home.md', '# First', note.modifiedMs),
+      vault.writeNote('Home.md', '# Second', note.modifiedMs),
+    ])
+    expect(writes.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+    expect(writes.filter(result => result.status === 'rejected')).toHaveLength(1)
+
+    await vault.writeNote('One.md', '# One')
+    await vault.writeNote('Two.md', '# Two')
+    const moves = await Promise.allSettled([
+      vault.moveNote('One.md', 'Target.md'),
+      vault.moveNote('Two.md', 'Target.md'),
+    ])
+    expect(moves.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+    expect(moves.filter(result => result.status === 'rejected')).toHaveLength(1)
+    expect((await vault.readNote('Target.md')).content).toMatch(/^# (One|Two)$/u)
+  })
+
+  it('keeps searching past oversized notes and preserves only round-trippable paths', async () => {
+    const { root, vault } = await fixture()
+    await writeFile(join(root, 'Large.md'), 'needle '.repeat(700))
+    await writeFile(join(root, ' Later.md'), 'needle here')
+    await writeFile(join(root, 'slash\\name.md'), 'hidden')
+    expect(await vault.searchNotes('needle')).toContainEqual({ path: ' Later.md', line: 1, excerpt: 'needle here' })
+    expect(await vault.listNotePaths()).toContain(' Later.md')
+    expect(await vault.listNotePaths()).not.toContain('slash\\name.md')
+    await expect(vault.readNote('slash\\name.md')).rejects.toMatchObject({ code: 'INVALID_PATH' })
+  })
+
+  it('never follows symlinks for note reads, assets, tree traversal, or mutations', async () => {
+    const { root, vault } = await fixture()
+    await mkdir(join(root, 'Assets'))
+    await writeFile(join(root, 'Assets', 'image.png'), 'png')
+    await symlink(join(root, 'Projects'), join(root, 'Alias'))
+    await symlink(join(root, 'Assets', 'image.png'), join(root, 'Alias.png'))
+
+    await expect(vault.readNote('Alias/Roadmap.md')).rejects.toMatchObject({ code: 'PATH_ESCAPE' })
+    await expect(vault.openAsset('Alias.png')).rejects.toMatchObject({ code: 'PATH_ESCAPE' })
+    await expect(vault.writeNote('Alias/New.md', 'no')).rejects.toMatchObject({ code: 'PATH_ESCAPE' })
+    expect(await vault.listNotePaths()).not.toContain('Alias/Roadmap.md')
+  })
+
+  it('returns note and asset metadata from opened handles', async () => {
+    const { root, vault } = await fixture()
+    await mkdir(join(root, 'Assets'))
+    await writeFile(join(root, 'Assets', 'image.png'), 'png')
+    const note = await vault.readNote('Home.md')
+    expect(note.size).toBe(Buffer.byteLength(note.content))
+    const asset = await vault.openAsset('Assets/image.png')
+    try {
+      expect(asset.size).toBe(3)
+      expect(await asset.handle.readFile({ encoding: 'utf8' })).toBe('png')
+    } finally {
+      await asset.handle.close()
+    }
+  })
 })

@@ -29,6 +29,16 @@ interface PanelLifecycle {
   close(): void
 }
 
+interface VaultApi {
+  info(): Promise<{ name: string; root: string }>
+  tree(): Promise<{ nodes: VaultTreeNode[] }>
+  note(path: string): Promise<NoteDocument>
+  search(query: string): Promise<{ results: NoteSearchResult[] }>
+  write(path: string, content: string, expectedModifiedMs?: number): Promise<NoteDocument>
+  move(from: string, to: string): Promise<NoteDocument>
+  delete(path: string): Promise<void>
+}
+
 const INITIAL: VaultSnapshot = {
   vaultName: 'Vault',
   vaultRoot: '',
@@ -48,8 +58,11 @@ const INITIAL: VaultSnapshot = {
 export class VaultStore {
   private snapshot: VaultSnapshot = INITIAL
   private readonly listeners = new Set<() => void>()
+  private noteGeneration = 0
+  private draftGeneration = 0
+  private saveGeneration = 0
 
-  constructor(private readonly panel: PanelLifecycle) {}
+  constructor(private readonly panel: PanelLifecycle, private readonly api: VaultApi = vaultApi) {}
 
   getSnapshot = (): VaultSnapshot => this.snapshot
   subscribe = (listener: () => void): (() => void) => {
@@ -66,14 +79,14 @@ export class VaultStore {
   }
 
   async initialize(): Promise<void> {
-    const [info] = await Promise.all([vaultApi.info(), this.refreshTree()])
+    const [info] = await Promise.all([this.api.info(), this.refreshTree()])
     this.update({ vaultName: info.name, vaultRoot: info.root })
   }
 
   async refreshTree(): Promise<void> {
     this.update({ loadingTree: true })
     try {
-      const { nodes } = await vaultApi.tree()
+      const { nodes } = await this.api.tree()
       this.update({ tree: nodes, loadingTree: false, error: null })
     } catch (error) {
       this.update({ loadingTree: false, error: message(error) })
@@ -86,13 +99,16 @@ export class VaultStore {
       this.update({ pendingDiscard: { kind: 'open', path } })
       return
     }
+    const generation = ++this.noteGeneration
     this.panel.open()
     this.update({ loadingNote: true, error: null })
     try {
-      const note = await vaultApi.note(path)
+      const note = await this.api.note(path)
+      if (generation !== this.noteGeneration) return
+      this.draftGeneration++
       this.update({ active: note, draft: note.content, loadingNote: false, mode: 'preview' })
     } catch (error) {
-      this.update({ loadingNote: false, error: message(error) })
+      if (generation === this.noteGeneration) this.update({ loadingNote: false, error: message(error) })
     }
   }
 
@@ -102,7 +118,10 @@ export class VaultStore {
       this.update({ pendingDiscard: { kind: 'close' } })
       return
     }
-    this.update({ active: null, draft: '', error: null })
+    this.noteGeneration++
+    this.draftGeneration++
+    this.invalidateSave()
+    this.update({ active: null, draft: '', saving: false, error: null })
     this.panel.close()
   }
 
@@ -115,24 +134,35 @@ export class VaultStore {
     const active = this.snapshot.active
     if (pending === null || active === null) return
 
-    this.update({ draft: active.content, pendingDiscard: null })
+    this.draftGeneration++
+    this.invalidateSave()
+    this.update({ draft: active.content, pendingDiscard: null, saving: false })
     if (pending.kind === 'open') await this.openNote(pending.path)
     else this.closeNote()
   }
 
-  setDraft(draft: string): void { this.update({ draft }) }
+  setDraft(draft: string): void {
+    this.draftGeneration++
+    this.update({ draft })
+  }
   setMode(mode: NoteMode): void { this.update({ mode }) }
 
   async save(): Promise<void> {
     const active = this.snapshot.active
     if (active === null || !this.dirty) return
+    const noteGeneration = this.noteGeneration
+    const draftGeneration = this.draftGeneration
+    const saveGeneration = ++this.saveGeneration
+    const draft = this.snapshot.draft
     this.update({ saving: true, error: null })
     try {
-      const note = await vaultApi.write(active.path, this.snapshot.draft, active.modifiedMs)
-      this.update({ active: note, draft: note.content, saving: false })
+      const note = await this.api.write(active.path, draft, active.modifiedMs)
+      if (saveGeneration !== this.saveGeneration || noteGeneration !== this.noteGeneration || this.snapshot.active?.path !== active.path) return
+      const draftChanged = draftGeneration !== this.draftGeneration
+      this.update({ active: note, draft: draftChanged ? this.snapshot.draft : note.content, saving: false })
       await this.refreshTree()
     } catch (error) {
-      this.update({ saving: false, error: message(error) })
+      if (saveGeneration === this.saveGeneration && noteGeneration === this.noteGeneration) this.update({ saving: false, error: message(error) })
     }
   }
 
@@ -140,7 +170,10 @@ export class VaultStore {
     const normalized = path.trim().endsWith('.md') ? path.trim() : `${path.trim()}.md`
     if (normalized === '.md') return
     try {
-      await vaultApi.write(normalized, `# ${titleFromPath(normalized)}\n\n`)
+      this.noteGeneration++
+      this.invalidateSave()
+      this.update({ saving: false })
+      await this.api.write(normalized, `# ${titleFromPath(normalized)}\n\n`)
       await this.refreshTree()
       await this.openNote(normalized)
       this.setMode('edit')
@@ -160,7 +193,11 @@ export class VaultStore {
     const normalized = trimmed.endsWith('.md') ? trimmed : `${trimmed}.md`
     if (normalized === active.path) return
     try {
-      const note = await vaultApi.move(active.path, normalized)
+      this.noteGeneration++
+      this.invalidateSave()
+      this.update({ saving: false })
+      const note = await this.api.move(active.path, normalized)
+      this.draftGeneration++
       this.update({ active: note, draft: note.content, error: null })
       await this.refreshTree()
     } catch (error) {
@@ -172,7 +209,11 @@ export class VaultStore {
     const active = this.snapshot.active
     if (active === null) return
     try {
-      await vaultApi.delete(active.path)
+      this.noteGeneration++
+      this.draftGeneration++
+      this.invalidateSave()
+      this.update({ saving: false })
+      await this.api.delete(active.path)
       this.update({ active: null, draft: '', error: null })
       this.panel.close()
       await this.refreshTree()
@@ -188,7 +229,7 @@ export class VaultStore {
       return
     }
     try {
-      const { results } = await vaultApi.search(query)
+      const { results } = await this.api.search(query)
       if (this.snapshot.query === query) this.update({ searchResults: results, error: null })
     } catch (error) {
       this.update({ error: message(error) })
@@ -198,17 +239,29 @@ export class VaultStore {
   async pollActive(): Promise<void> {
     const active = this.snapshot.active
     if (active === null || this.dirty || this.snapshot.saving) return
+    const noteGeneration = this.noteGeneration
+    const draftGeneration = this.draftGeneration
+    const path = active.path
+    const modifiedMs = active.modifiedMs
     try {
-      const current = await vaultApi.note(active.path)
-      if (current.modifiedMs !== active.modifiedMs) this.update({ active: current, draft: current.content })
+      const current = await this.api.note(path)
+      if (noteGeneration !== this.noteGeneration || draftGeneration !== this.draftGeneration || this.snapshot.active?.path !== path || this.snapshot.active.modifiedMs !== modifiedMs || this.dirty) return
+      if (current.modifiedMs !== modifiedMs) {
+        this.draftGeneration++
+        this.update({ active: current, draft: current.content })
+      }
     } catch (error) {
-      this.update({ error: message(error) })
+      if (noteGeneration === this.noteGeneration) this.update({ error: message(error) })
     }
   }
 
   private update(patch: Partial<VaultSnapshot>): void {
     this.snapshot = { ...this.snapshot, ...patch }
     for (const listener of this.listeners) listener()
+  }
+
+  private invalidateSave(): void {
+    this.saveGeneration++
   }
 }
 

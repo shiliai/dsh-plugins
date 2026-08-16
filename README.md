@@ -9,7 +9,7 @@ Build the plugin checkout, then add it to the Web profile:
 ```sh
 pnpm install
 pnpm run build
-dsh plugin --profile web add /Users/chris/project/dsh-plugins/dsh-obsidian
+dsh plugin --profile web add "$(pwd)"
 ```
 
 Start DSH from the Vault directory. The process working directory is the Vault root:
@@ -38,7 +38,7 @@ The active DSH provider receives these Vault-scoped tools:
 - `obsidian_move_note`
 - `obsidian_delete_note`
 
-Replacing an existing note requires the `modifiedMs` value returned by `obsidian_read_note`. All note paths are Vault-relative `.md` paths. Symlinks are never traversed while listing, and reads or writes through a symlink that leaves the Vault are rejected.
+Replacing an existing note requires the `modifiedMs` value returned by `obsidian_read_note`. `obsidian_list_notes` accepts an optional `limit` (1-500) and `cursor`, returning `nextCursor` when more paths remain. All note paths are Vault-relative `.md` paths. Symlinks are never followed for listing, reads, assets, or mutations.
 
 ## Configuration
 
@@ -51,11 +51,12 @@ The bundle contributes this DSH patch:
       inject: [webServer, tools]
       config:
         vaultRoot: !!js process.cwd()
+        mutationOrigin: !!js process.env.DSH_OBSIDIAN_ORIGIN ?? 'http://127.0.0.1:3080'
         maxNoteBytes: 2097152
         searchResultLimit: 100
 ```
 
-Override the row in a later profile patch to change limits or pin another Vault root.
+The standard DSH Web origin defaults to `http://127.0.0.1:3080`. Set `DSH_OBSIDIAN_ORIGIN` to the exact browser origin before starting DSH when using another host or port. Mutation requests are accepted only from that configured origin; matching client-supplied `Origin` and `Host` headers are not sufficient. Override the row in a later profile patch to change limits, the origin, or pin another Vault root. Verify the effective configuration with `dsh --profile web --dump-config`.
 
 ## Development
 
@@ -64,6 +65,12 @@ pnpm run typecheck
 pnpm run test
 pnpm run build
 pnpm run pack:check
+pnpm run e2e:rc6
+pnpm run release:check
 ```
 
-The package targets the DSH pre-release plugin interfaces represented by `deepseek-harness` commit `47f943859bef60e4160492346772ded9b24f765a`.
+Requires Node `^22.19.0 || >=24.0.0`, pnpm, and a DSH `0.1.0-rc.6` Web profile. React is supplied by the DSH host; the package keeps React only for development builds and tests.
+
+## Recovery
+
+Stop the Web profile, remove the bundle with `dsh plugin --profile web remove @dsh-plugins/dsh-obsidian`, then restart DSH and confirm the row is absent from `dsh --profile web --dump-config`. The plugin never creates a Vault backup or version history. Restore overwritten or deleted notes from your Vault backup, sync service, or Obsidian version history before restarting the profile.

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import {
-  lstat, mkdir, open, readFile, readdir, realpath, rename, stat, unlink, writeFile,
+  link, lstat, mkdir, open, readdir, realpath, rename, stat, unlink, writeFile,
 } from 'node:fs/promises'
 import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path'
 import type { NoteDocument, NoteSearchResult, VaultTreeNode } from './contracts.ts'
@@ -24,11 +24,10 @@ function isInside(root: string, candidate: string): boolean {
 }
 
 function normalizeRelativePath(input: string): string {
-  const value = input.replaceAll('\\', '/').trim()
-  if (value.length === 0 || value.includes('\0') || value.startsWith('/') || /^[A-Za-z]:\//.test(value)) {
+  if (input.length === 0 || input.includes('\0') || input.includes('\\') || input.startsWith('/') || /^[A-Za-z]:\//.test(input)) {
     throw new VaultError('A vault-relative path is required.', 'INVALID_PATH', 400)
   }
-  const parts = value.split('/')
+  const parts = input.split('/')
   if (parts.some(part => part === '' || part === '.' || part === '..')) {
     throw new VaultError('Path traversal and empty path segments are not allowed.', 'INVALID_PATH', 400)
   }
@@ -37,6 +36,7 @@ function normalizeRelativePath(input: string): string {
 
 export class VaultService {
   readonly root: string
+  private mutationTail: Promise<void> = Promise.resolve()
 
   private constructor(
     root: string,
@@ -75,18 +75,39 @@ export class VaultService {
     return output
   }
 
+  async listNotePathsPage(cursor?: string, limit = 100): Promise<{ paths: string[]; nextCursor?: string }> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+      throw new VaultError('Note list limit must be between 1 and 500.', 'INVALID_QUERY', 400)
+    }
+    const paths = await this.listNotePaths()
+    let start = 0
+    if (cursor !== undefined) {
+      const index = paths.indexOf(cursor)
+      if (index === -1) throw new VaultError('Note list cursor is not valid for this vault.', 'INVALID_QUERY', 400)
+      start = index + 1
+    }
+    const page = paths.slice(start, start + limit)
+    const last = page.at(-1)
+    return last !== undefined && start + page.length < paths.length ? { paths: page, nextCursor: last } : { paths: page }
+  }
+
   async readNote(path: string): Promise<NoteDocument> {
     const absolute = await this.existingPath(path, 'note')
-    const info = await stat(absolute)
-    if (!info.isFile()) throw new VaultError('The requested note is not a file.', 'NOT_A_NOTE', 400)
-    if (info.size > this.maxNoteBytes) {
-      throw new VaultError(`Note exceeds the ${this.maxNoteBytes} byte limit.`, 'NOTE_TOO_LARGE', 413)
-    }
-    return {
-      path: normalizeRelativePath(path),
-      content: await readFile(absolute, 'utf8'),
-      modifiedMs: info.mtimeMs,
-      size: info.size,
+    const handle = await open(absolute, 'r')
+    try {
+      const info = await handle.stat()
+      if (!info.isFile()) throw new VaultError('The requested note is not a file.', 'NOT_A_NOTE', 400)
+      if (info.size > this.maxNoteBytes) {
+        throw new VaultError(`Note exceeds the ${this.maxNoteBytes} byte limit.`, 'NOTE_TOO_LARGE', 413)
+      }
+      return {
+        path: normalizeRelativePath(path),
+        content: await handle.readFile({ encoding: 'utf8' }),
+        modifiedMs: info.mtimeMs,
+        size: info.size,
+      }
+    } finally {
+      await handle.close()
     }
   }
 
@@ -95,51 +116,63 @@ export class VaultService {
     if (bytes > this.maxNoteBytes) {
       throw new VaultError(`Note exceeds the ${this.maxNoteBytes} byte limit.`, 'NOTE_TOO_LARGE', 413)
     }
-    const normalized = this.assertNotePath(path)
-    const absolute = await this.creatablePath(normalized)
-    let currentModifiedMs: number | undefined
-    try {
-      currentModifiedMs = (await stat(absolute)).mtimeMs
-    } catch (error) {
-      if (!isNodeError(error, 'ENOENT')) throw error
-    }
-    if (currentModifiedMs !== undefined && expectedModifiedMs === undefined) {
-      throw new VaultError('The note already exists; read it before replacing it.', 'NOTE_EXISTS', 409)
-    }
-    if (expectedModifiedMs !== undefined && currentModifiedMs !== expectedModifiedMs) {
-      throw new VaultError('The note changed after it was opened.', 'NOTE_CONFLICT', 409)
-    }
-    await mkdir(dirname(absolute), { recursive: true })
-    const temporary = `${absolute}.${randomUUID()}.tmp`
-    try {
-      await writeFile(temporary, content, { encoding: 'utf8', flag: 'wx' })
-      await rename(temporary, absolute)
-    } finally {
-      await unlink(temporary).catch((error: unknown) => {
+    return this.mutate(async () => {
+      const normalized = this.assertNotePath(path)
+      const absolute = await this.creatablePath(normalized)
+      let currentModifiedMs: number | undefined
+      try {
+        currentModifiedMs = (await stat(absolute)).mtimeMs
+      } catch (error) {
         if (!isNodeError(error, 'ENOENT')) throw error
-      })
-    }
-    return this.readNote(normalized)
+      }
+      if (currentModifiedMs !== undefined && expectedModifiedMs === undefined) {
+        throw new VaultError('The note already exists; read it before replacing it.', 'NOTE_EXISTS', 409)
+      }
+      if (expectedModifiedMs !== undefined && currentModifiedMs !== expectedModifiedMs) {
+        throw new VaultError('The note changed after it was opened.', 'NOTE_CONFLICT', 409)
+      }
+      await mkdir(dirname(absolute), { recursive: true })
+      await this.assertCreatableComponents(normalized)
+      const temporary = `${absolute}.${randomUUID()}.tmp`
+      try {
+        await writeFile(temporary, content, { encoding: 'utf8', flag: 'wx' })
+        await rename(temporary, absolute)
+      } finally {
+        await unlink(temporary).catch((error: unknown) => {
+          if (!isNodeError(error, 'ENOENT')) throw error
+        })
+      }
+      return this.readNote(normalized)
+    })
   }
 
   async moveNote(from: string, to: string): Promise<NoteDocument> {
-    const source = await this.existingPath(from, 'note')
-    const targetPath = this.assertNotePath(to)
-    const target = await this.creatablePath(targetPath)
-    try {
-      await lstat(target)
-      throw new VaultError('A note already exists at the target path.', 'NOTE_EXISTS', 409)
-    } catch (error) {
-      if (error instanceof VaultError) throw error
-      if (!isNodeError(error, 'ENOENT')) throw error
-    }
-    await mkdir(dirname(target), { recursive: true })
-    await rename(source, target)
-    return this.readNote(targetPath)
+    return this.mutate(async () => {
+      const source = await this.existingPath(from, 'note')
+      const targetPath = this.assertNotePath(to)
+      const target = await this.creatablePath(targetPath)
+      await mkdir(dirname(target), { recursive: true })
+      await this.assertCreatableComponents(targetPath)
+      try {
+        await link(source, target)
+      } catch (error) {
+        if (isNodeError(error, 'EEXIST')) throw new VaultError('A note already exists at the target path.', 'NOTE_EXISTS', 409)
+        throw error
+      }
+      try {
+        await unlink(source)
+      } catch (error) {
+        await unlink(target).catch(() => undefined)
+        throw error
+      }
+      return this.readNote(targetPath)
+    })
   }
 
   async deleteNote(path: string): Promise<void> {
-    await unlink(await this.existingPath(path, 'note'))
+    await this.mutate(async () => {
+      await unlink(await this.existingPath(path, 'note'))
+    })
   }
 
   async searchNotes(query: string): Promise<NoteSearchResult[]> {
@@ -147,7 +180,13 @@ export class VaultService {
     if (needle.length === 0) return []
     const results: NoteSearchResult[] = []
     for (const path of await this.listNotePaths()) {
-      const note = await this.readNote(path)
+      let note: NoteDocument
+      try {
+        note = await this.readNote(path)
+      } catch (error) {
+        if (error instanceof VaultError && error.code === 'NOTE_TOO_LARGE') continue
+        throw error
+      }
       const lines = note.content.split(/\r?\n/u)
       const pathMatch = path.toLocaleLowerCase().includes(needle)
       if (pathMatch) results.push({ path, line: 0, excerpt: path })
@@ -169,9 +208,15 @@ export class VaultService {
       throw new VaultError('Only supported image assets can be opened.', 'UNSUPPORTED_ASSET', 400)
     }
     const absolute = await this.existingPath(normalized, 'asset')
-    const info = await stat(absolute)
-    if (!info.isFile()) throw new VaultError('The requested asset is not a file.', 'NOT_AN_ASSET', 400)
-    return { handle: await open(absolute, 'r'), size: info.size, contentType: contentType(extension) }
+    const handle = await open(absolute, 'r')
+    try {
+      const info = await handle.stat()
+      if (!info.isFile()) throw new VaultError('The requested asset is not a file.', 'NOT_AN_ASSET', 400)
+      return { handle, size: info.size, contentType: contentType(extension) }
+    } catch (error) {
+      await handle.close()
+      throw error
+    }
   }
 
   private assertNotePath(path: string): string {
@@ -186,6 +231,7 @@ export class VaultService {
     const normalized = kind === 'note' ? this.assertNotePath(path) : normalizeRelativePath(path)
     const lexical = resolve(this.root, normalized)
     if (!isInside(this.root, lexical)) throw new VaultError('Path leaves the vault.', 'PATH_ESCAPE', 403)
+    await this.assertExistingComponents(normalized)
     let canonical: string
     try {
       canonical = await realpath(lexical)
@@ -202,36 +248,65 @@ export class VaultService {
   private async creatablePath(path: string): Promise<string> {
     const lexical = resolve(this.root, path)
     if (!isInside(this.root, lexical)) throw new VaultError('Path leaves the vault.', 'PATH_ESCAPE', 403)
-    let ancestor = dirname(lexical)
-    for (;;) {
+    await this.assertCreatableComponents(path)
+    return lexical
+  }
+
+  private async assertExistingComponents(path: string): Promise<void> {
+    let candidate = this.root
+    for (const part of path.split('/')) {
+      candidate = resolve(candidate, part)
+      let info: Awaited<ReturnType<typeof lstat>>
       try {
-        const canonical = await realpath(ancestor)
-        if (!isInside(this.root, canonical)) {
-          throw new VaultError('Symbolic links may not leave the vault.', 'PATH_ESCAPE', 403)
-        }
-        break
+        info = await lstat(candidate)
       } catch (error) {
-        if (!isNodeError(error, 'ENOENT')) throw error
-        const parent = dirname(ancestor)
-        if (parent === ancestor) throw error
-        ancestor = parent
+        if (isNodeError(error, 'ENOENT')) throw new VaultError('Vault entry not found.', 'NOT_FOUND', 404)
+        throw error
+      }
+      if (info.isSymbolicLink()) throw new VaultError('Symbolic links are not allowed for vault operations.', 'PATH_ESCAPE', 403)
+    }
+  }
+
+  private async assertCreatableComponents(path: string): Promise<void> {
+    let candidate = this.root
+    for (const part of path.split('/')) {
+      candidate = resolve(candidate, part)
+      try {
+        const info = await lstat(candidate)
+        if (info.isSymbolicLink()) throw new VaultError('Symbolic links are not allowed for vault operations.', 'PATH_ESCAPE', 403)
+      } catch (error) {
+        if (isNodeError(error, 'ENOENT')) return
+        throw error
       }
     }
-    return lexical
+  }
+
+  private async mutate<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.mutationTail
+    let release: (() => void) | undefined
+    this.mutationTail = new Promise(resolve => { release = resolve })
+    await previous
+    try {
+      return await operation()
+    } finally {
+      release?.()
+    }
   }
 
   private async walk(absoluteDirectory: string, relativeDirectory: string): Promise<VaultTreeNode[]> {
     const entries = await readdir(absoluteDirectory, { withFileTypes: true })
     const nodes: VaultTreeNode[] = []
     for (const entry of entries) {
-      if (entry.isSymbolicLink() || HIDDEN_DIRECTORIES.has(entry.name) || entry.name.startsWith('.')) continue
+      if (entry.isSymbolicLink() || entry.name.includes('\\') || HIDDEN_DIRECTORIES.has(entry.name) || entry.name.startsWith('.')) continue
       const path = relativeDirectory === '' ? entry.name : `${relativeDirectory}/${entry.name}`
       const absolute = resolve(absoluteDirectory, entry.name)
-      if (entry.isDirectory()) {
+      const current = await lstat(absolute)
+      if (current.isSymbolicLink()) continue
+      if (current.isDirectory()) {
         const children = await this.walk(absolute, path)
         if (children.length > 0) nodes.push({ name: entry.name, path, type: 'directory', children })
-      } else if (entry.isFile() && extname(entry.name).toLocaleLowerCase() === '.md') {
-        nodes.push({ name: entry.name, path, type: 'note', modifiedMs: (await stat(absolute)).mtimeMs })
+      } else if (current.isFile() && extname(entry.name).toLocaleLowerCase() === '.md') {
+        nodes.push({ name: entry.name, path, type: 'note', modifiedMs: current.mtimeMs })
       }
     }
     return nodes.sort((left, right) => {

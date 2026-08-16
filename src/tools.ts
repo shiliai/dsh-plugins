@@ -3,9 +3,10 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { VaultService } from './vault-service.ts'
 
 interface PathArgs { path: string }
-interface WriteArgs extends PathArgs { content: string }
+interface WriteArgs extends PathArgs { content: string; expectedModifiedMs?: number }
 interface MoveArgs { from: string; to: string }
 interface SearchArgs { query: string }
+interface ListArgs { cursor?: string; limit?: number }
 interface SearchValue { results: { path: string; line: number; excerpt: string }[] }
 
 const MESSAGE_OUTPUT = {
@@ -24,19 +25,23 @@ export function registerNoteTools(ctx: Context, vault: VaultService): void {
   ctx.tools.register(defineTool({
     name: 'obsidian_list_notes',
     description: 'List every Markdown note path in the current Obsidian vault.',
-    parameters: {},
+    parameters: {
+      cursor: { type: 'string', description: 'Cursor returned by a previous page.' },
+      limit: { type: 'integer', description: 'Maximum paths to return (1-500).' },
+    },
     output: {
       schema: {
         type: 'object',
         additionalProperties: false,
         properties: {
           paths: { type: 'array', required: true, items: { type: 'string' } },
+          nextCursor: { type: 'string' },
         },
       },
-      render: (_args: Record<string, never>, value: { paths: string[] }) => [{ type: 'text', text: value.paths.join('\n') || 'No notes found.' }],
+      render: (_args: ListArgs, value: { paths: string[] }) => [{ type: 'text', text: value.paths.join('\n') || 'No notes found.' }],
     },
     isConcurrencySafe: () => true,
-    execute: async () => ({ paths: await vault.listNotePaths() }),
+    execute: async (args: ListArgs) => vault.listNotePathsPage(args.cursor, args.limit),
     presentCall: () => ({ card: 'generic', kind: 'read', title: 'List vault notes', locations: [] }),
   }))
 
@@ -100,11 +105,13 @@ export function registerNoteTools(ctx: Context, vault: VaultService): void {
       expectedModifiedMs: { type: 'number', description: 'Required when replacing an existing note; use the value returned by obsidian_read_note.' },
     },
     output: MESSAGE_OUTPUT,
-    execute: async (args: WriteArgs & { expectedModifiedMs?: number }) => {
+    execute: async (args: WriteArgs) => {
       const note = await vault.writeNote(args.path, args.content, args.expectedModifiedMs)
       return { message: `Saved ${note.path}`, path: note.path }
     },
-    presentCall: (args: WriteArgs) => ({ card: 'diff', title: `Write ${args.path}`, diffs: [{ path: args.path, oldText: null, newText: args.content }], locations: [{ path: args.path }] }),
+    presentCall: (args: WriteArgs) => args.expectedModifiedMs === undefined
+      ? { card: 'diff', title: `Create ${args.path}`, diffs: [{ path: args.path, oldText: null, newText: args.content }], locations: [{ path: args.path }] }
+      : { card: 'generic', kind: 'write', title: `Replace ${args.path}`, rawInput: { path: args.path, expectedModifiedMs: args.expectedModifiedMs }, locations: [{ path: args.path }] },
   }))
 
   ctx.tools.register(defineTool({

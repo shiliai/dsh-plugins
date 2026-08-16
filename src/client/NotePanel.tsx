@@ -10,6 +10,7 @@ import Trash2 from 'lucide-react/dist/esm/icons/trash-2'
 import X from 'lucide-react/dist/esm/icons/x'
 import { MarkdownPreview } from './MarkdownPreview.tsx'
 import type { VaultStore } from './store.ts'
+import type { VaultTreeNode } from '../contracts.ts'
 import css from './styles.module.css?dsh-inline'
 
 interface Props {
@@ -148,11 +149,15 @@ export function NotePanel({ store, inputActions, useInput }: Props) {
         ? <div className={css.panelLoading}>Opening...</div>
         : state.mode === 'edit'
           ? <textarea className={css.editor} value={state.draft} aria-label={`Edit ${note.path}`} spellCheck readOnly={pendingDiscard !== null} onChange={event => { store.setDraft(event.target.value) }} />
-          : <article className={css.preview}><MarkdownPreview content={state.draft} notePath={note.path} openNote={path => { void store.openNote(path) }} /></article>}
+          : <article className={css.preview}><MarkdownPreview content={state.draft} notePath={note.path} notePaths={notePaths(state.tree)} openNote={path => { void store.openNote(path) }} /></article>}
       <footer className={css.statusBar}>
         <span>{note === null ? '' : `${state.draft.split(/\r?\n/u).length} lines`}</span>
         <span>{state.saving ? 'Saving' : store.dirty ? 'Modified' : 'Saved'}</span>
       </footer>
     </section>
   )
+}
+
+function notePaths(nodes: VaultTreeNode[]): string[] {
+  return nodes.flatMap(node => node.type === 'note' ? [node.path] : notePaths(node.children ?? []))
 }

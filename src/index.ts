@@ -10,20 +10,21 @@ export const inject = ['webServer', 'tools']
 
 export interface Config {
   vaultRoot: string
+  mutationOrigin: string
   maxNoteBytes?: number
   searchResultLimit?: number
 }
 
 export async function apply(ctx: Context, config: Config): Promise<void> {
-  if (typeof config.vaultRoot !== 'string' || config.vaultRoot.trim() === '') {
-    throw new Error('dsh-obsidian: vaultRoot is required')
+  if (typeof config.vaultRoot !== 'string' || config.vaultRoot.trim() === '' || typeof config.mutationOrigin !== 'string') {
+    throw new Error('dsh-obsidian: vaultRoot and mutationOrigin are required')
   }
   const vault = await VaultService.create(
     config.vaultRoot,
     config.maxNoteBytes ?? 2 * 1024 * 1024,
     config.searchResultLimit ?? 100,
   )
-  ctx.effect(() => registerVaultApi(ctx.webServer, vault), 'dsh-obsidian: vault HTTP API')
+  ctx.effect(() => registerVaultApi(ctx.webServer, vault, config.mutationOrigin), 'dsh-obsidian: vault HTTP API')
   registerNoteTools(ctx, vault)
 }
 

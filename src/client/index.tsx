@@ -9,6 +9,13 @@ import css from './styles.module.css?dsh-inline'
 
 export const inject = ['slots', 'layout', 'sessions']
 
+export type PanelTarget = 'conversation' | 'conversation.session' | 'details'
+
+export function panelTargetFor(sessions: { current: string | undefined; byId: Record<string, { blank: boolean }> }): PanelTarget {
+  if (sessions.current === undefined) return 'conversation'
+  return sessions.byId[sessions.current]?.blank === false ? 'details' : 'conversation.session'
+}
+
 interface FooterProps {
   wide: boolean
   openBrowser(): void
@@ -25,7 +32,25 @@ function FooterButton({ wide, openBrowser }: FooterProps) {
 export function apply(ctx: ClientContext): void {
   let browserDispose: (() => void) | undefined
   let panelDispose: (() => void) | undefined
-  let panelTarget: 'conversation' | 'details' | undefined
+  let panelTarget: PanelTarget | undefined
+
+  const desiredPanelTarget = (): PanelTarget => panelTargetFor(ctx.sessions.list.getSnapshot())
+
+  const mountPanel = (): void => {
+    const target = desiredPanelTarget()
+    if (panelDispose !== undefined && panelTarget === target) return
+    const previousTarget = panelTarget
+    panelDispose?.()
+    panelDispose = undefined
+    if (previousTarget === 'details') ctx.layout.closeDetails()
+    panelTarget = target
+    panelDispose = ctx.slots.register({
+      name: target,
+      priority: -10,
+      inject: () => ({ store }),
+    }, NotePanel)
+    if (target === 'details') ctx.layout.openDetails()
+  }
 
   const closePanel = (): void => {
     panelDispose?.()
@@ -36,17 +61,7 @@ export function apply(ctx: ClientContext): void {
 
   const store = new VaultStore({
     open: () => {
-      if (panelDispose === undefined) {
-        const sessions = ctx.sessions.list.getSnapshot()
-        const current = sessions.current
-        panelTarget = current !== undefined && sessions.byId[current]?.blank === false ? 'details' : 'conversation'
-        panelDispose = ctx.slots.register({
-          name: panelTarget,
-          priority: -10,
-          inject: () => ({ store }),
-        }, NotePanel)
-      }
-      if (panelTarget === 'details') ctx.layout.openDetails()
+      mountPanel()
     },
     close: closePanel,
   })
@@ -72,7 +87,12 @@ export function apply(ctx: ClientContext): void {
     inject: () => ({ openBrowser }),
   }, FooterButton))
 
+  const unsubscribeSessions = ctx.sessions.list.subscribe(() => {
+    if (panelDispose !== undefined) mountPanel()
+  })
+
   ctx.effect(() => () => {
+    unsubscribeSessions()
     browserDispose?.()
     panelDispose?.()
   }, 'dsh-obsidian: client surfaces')

@@ -37,7 +37,7 @@ async function fixture(): Promise<ApiFixture> {
     return unregister
   })
   const vault = await VaultService.create(root, 4096, 20)
-  const dispose = registerVaultApi({ register } as unknown as WebServer, vault)
+  const dispose = registerVaultApi({ register } as unknown as WebServer, vault, 'http://dsh.test')
   expect(dispose).toBe(unregister)
 
   if (route === undefined) throw new Error('Vault API route was not registered.')
@@ -87,7 +87,7 @@ describe('registerVaultApi', () => {
 
   it('enforces same-origin, JSON body, and vault-relative path rules for mutations', async () => {
     const { baseUrl } = await fixture()
-    const origin = { origin: baseUrl, 'content-type': 'application/json' }
+    const origin = { origin: 'http://dsh.test', 'content-type': 'application/json' }
 
     const written = await request(baseUrl, '/dsh-obsidian/api/note', {
       method: 'PUT', headers: origin, body: JSON.stringify({ path: 'Daily/Today.md', content: '# Today' }),
@@ -102,7 +102,7 @@ describe('registerVaultApi', () => {
     expect(await moved.json()).toMatchObject({ path: 'Archive/Today.md', content: '# Today' })
 
     const deleted = await request(baseUrl, '/dsh-obsidian/api/note?path=Archive%2FToday.md', {
-      method: 'DELETE', headers: { origin: baseUrl },
+      method: 'DELETE', headers: { origin: 'http://dsh.test' },
     })
     expect(deleted.status).toBe(204)
 
@@ -119,13 +119,19 @@ describe('registerVaultApi', () => {
     expect(await malformedOrigin.json()).toMatchObject({ code: 'ORIGIN_DENIED' })
 
     const nonHttpOrigin = await request(baseUrl, '/dsh-obsidian/api/note', {
-      method: 'PUT', headers: { ...origin, origin: baseUrl.replace('http:', 'ftp:') }, body: JSON.stringify({ path: 'No.md', content: 'no' }),
+      method: 'PUT', headers: { ...origin, origin: 'ftp://dsh.test' }, body: JSON.stringify({ path: 'No.md', content: 'no' }),
     })
     expect(nonHttpOrigin.status).toBe(403)
     expect(await nonHttpOrigin.json()).toMatchObject({ code: 'ORIGIN_DENIED' })
 
+    const matchingUnconfigured = await request(baseUrl, '/dsh-obsidian/api/note', {
+      method: 'PUT', headers: { origin: baseUrl, 'content-type': 'application/json' }, body: JSON.stringify({ path: 'No.md', content: 'no' }),
+    })
+    expect(matchingUnconfigured.status).toBe(403)
+    expect(await matchingUnconfigured.json()).toMatchObject({ code: 'ORIGIN_DENIED' })
+
     const unsupportedContentType = await request(baseUrl, '/dsh-obsidian/api/note', {
-      method: 'PUT', headers: { origin: baseUrl, 'content-type': 'text/plain' }, body: '{}',
+      method: 'PUT', headers: { origin: 'http://dsh.test', 'content-type': 'application/jsonp' }, body: '{}',
     })
     expect(unsupportedContentType.status).toBe(415)
     expect(await unsupportedContentType.json()).toMatchObject({ code: 'INVALID_BODY' })
@@ -135,6 +141,12 @@ describe('registerVaultApi', () => {
     })
     expect(invalidJson.status).toBe(400)
     expect(await invalidJson.json()).toMatchObject({ code: 'INVALID_BODY' })
+
+    for (const body of ['null', '[]', '1', '{"path":"Home.md"}', '{"path":"Home.md","content":"x","expectedModifiedMs":1e999}']) {
+      const invalidShape = await request(baseUrl, '/dsh-obsidian/api/note', { method: 'PUT', headers: origin, body })
+      expect(invalidShape.status).toBe(400)
+      expect(await invalidShape.json()).toMatchObject({ code: 'INVALID_BODY' })
+    }
 
     const escapedPath = await request(baseUrl, '/dsh-obsidian/api/note', {
       method: 'PUT', headers: origin, body: JSON.stringify({ path: '../outside.md', content: 'no' }),

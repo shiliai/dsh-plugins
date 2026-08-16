@@ -36,6 +36,7 @@ declare module '@deepseek-ai/dsh-client-runtime/client' {
     }
     sessions: {
       list: {
+        subscribe(listener: () => void): () => void
         getSnapshot(): {
           current: string | undefined
           byId: Record<string, { blank: boolean }>

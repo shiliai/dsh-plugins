@@ -17,13 +17,14 @@ interface MoveBody {
   to: string
 }
 
-export function registerVaultApi(webServer: WebServer, vault: VaultService): () => void {
+export function registerVaultApi(webServer: WebServer, vault: VaultService, mutationOrigin: string): () => void {
+  const authority = normalizeOrigin(mutationOrigin)
   return webServer.register({
     kind: 'prefix',
     path: API_PREFIX,
     handler: async (request, response) => {
       try {
-        await route(request, response, vault)
+        await route(request, response, vault, authority)
       } catch (error) {
         sendError(response, error)
       }
@@ -31,7 +32,7 @@ export function registerVaultApi(webServer: WebServer, vault: VaultService): () 
   })
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, vault: VaultService): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, vault: VaultService, authority: string): Promise<void> {
   const url = new URL(request.url ?? '/', 'http://dsh.local')
   const endpoint = url.pathname.slice(API_PREFIX.length) || '/'
   if (request.method === 'GET' && endpoint === '/info') {
@@ -67,26 +68,26 @@ async function route(request: IncomingMessage, response: ServerResponse, vault: 
     return
   }
   if (request.method === 'PUT' && endpoint === '/note') {
-    assertSameOrigin(request)
-    const body = await readJson<WriteBody>(request, vault.maxNoteBytes + 4096)
-    if (typeof body.path !== 'string' || typeof body.content !== 'string'
-      || (body.expectedModifiedMs !== undefined && typeof body.expectedModifiedMs !== 'number')) {
+    assertConfiguredOrigin(request, authority)
+    const body = await readJson(request, vault.maxNoteBytes + 4096)
+    if (!isRecord(body) || typeof body.path !== 'string' || typeof body.content !== 'string'
+      || (body.expectedModifiedMs !== undefined && (typeof body.expectedModifiedMs !== 'number' || !Number.isFinite(body.expectedModifiedMs)))) {
       throw new VaultError('Invalid note write body.', 'INVALID_BODY', 400)
     }
-    sendJson(response, 200, await vault.writeNote(body.path, body.content, body.expectedModifiedMs))
+    sendJson(response, 200, await vault.writeNote(body.path, body.content, body.expectedModifiedMs as number | undefined))
     return
   }
   if (request.method === 'POST' && endpoint === '/move') {
-    assertSameOrigin(request)
-    const body = await readJson<MoveBody>(request, 8192)
-    if (typeof body.from !== 'string' || typeof body.to !== 'string') {
+    assertConfiguredOrigin(request, authority)
+    const body = await readJson(request, 8192)
+    if (!isRecord(body) || typeof body.from !== 'string' || typeof body.to !== 'string') {
       throw new VaultError('Invalid move body.', 'INVALID_BODY', 400)
     }
     sendJson(response, 200, await vault.moveNote(body.from, body.to))
     return
   }
   if (request.method === 'DELETE' && endpoint === '/note') {
-    assertSameOrigin(request)
+    assertConfiguredOrigin(request, authority)
     await vault.deleteNote(requiredQuery(url, 'path'))
     response.writeHead(204)
     response.end()
@@ -101,24 +102,35 @@ function requiredQuery(url: URL, key: string): string {
   return value
 }
 
-function assertSameOrigin(request: IncomingMessage): void {
+function assertConfiguredOrigin(request: IncomingMessage, authority: string): void {
   const origin = request.headers.origin
-  const host = request.headers.host
-  if (origin === undefined || host === undefined) {
+  if (origin === undefined) {
     throw new VaultError('Note mutations require a same-origin browser request.', 'ORIGIN_DENIED', 403)
   }
   try {
-    const originUrl = new URL(origin)
-    if ((originUrl.protocol === 'http:' || originUrl.protocol === 'https:') && originUrl.host === host) return
+    if (normalizeOrigin(origin) === authority) return
   } catch {
     // A malformed Origin is not a valid same-origin browser request.
   }
   throw new VaultError('Note mutations require a same-origin browser request.', 'ORIGIN_DENIED', 403)
 }
 
-async function readJson<T>(request: IncomingMessage, limit: number): Promise<T> {
+function normalizeOrigin(value: string): string {
+  const url = new URL(value)
+  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username !== '' || url.password !== '' || url.pathname !== '/' || url.search !== '' || url.hash !== '') {
+    throw new Error('dsh-obsidian: mutationOrigin must be an HTTP(S) origin without a path.')
+  }
+  return url.origin
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+async function readJson(request: IncomingMessage, limit: number): Promise<unknown> {
   const contentType = request.headers['content-type'] ?? ''
-  if (!contentType.toLocaleLowerCase().startsWith('application/json')) {
+  const mediaType = contentType.split(';', 1)[0]?.trim().toLocaleLowerCase()
+  if (mediaType !== 'application/json') {
     throw new VaultError('Content-Type must be application/json.', 'INVALID_BODY', 415)
   }
   const chunks: Buffer[] = []
@@ -130,7 +142,7 @@ async function readJson<T>(request: IncomingMessage, limit: number): Promise<T> 
     chunks.push(bytes)
   }
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T
+    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
   } catch {
     throw new VaultError('Request body is not valid JSON.', 'INVALID_BODY', 400)
   }

@@ -11,6 +11,7 @@ const roots: string[] = []
 interface RegisteredTool {
   name: string
   execute: (args: Record<string, unknown>) => Promise<unknown>
+  presentCall?: (args: Record<string, unknown>) => unknown
 }
 
 async function fixture(): Promise<{ vault: VaultService; root: string }> {
@@ -51,8 +52,11 @@ describe('registerNoteTools', () => {
       return found
     }
 
-    await expect(tool('obsidian_list_notes').execute({})).resolves.toEqual({
-      paths: ['Projects/Roadmap.md', 'Home.md'],
+    await expect(tool('obsidian_list_notes').execute({ limit: 1 })).resolves.toEqual({
+      paths: ['Projects/Roadmap.md'], nextCursor: 'Projects/Roadmap.md',
+    })
+    await expect(tool('obsidian_list_notes').execute({ cursor: 'Projects/Roadmap.md', limit: 1 })).resolves.toEqual({
+      paths: ['Home.md'],
     })
     await expect(tool('obsidian_read_note').execute({ path: 'Home.md' })).resolves.toMatchObject({
       path: 'Home.md', content: '# Home\nWelcome to the vault.\n',
@@ -63,6 +67,8 @@ describe('registerNoteTools', () => {
     await expect(tool('obsidian_write_note').execute({ path: 'Daily/Today.md', content: '# Today' })).resolves.toEqual({
       message: 'Saved Daily/Today.md', path: 'Daily/Today.md',
     })
+    expect(tool('obsidian_write_note').presentCall?.({ path: 'Create.md', content: '# Create' })).toMatchObject({ card: 'diff', title: 'Create Create.md' })
+    expect(tool('obsidian_write_note').presentCall?.({ path: 'Create.md', content: '# Replace', expectedModifiedMs: 1 })).toMatchObject({ card: 'generic', title: 'Replace Create.md' })
     await expect(tool('obsidian_move_note').execute({ from: 'Daily/Today.md', to: 'Archive/Today.md' })).resolves.toEqual({
       message: 'Moved Daily/Today.md to Archive/Today.md', path: 'Archive/Today.md',
     })
