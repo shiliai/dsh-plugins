@@ -1,0 +1,15 @@
+- insert:
+    - id: dsh-remote
+      name: '@dsh-plugins/dsh-remote'
+      inject: [webServer]
+      config:
+        remoteOrigin: !!js process.env.DSH_REMOTE_ORIGIN ?? 'https://zsh.onlyservice.io'
+        sshTarget: !!js process.env.DSH_REMOTE_SSH_TARGET ?? 'vps-tencent-tokyo'
+        remoteSocketPath: '/home/chriswang/.local/share/dsh-remote/tunnel.sock'
+        stateFile: !!js process.env.DSH_REMOTE_STATE_FILE ?? undefined
+        gatewayHost: '127.0.0.1'
+        gatewayPort: 0
+        reconnectBaseMs: 500
+        reconnectMaxMs: 30000
+        reconnectMaxRetries: 5
+        tunnelStabilityDelayMs: 750

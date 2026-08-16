@@ -1,0 +1,41 @@
+.panel {
+  display: grid;
+  gap: 10px;
+  min-width: 260px;
+  padding: 14px;
+  color: var(--dsh-fg, #1f2937);
+  font: 13px/1.4 system-ui, sans-serif;
+}
+
+.header, .statusRow, .actions, .confirmation, .confirmationActions {
+  display: flex;
+  align-items: center;
+}
+
+.header { justify-content: space-between; }
+.statusRow { gap: 7px; min-height: 22px; text-transform: capitalize; }
+.detail { color: var(--dsh-fg-muted, #6b7280); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.actions { gap: 7px; }
+.iconButton, .rotateButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  min-height: 30px;
+  border: 1px solid var(--dsh-border, #d1d5db);
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.iconButton:hover, .rotateButton:hover { background: var(--dsh-hover, #f3f4f6); }
+.iconButton:disabled, .rotateButton:disabled { cursor: not-allowed; opacity: .55; }
+.rotateButton { gap: 5px; padding: 0 9px; }
+.indicator { width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; }
+.online { background: #0f9d58; }
+.starting, .reconnecting { background: #d97706; }
+.failed { background: #dc2626; }
+.stopped, .unknown { background: #9ca3af; }
+.confirmation { justify-content: space-between; gap: 10px; padding-top: 8px; border-top: 1px solid var(--dsh-border, #d1d5db); }
+.confirmationActions { gap: 6px; }
+.error { color: #b91c1c; }

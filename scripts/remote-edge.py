@@ -242,6 +242,9 @@ def backup(args: argparse.Namespace, nginx: Path, compose: Path) -> tuple[Path, 
 
 
 def restore_from(args: argparse.Namespace, directory: Path, receipt: dict[str, Any], *, automatic: bool) -> None:
+    socket_dir = Path(args.socket_host_dir)
+    if receipt.get("group_created") and socket_dir.exists() and any(socket_dir.iterdir()):
+        raise EdgeError("Stop the DSH remote tunnel before rollback; the socket directory is not empty")
     nginx = Path(receipt["paths"]["nginx"])
     compose = Path(receipt["paths"]["compose"])
     shutil.copy2(directory / "nginx.conf", nginx)
@@ -250,8 +253,7 @@ def restore_from(args: argparse.Namespace, directory: Path, receipt: dict[str, A
     compose_recreate(compose)
     nginx_validate(args.nginx_container)
     if receipt.get("group_created"):
-        socket_dir = Path(args.socket_host_dir)
-        if socket_dir.exists() and not any(socket_dir.iterdir()):
+        if socket_dir.exists():
             socket_dir.rmdir()
         run(["groupdel", args.socket_group], check=False)
     receipt["rolled_back"] = True

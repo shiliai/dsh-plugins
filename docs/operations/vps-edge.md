@@ -28,7 +28,8 @@ Receipts are stored under
 mode 0600. They contain pre/post file hashes and no access credential. `rollback`
 restores the exact files, validates Compose, recreates Nginx, validates the live
 configuration, and removes a group created by the failed or reverted apply only
-when its socket directory is empty. Repeating rollback is a no-op.
+when its socket directory is empty. A live or stale socket blocks rollback before
+any restore write; stop the local DSH tunnel first. Repeating rollback is a no-op.
 
 `status` distinguishes `configured` from `ready`. Configured means DNS-independent
 edge files, certificate, mount, directory, and Nginx validation are present.
@@ -37,4 +38,3 @@ Ready additionally requires the reverse-tunnel socket to exist.
 The scripts never change unrelated server blocks, containers, certificate names,
 DNS records, or firewall rules. DNS creation and local DSH profile installation
 are separate, independently reversible delivery actions.
-

@@ -66,6 +66,15 @@ class RemoteEdgeTests(unittest.TestCase):
             self.assertEqual(path.read_text(encoding="utf-8"), "second")
             self.assertEqual(path.stat().st_mode & 0o777, 0o640)
 
+    def test_restore_refuses_to_mutate_while_tunnel_socket_directory_is_in_use(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            socket_dir = Path(directory) / "socket"
+            socket_dir.mkdir()
+            (socket_dir / "tunnel.sock").write_text("fixture", encoding="utf-8")
+            args = types.SimpleNamespace(socket_host_dir=str(socket_dir))
+            with self.assertRaisesRegex(remote_edge.EdgeError, "Stop the DSH remote tunnel"):
+                remote_edge.restore_from(args, Path(directory), {"group_created": True}, automatic=False)
+
 
 if __name__ == "__main__":
     unittest.main()
