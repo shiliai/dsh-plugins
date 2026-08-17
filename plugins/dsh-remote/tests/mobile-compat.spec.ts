@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
-import { clearMobileCompatibility, syncMobileCompatibility } from '../src/client/mobile-compat.ts'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  clearMobileCompatibility,
+  syncMobileCompatibility,
+  syncMobileSessionCollapse,
+} from '../src/client/mobile-compat.ts'
+import { openMobileSidebar } from '../src/client/index.tsx'
 
 class FakeElement {
   readonly attributes = new Set<string>()
@@ -57,6 +62,8 @@ describe('mobile compatibility markers', () => {
     const conversation = new FakeElement().append(header, scroll)
     conversation.attributes.add('data-phase')
     conversation.select('header, [role="banner"]', header)
+    center.append(conversation)
+    frame.select('[data-phase="active"]', conversation)
 
     const textarea = new FakeElement()
     const grow = new FakeElement().append(textarea)
@@ -79,6 +86,7 @@ describe('mobile compatibility markers', () => {
     syncMobileCompatibility(document as unknown as Document, marked)
 
     expect(frame.attributes).toContain('data-dsh-remote-mobile-frame')
+    expect(frame.attributes).toContain('data-dsh-remote-mobile-session-active')
     expect(sidebar.attributes).toContain('data-dsh-remote-mobile-sidebar')
     expect(center.attributes).toContain('data-dsh-remote-mobile-center')
     expect(details.attributes).toContain('data-dsh-remote-mobile-details')
@@ -102,10 +110,60 @@ describe('mobile compatibility markers', () => {
     const css = readFileSync(resolve(import.meta.dirname, '../src/client/styles.module.css'), 'utf8')
     expect(css).toContain('@media (max-width: 640px)')
     expect(css).toContain('grid-template-columns: 56px minmax(0, 1fr) 0 !important')
+    expect(css).toContain('grid-template-columns: 0 minmax(0, 1fr) 0 !important')
     expect(css).toContain('[data-dsh-remote-mobile-center] { grid-column: 2; }')
+    expect(css).toContain('[data-dsh-remote-mobile-session-active] .mobileSidebarButton')
     expect(css).toContain(':not([data-sidebar-collapsed])')
     expect(css).toContain(':not([data-details-collapsed])')
     expect(css).toContain('grid-template-columns: minmax(0, 1fr)')
     expect(css).toContain('height: 100dvh')
+  })
+
+  it('forwards the mobile navigation button to the upstream sidebar toggle', () => {
+    const click = vi.fn()
+    const upstreamButton = {
+      getAttribute: () => '打开侧边栏',
+      click,
+    }
+    const document = {
+      querySelectorAll: () => [upstreamButton],
+    }
+
+    expect(openMobileSidebar(document as unknown as Document)).toBe(true)
+    expect(click).toHaveBeenCalledOnce()
+  })
+
+  it('collapses the sidebar once when a conversation becomes active', () => {
+    const click = vi.fn()
+    const collapseButton = {
+      getAttribute: () => 'Collapse sidebar',
+      click,
+    }
+    const frame = new FakeElement()
+    frame.attributes.add('data-dsh-remote-mobile-session-active')
+    const document = new FakeElement()
+      .select('[data-dsh-remote-mobile-frame]', frame)
+      .select('button[aria-label]', collapseButton as unknown as FakeElement)
+    const activeFrames = new Set<Element>()
+
+    syncMobileSessionCollapse(document as unknown as Document, activeFrames, true)
+    syncMobileSessionCollapse(document as unknown as Document, activeFrames, true)
+
+    expect(click).toHaveBeenCalledOnce()
+
+    activeFrames.clear()
+    syncMobileSessionCollapse(document as unknown as Document, activeFrames, false)
+    expect(click).toHaveBeenCalledOnce()
+  })
+
+  it('retries collapsing until the upstream sidebar control is available', () => {
+    const frame = new FakeElement()
+    frame.attributes.add('data-dsh-remote-mobile-session-active')
+    const document = new FakeElement().select('[data-dsh-remote-mobile-frame]', frame)
+    const activeFrames = new Set<Element>()
+
+    syncMobileSessionCollapse(document as unknown as Document, activeFrames, true)
+
+    expect(activeFrames.size).toBe(0)
   })
 })

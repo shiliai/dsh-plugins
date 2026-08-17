@@ -159,7 +159,6 @@ async function verifyResponsiveShell(page, evidenceDir) {
     assertRectInside(geometry.card, viewport, 'composer card')
     for (const [index, button] of geometry.buttons.entries()) assertRectInside(button, viewport, `composer button ${index + 1}`)
 
-    const centerWidth = geometry.center.width
     const openSidebar = page.getByRole('button', { name: /open sidebar|打开侧边栏/iu })
     if (await openSidebar.count() === 1) {
       await openSidebar.click()
@@ -168,13 +167,16 @@ async function verifyResponsiveShell(page, evidenceDir) {
         const center = frame.querySelector('[data-dsh-remote-mobile-center]')
         if (sidebar === null || center === null) return null
         return {
+          frameWidth: frame.getBoundingClientRect().width,
+          sessionActive: frame.hasAttribute('data-dsh-remote-mobile-session-active'),
           sidebarPosition: getComputedStyle(sidebar).position,
           sidebarWidth: sidebar.getBoundingClientRect().width,
           centerWidth: center.getBoundingClientRect().width,
         }
       })
       if (expanded === null || expanded.sidebarPosition !== 'absolute') throw new Error('Expanded mobile sidebar is not an overlay.')
-      if (Math.abs(expanded.centerWidth - centerWidth) > 1) throw new Error('Expanded mobile sidebar squeezed the conversation column.')
+      const expectedCenterWidth = expanded.frameWidth - (expanded.sessionActive ? 0 : 56)
+      if (Math.abs(expanded.centerWidth - expectedCenterWidth) > 1) throw new Error('Expanded mobile sidebar squeezed the conversation column.')
       if (expanded.sidebarWidth > Math.min(320, viewport.width - 24) + 1) throw new Error('Expanded mobile sidebar exceeds its viewport allowance.')
       await page.getByRole('button', { name: /collapse sidebar|收起侧边栏/iu }).click()
     }

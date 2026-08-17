@@ -1,7 +1,7 @@
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
-import { Radio } from 'lucide-react'
+import { PanelLeftOpen, Radio } from 'lucide-react'
 import { RemotePanel } from './RemotePanel.tsx'
 import { installMobileCompatibility } from './mobile-compat.ts'
 import css from './styles.module.css?dsh-inline'
@@ -30,6 +30,30 @@ interface FooterProps {
   open(): void
 }
 
+const SIDEBAR_OPEN_LABELS = new Set(['Open sidebar', '打开侧边栏'])
+
+export function openMobileSidebar(document: Document = window.document): boolean {
+  const button = [...document.querySelectorAll<HTMLButtonElement>('button[aria-label]')]
+    .find(candidate => SIDEBAR_OPEN_LABELS.has(candidate.getAttribute('aria-label') ?? ''))
+  if (button === undefined) return false
+  button.click()
+  return true
+}
+
+function MobileSidebarButton() {
+  return (
+    <button
+      className={css.mobileSidebarButton}
+      type="button"
+      title="Open navigation"
+      aria-label="Open navigation"
+      onClick={() => { openMobileSidebar() }}
+    >
+      <PanelLeftOpen size={20} />
+    </button>
+  )
+}
+
 function FooterButton({ wide, open }: FooterProps) {
   return (
     <button className={css.iconButton} type="button" title="Remote access" aria-label="Remote access" onClick={open}>
@@ -41,6 +65,11 @@ function FooterButton({ wide, open }: FooterProps) {
 export function apply(ctx: ClientContext): void {
   clearAccessFragment(window.location, window.history)
   const disposeMobileCompatibility = installMobileCompatibility()
+  const disposeMobileSidebarButton = ctx.slots.register({
+    name: 'shell.overlay',
+    id: 'dsh-remote-mobile-sidebar-toggle',
+    order: 40,
+  }, MobileSidebarButton)
   let panelDispose: (() => void) | undefined
   const close = (): void => {
     panelDispose?.()
@@ -64,6 +93,7 @@ export function apply(ctx: ClientContext): void {
   }, FooterButton))
   ctx.effect(() => () => {
     close()
+    disposeMobileSidebarButton()
     disposeMobileCompatibility()
   }, 'dsh-remote: client surfaces')
 }
