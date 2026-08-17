@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { syncMobileCompatibility } from '../src/client/mobile-compat.ts'
+import { clearMobileCompatibility, syncMobileCompatibility } from '../src/client/mobile-compat.ts'
 
 class FakeElement {
   readonly attributes = new Set<string>()
@@ -75,7 +75,8 @@ describe('mobile compatibility markers', () => {
       .select('[data-conversation-scroll]', scroll)
       .select('[data-composer-seat]', seat)
 
-    syncMobileCompatibility(document as unknown as Document, new Set())
+    const marked = new Set<Element>()
+    syncMobileCompatibility(document as unknown as Document, marked)
 
     expect(frame.attributes).toContain('data-dsh-remote-mobile-frame')
     expect(sidebar.attributes).toContain('data-dsh-remote-mobile-sidebar')
@@ -89,6 +90,12 @@ describe('mobile compatibility markers', () => {
     expect(tools.attributes).toContain('data-dsh-remote-mobile-composer-tools')
     expect(trailing.attributes).toContain('data-dsh-remote-mobile-composer-trailing')
     expect(footer.attributes).toContain('data-dsh-remote-mobile-composer-footer')
+
+    clearMobileCompatibility(marked)
+    expect(marked.size).toBe(0)
+    for (const element of [frame, sidebar, center, details, conversation, header, composer, card, row, tools, trailing, footer]) {
+      expect([...element.attributes].filter(name => name.startsWith('data-dsh-remote-mobile-'))).toEqual([])
+    }
   })
 
   it('pins mobile-only responsive rules and desktop isolation', () => {

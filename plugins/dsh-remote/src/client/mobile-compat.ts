@@ -69,15 +69,24 @@ export function syncMobileCompatibility(document: Document, marked: Set<Element>
   markComposer(document, marked)
 }
 
+export function clearMobileCompatibility(marked: Set<Element>): void {
+  for (const element of marked) {
+    for (const marker of Object.values(MARKERS)) element.removeAttribute(marker)
+  }
+  marked.clear()
+}
+
 export function installMobileCompatibility(document: Document = window.document): () => void {
   const marked = new Set<Element>()
   let scheduled = false
+  let disposed = false
   const sync = (): void => {
     scheduled = false
+    if (disposed) return
     syncMobileCompatibility(document, marked)
   }
   const schedule = (): void => {
-    if (scheduled) return
+    if (scheduled || disposed) return
     scheduled = true
     queueMicrotask(sync)
   }
@@ -87,10 +96,8 @@ export function installMobileCompatibility(document: Document = window.document)
   observer.observe(document.body, { childList: true, subtree: true })
 
   return () => {
+    disposed = true
     observer.disconnect()
-    for (const element of marked) {
-      for (const marker of Object.values(MARKERS)) element.removeAttribute(marker)
-    }
-    marked.clear()
+    clearMobileCompatibility(marked)
   }
 }
