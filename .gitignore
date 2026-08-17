@@ -1,0 +1,9 @@
+node_modules/
+coverage/
+dist/
+lib/
+test-results/
+playwright-report/
+*.tgz
+.DS_Store
+.e2e/

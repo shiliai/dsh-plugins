@@ -1,0 +1,16 @@
+{
+  "name": "dsh-plugins",
+  "private": true,
+  "packageManager": "pnpm@11.19.0",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "build": "pnpm --recursive --if-present run build",
+    "typecheck": "pnpm --recursive --if-present run typecheck",
+    "test": "pnpm --recursive --if-present run test",
+    "check": "pnpm --recursive --if-present run check",
+    "pack:check": "pnpm --recursive --if-present run pack:check",
+    "release:check": "pnpm --recursive --if-present run release:check"
+  }
+}
