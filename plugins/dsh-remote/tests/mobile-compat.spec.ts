@@ -95,6 +95,7 @@ describe('mobile compatibility markers', () => {
     const css = readFileSync(resolve(import.meta.dirname, '../src/client/styles.module.css'), 'utf8')
     expect(css).toContain('@media (max-width: 640px)')
     expect(css).toContain('grid-template-columns: 56px minmax(0, 1fr) 0 !important')
+    expect(css).toContain('[data-dsh-remote-mobile-center] { grid-column: 2; }')
     expect(css).toContain(':not([data-sidebar-collapsed])')
     expect(css).toContain(':not([data-details-collapsed])')
     expect(css).toContain('grid-template-columns: minmax(0, 1fr)')

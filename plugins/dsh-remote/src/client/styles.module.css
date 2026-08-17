@@ -70,6 +70,10 @@
     min-width: 0;
   }
 
+  [data-dsh-remote-mobile-sidebar] { grid-column: 1; }
+  [data-dsh-remote-mobile-center] { grid-column: 2; }
+  [data-dsh-remote-mobile-details] { grid-column: 3; }
+
   [data-dsh-remote-mobile-frame]:not([data-sidebar-collapsed]) > [data-dsh-remote-mobile-sidebar] {
     position: absolute;
     inset: 0 auto 0 0;
