@@ -1,6 +1,6 @@
 :global(*) { box-sizing: border-box; }
 
-.iconButton, .railButton, .treeRow, .searchResult, .actionMenu button, .segmented button {
+.iconButton, .railButton, .treeRow, .searchResult, .directoryRow, .actionMenu button, .segmented button {
   border: 0;
   background: transparent;
   color: inherit;
@@ -16,7 +16,7 @@
   flex: 0 0 auto;
 }
 
-.iconButton:hover:not(:disabled), .railButton:hover, .segmented button:hover, .treeRow:hover, .searchResult:hover {
+.iconButton:hover:not(:disabled), .railButton:hover, .segmented button:hover, .treeRow:hover, .searchResult:hover, .directoryRow:hover:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, .12));
 }
 
@@ -43,6 +43,17 @@
 
 .browserHeader { padding: 0 8px; }
 .browserHeader strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+
+.directoryChooser { min-height: 0; flex: 1; display: flex; flex-direction: column; }
+.directoryToolbar { min-height: 42px; padding: 5px 8px; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--dsw-alias-border-l2, #d9dedb); }
+.directoryToolbar span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-secondary, #66706a); font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.directoryList { min-height: 0; flex: 1; overflow: auto; padding: 6px 7px; }
+.directoryRow { width: 100%; height: 31px; padding: 0 7px; display: flex; align-items: center; gap: 7px; border-radius: 5px; text-align: left; font-size: 13px; }
+.directoryRow span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.emptyDirectory { padding: 24px 8px; color: var(--dsw-alias-label-secondary, #66706a); text-align: center; font-size: 12px; }
+.selectDirectory { min-height: 34px; margin: 8px 10px 10px; padding: 0 12px; display: flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid #2e7d62; border-radius: 6px; background: #2e7d62; color: #fff; font: inherit; font-size: 12px; font-weight: 600; }
+.selectDirectory:hover:not(:disabled) { background: #24664f; }
+.selectDirectory:disabled, .directoryRow:disabled { opacity: .45; }
 
 .searchBox {
   height: 34px;

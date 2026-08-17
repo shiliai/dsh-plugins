@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import type { NoteDocument, NoteSearchResult, VaultTreeNode } from '../contracts.ts'
+import type { DirectoryListing, NoteDocument, NoteSearchResult, VaultTreeNode } from '../contracts.ts'
 import { vaultApi } from './api.ts'
 
 export type NoteMode = 'edit' | 'preview'
@@ -17,7 +17,10 @@ export interface VaultSnapshot {
   mode: NoteMode
   query: string
   searchResults: NoteSearchResult[]
+  directoryListing: DirectoryListing | null
   loadingTree: boolean
+  loadingDirectories: boolean
+  switchingVault: boolean
   loadingNote: boolean
   saving: boolean
   pendingDiscard: PendingDiscardAction | null
@@ -31,6 +34,8 @@ interface PanelLifecycle {
 
 interface VaultApi {
   info(): Promise<{ name: string; root: string }>
+  directories(path?: string): Promise<DirectoryListing>
+  selectVault(root: string): Promise<{ name: string; root: string }>
   tree(): Promise<{ nodes: VaultTreeNode[] }>
   note(path: string): Promise<NoteDocument>
   search(query: string): Promise<{ results: NoteSearchResult[] }>
@@ -48,7 +53,10 @@ const INITIAL: VaultSnapshot = {
   mode: 'preview',
   query: '',
   searchResults: [],
+  directoryListing: null,
   loadingTree: false,
+  loadingDirectories: false,
+  switchingVault: false,
   loadingNote: false,
   saving: false,
   pendingDiscard: null,
@@ -61,6 +69,8 @@ export class VaultStore {
   private noteGeneration = 0
   private draftGeneration = 0
   private saveGeneration = 0
+  private treeGeneration = 0
+  private directoryGeneration = 0
 
   constructor(private readonly panel: PanelLifecycle, private readonly api: VaultApi = vaultApi) {}
 
@@ -84,12 +94,68 @@ export class VaultStore {
   }
 
   async refreshTree(): Promise<void> {
+    const generation = ++this.treeGeneration
     this.update({ loadingTree: true })
     try {
       const { nodes } = await this.api.tree()
-      this.update({ tree: nodes, loadingTree: false, error: null })
+      if (generation === this.treeGeneration) this.update({ tree: nodes, loadingTree: false, error: null })
     } catch (error) {
-      this.update({ loadingTree: false, error: message(error) })
+      if (generation === this.treeGeneration) this.update({ loadingTree: false, error: message(error) })
+    }
+  }
+
+  async openVaultChooser(): Promise<void> {
+    if (this.dirty) {
+      this.update({ error: 'Save or discard the active note before switching vaults.' })
+      return
+    }
+    await this.browseDirectories()
+  }
+
+  closeVaultChooser(): void {
+    this.directoryGeneration++
+    this.update({ directoryListing: null, loadingDirectories: false })
+  }
+
+  async browseDirectories(path?: string): Promise<void> {
+    const generation = ++this.directoryGeneration
+    this.update({ loadingDirectories: true, error: null })
+    try {
+      const directoryListing = await this.api.directories(path)
+      if (generation === this.directoryGeneration) this.update({ directoryListing, loadingDirectories: false })
+    } catch (error) {
+      if (generation === this.directoryGeneration) this.update({ loadingDirectories: false, error: message(error) })
+    }
+  }
+
+  async selectVault(root: string): Promise<void> {
+    if (this.dirty || this.snapshot.switchingVault) return
+    this.update({ switchingVault: true, error: null })
+    try {
+      const info = await this.api.selectVault(root)
+      this.noteGeneration++
+      this.draftGeneration++
+      this.invalidateSave()
+      this.directoryGeneration++
+      this.treeGeneration++
+      this.panel.close()
+      this.update({
+        vaultName: info.name,
+        vaultRoot: info.root,
+        tree: [],
+        active: null,
+        draft: '',
+        query: '',
+        searchResults: [],
+        directoryListing: null,
+        loadingDirectories: false,
+        switchingVault: false,
+        saving: false,
+        pendingDiscard: null,
+      })
+      await this.refreshTree()
+    } catch (error) {
+      this.update({ switchingVault: false, error: message(error) })
     }
   }
 

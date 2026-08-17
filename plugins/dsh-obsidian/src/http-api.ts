@@ -2,7 +2,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
 import type { WebServer } from '@deepseek-ai/dsh-host-webserver'
 import type { ApiErrorPayload } from './contracts.ts'
-import { VaultError, VaultService } from './vault-service.ts'
+import { VaultError } from './vault-service.ts'
+import { VaultManager } from './vault-manager.ts'
 
 const API_PREFIX = '/dsh-obsidian/api'
 
@@ -17,7 +18,7 @@ interface MoveBody {
   to: string
 }
 
-export function registerVaultApi(webServer: WebServer, vault: VaultService, mutationOrigin: string): () => void {
+export function registerVaultApi(webServer: WebServer, vault: VaultManager, mutationOrigin: string): () => void {
   const authority = normalizeOrigin(mutationOrigin)
   return webServer.register({
     kind: 'prefix',
@@ -32,7 +33,7 @@ export function registerVaultApi(webServer: WebServer, vault: VaultService, muta
   })
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, vault: VaultService, authority: string): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, vault: VaultManager, authority: string): Promise<void> {
   const url = new URL(request.url ?? '/', 'http://dsh.local')
   const endpoint = url.pathname.slice(API_PREFIX.length) || '/'
   if (request.method === 'GET' && endpoint === '/info') {
@@ -41,6 +42,10 @@ async function route(request: IncomingMessage, response: ServerResponse, vault: 
   }
   if (request.method === 'GET' && endpoint === '/tree') {
     sendJson(response, 200, { nodes: await vault.listTree() })
+    return
+  }
+  if (request.method === 'GET' && endpoint === '/directories') {
+    sendJson(response, 200, await vault.listDirectories(url.searchParams.get('path') ?? undefined))
     return
   }
   if (request.method === 'GET' && endpoint === '/note') {
@@ -75,6 +80,16 @@ async function route(request: IncomingMessage, response: ServerResponse, vault: 
       throw new VaultError('Invalid note write body.', 'INVALID_BODY', 400)
     }
     sendJson(response, 200, await vault.writeNote(body.path, body.content, body.expectedModifiedMs as number | undefined))
+    return
+  }
+  if (request.method === 'POST' && endpoint === '/vault') {
+    assertConfiguredOrigin(request, authority)
+    const body = await readJson(request, 8192)
+    if (!isRecord(body) || typeof body.root !== 'string') {
+      throw new VaultError('Invalid vault selection body.', 'INVALID_BODY', 400)
+    }
+    await vault.select(body.root)
+    sendJson(response, 200, { name: vault.root.split(/[\\/]/u).at(-1) ?? vault.root, root: vault.root })
     return
   }
   if (request.method === 'POST' && endpoint === '/move') {

@@ -1,6 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { VaultService } from './vault-service.ts'
+import type { VaultAccess } from './vault-manager.ts'
 
 interface PathArgs { path: string }
 interface WriteArgs extends PathArgs { content: string; expectedModifiedMs?: number }
@@ -21,7 +21,7 @@ const MESSAGE_OUTPUT = {
   render: (_args: unknown, value: { message: string }) => [{ type: 'text' as const, text: value.message }],
 } as const
 
-export function registerNoteTools(ctx: Context, vault: VaultService): void {
+export function registerNoteTools(ctx: Context, vault: VaultAccess): void {
   ctx.tools.register(defineTool({
     name: 'obsidian_list_notes',
     description: 'List every Markdown note path in the current Obsidian vault.',

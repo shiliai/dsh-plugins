@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import { registerNoteTools } from '../src/tools.ts'
-import { VaultService } from '../src/vault-service.ts'
+import { VaultManager } from '../src/vault-manager.ts'
 
 const roots: string[] = []
 
@@ -14,13 +14,13 @@ interface RegisteredTool {
   presentCall?: (args: Record<string, unknown>) => unknown
 }
 
-async function fixture(): Promise<{ vault: VaultService; root: string }> {
+async function fixture(): Promise<{ vault: VaultManager; root: string }> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-obsidian-tools-'))
   roots.push(root)
   await mkdir(join(root, 'Projects'), { recursive: true })
   await writeFile(join(root, 'Home.md'), '# Home\nWelcome to the vault.\n')
   await writeFile(join(root, 'Projects', 'Roadmap.md'), '# Roadmap\nShip the preview.\n')
-  return { root, vault: await VaultService.create(root, 4096, 20) }
+  return { root, vault: await VaultManager.create(root, 4096, 20) }
 }
 
 afterEach(async () => {
@@ -29,7 +29,7 @@ afterEach(async () => {
 
 describe('registerNoteTools', () => {
   it('registers and executes every provider-visible vault operation', async () => {
-    const { vault } = await fixture()
+    const { vault, root } = await fixture()
     const registered: RegisteredTool[] = []
     const context = {
       tools: {
@@ -76,5 +76,14 @@ describe('registerNoteTools', () => {
       message: 'Deleted Archive/Today.md', path: 'Archive/Today.md',
     })
     await expect(vault.readNote('Archive/Today.md')).rejects.toMatchObject({ code: 'NOT_FOUND' })
+
+    const alternate = join(root, 'Alternate')
+    await mkdir(alternate)
+    await writeFile(join(alternate, 'Selected.md'), '# Selected')
+    await vault.select(alternate)
+    await expect(tool('obsidian_read_note').execute({ path: 'Selected.md' })).resolves.toMatchObject({
+      path: 'Selected.md', content: '# Selected',
+    })
+    await expect(tool('obsidian_read_note').execute({ path: 'Home.md' })).rejects.toMatchObject({ code: 'NOT_FOUND' })
   })
 })

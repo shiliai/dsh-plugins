@@ -19,6 +19,17 @@ export interface NoteSearchResult {
   excerpt: string
 }
 
+export interface DirectoryEntry {
+  name: string
+  path: string
+}
+
+export interface DirectoryListing {
+  path: string
+  parent: string | null
+  directories: DirectoryEntry[]
+}
+
 export interface ApiErrorPayload {
   error: string
   code: string

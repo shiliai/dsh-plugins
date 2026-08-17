@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import ArrowLeft from 'lucide-react/dist/esm/icons/arrow-left'
+import ArrowUp from 'lucide-react/dist/esm/icons/arrow-up'
 import Check from 'lucide-react/dist/esm/icons/check'
 import ChevronDown from 'lucide-react/dist/esm/icons/chevron-down'
 import ChevronRight from 'lucide-react/dist/esm/icons/chevron-right'
@@ -7,6 +8,7 @@ import FilePlus2 from 'lucide-react/dist/esm/icons/file-plus-2'
 import FileText from 'lucide-react/dist/esm/icons/file-text'
 import Folder from 'lucide-react/dist/esm/icons/folder'
 import FolderOpen from 'lucide-react/dist/esm/icons/folder-open'
+import FolderCog from 'lucide-react/dist/esm/icons/folder-cog'
 import LoaderCircle from 'lucide-react/dist/esm/icons/loader-circle'
 import Search from 'lucide-react/dist/esm/icons/search'
 import X from 'lucide-react/dist/esm/icons/x'
@@ -23,6 +25,7 @@ interface Props {
 
 export function VaultBrowser({ store, closeBrowser, wide, expandSidebar }: Props) {
   const state = store.useSnapshot()
+  const directoryListing = state.directoryListing
   const [newPath, setNewPath] = useState<string | null>(null)
 
   useEffect(() => {
@@ -46,10 +49,51 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar }: Props
           <ArrowLeft size={16} />
         </button>
         <strong title={state.vaultRoot}>{state.vaultName}</strong>
+        <button
+          className={css.iconButton}
+          type="button"
+          title={store.dirty ? 'Save or discard changes before switching vaults' : 'Select vault directory'}
+          aria-label="Select vault directory"
+          disabled={store.dirty}
+          onClick={() => { void store.openVaultChooser() }}
+        >
+          <FolderCog size={16} />
+        </button>
         <button className={css.iconButton} type="button" title="New note" aria-label="New note" onClick={() => { setNewPath('') }}>
           <FilePlus2 size={16} />
         </button>
       </header>
+
+      {directoryListing !== null && (
+        <section className={css.directoryChooser} aria-label="Select vault directory">
+          <div className={css.directoryToolbar}>
+            <button
+              className={css.iconButton}
+              type="button"
+              title="Parent directory"
+              aria-label="Parent directory"
+              disabled={directoryListing.parent === null || state.loadingDirectories || state.switchingVault}
+              onClick={() => { if (directoryListing.parent !== null) void store.browseDirectories(directoryListing.parent) }}
+            ><ArrowUp size={16} /></button>
+            <span title={directoryListing.path}>{directoryListing.path}</span>
+            <button className={css.iconButton} type="button" title="Cancel" aria-label="Cancel vault selection" disabled={state.switchingVault} onClick={() => { store.closeVaultChooser() }}><X size={16} /></button>
+          </div>
+          <div className={css.directoryList}>
+            {directoryListing.directories.map(directory => (
+              <button key={directory.path} className={css.directoryRow} type="button" disabled={state.loadingDirectories || state.switchingVault} onClick={() => { void store.browseDirectories(directory.path) }}>
+                <Folder size={15} /><span>{directory.name}</span><ChevronRight size={14} />
+              </button>
+            ))}
+            {!state.loadingDirectories && directoryListing.directories.length === 0 && <div className={css.emptyDirectory}>No subdirectories</div>}
+          </div>
+          <button className={css.selectDirectory} type="button" disabled={state.loadingDirectories || state.switchingVault} onClick={() => { void store.selectVault(directoryListing.path) }}>
+            {state.switchingVault ? <LoaderCircle className={css.spin} size={15} /> : <Check size={15} />}
+            Use this folder
+          </button>
+        </section>
+      )}
+
+      {directoryListing !== null ? null : <>
 
       {newPath !== null && (
         <form className={css.newNote} onSubmit={(event) => {
@@ -85,6 +129,7 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar }: Props
             </button>
           ))}
       </div>
+      </>}
     </section>
   )
 }

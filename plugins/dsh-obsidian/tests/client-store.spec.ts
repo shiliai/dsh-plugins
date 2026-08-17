@@ -11,6 +11,8 @@ const home = { path: 'Home.md', content: '# Home', modifiedMs: 1, size: 6 }
 function apiWithNotes(notes: Array<Promise<typeof home>>) {
   return {
     info: async () => ({ name: 'Vault', root: '/vault' }),
+    directories: async () => ({ path: '/vault', parent: '/', directories: [] }),
+    selectVault: async (root: string) => ({ name: root.split('/').at(-1) ?? root, root }),
     tree: async () => ({ nodes: [] }),
     note: async () => {
       const next = notes.shift()
@@ -25,6 +27,34 @@ function apiWithNotes(notes: Array<Promise<typeof home>>) {
 }
 
 describe('VaultStore request generations', () => {
+  it('browses and switches vaults while clearing state from the previous vault', async () => {
+    let closed = 0
+    const api = apiWithNotes([Promise.resolve(home)])
+    api.directories = async () => ({ path: '/vaults/Next', parent: '/vaults', directories: [] })
+    api.selectVault = async () => ({ name: 'Next', root: '/vaults/Next' })
+    const store = new VaultStore({ open() {}, close() { closed++ } }, api)
+    await store.openNote('Home.md')
+    await store.search('home')
+    await store.openVaultChooser()
+    expect(store.getSnapshot().directoryListing?.path).toBe('/vaults/Next')
+
+    await store.selectVault('/vaults/Next')
+    expect(store.getSnapshot()).toMatchObject({
+      vaultName: 'Next', vaultRoot: '/vaults/Next', active: null, draft: '', query: '', directoryListing: null,
+    })
+    expect(closed).toBe(1)
+  })
+
+  it('does not open the vault chooser with unsaved note changes', async () => {
+    const api = apiWithNotes([Promise.resolve(home)])
+    const store = new VaultStore({ open() {}, close() {} }, api)
+    await store.openNote('Home.md')
+    store.setDraft('# Unsaved')
+    await store.openVaultChooser()
+    expect(store.getSnapshot().directoryListing).toBeNull()
+    expect(store.getSnapshot().error).toContain('Save or discard')
+  })
+
   it('keeps typing during a pending save and remains dirty after its completion', async () => {
     const save = deferred<typeof home>()
     const api = apiWithNotes([Promise.resolve(home)])
