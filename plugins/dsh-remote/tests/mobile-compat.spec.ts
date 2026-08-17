@@ -56,7 +56,7 @@ describe('mobile compatibility markers', () => {
     const scroll = new FakeElement()
     const conversation = new FakeElement().append(header, scroll)
     conversation.attributes.add('data-phase')
-    conversation.select('[role="banner"]', header)
+    conversation.select('header, [role="banner"]', header)
 
     const textarea = new FakeElement()
     const grow = new FakeElement().append(textarea)

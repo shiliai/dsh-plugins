@@ -37,7 +37,7 @@ function markConversation(document: Document, marked: Set<Element>): void {
     const conversation = scroll.parentElement
     if (conversation === null || !conversation.hasAttribute('data-phase')) continue
     mark(conversation, MARKERS.conversation, marked)
-    mark(conversation.querySelector('[role="banner"]'), MARKERS.header, marked)
+    mark(conversation.querySelector('header, [role="banner"]'), MARKERS.header, marked)
   }
 }
 
