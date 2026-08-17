@@ -1,4 +1,4 @@
-import type { ApiErrorPayload, NoteDocument, NoteSearchResult, VaultTreeNode } from '../contracts.ts'
+import type { ApiErrorPayload, DirectoryListing, NoteDocument, NoteSearchResult, VaultTreeNode } from '../contracts.ts'
 
 const API = '/dsh-obsidian/api'
 
@@ -23,6 +23,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const vaultApi = {
   info: () => request<{ name: string; root: string }>('/info'),
+  directories: (path?: string) => request<DirectoryListing>(`/directories${path === undefined ? '' : `?path=${encodeURIComponent(path)}`}`),
+  selectVault: (root: string) => request<{ name: string; root: string }>('/vault', {
+    method: 'POST',
+    body: JSON.stringify({ root }),
+  }),
   tree: () => request<{ nodes: VaultTreeNode[] }>('/tree'),
   note: (path: string) => request<NoteDocument>(`/note?path=${encodeURIComponent(path)}`),
   search: (query: string) => request<{ results: NoteSearchResult[] }>(`/search?q=${encodeURIComponent(query)}`),

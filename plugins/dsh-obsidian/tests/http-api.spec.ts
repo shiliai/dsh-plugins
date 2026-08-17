@@ -5,7 +5,7 @@ import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { WebServer } from '@deepseek-ai/dsh-host-webserver'
 import { registerVaultApi } from '../src/http-api.ts'
-import { VaultService } from '../src/vault-service.ts'
+import { VaultManager } from '../src/vault-manager.ts'
 
 const roots: string[] = []
 const servers: Server[] = []
@@ -36,7 +36,7 @@ async function fixture(): Promise<ApiFixture> {
     route = registration
     return unregister
   })
-  const vault = await VaultService.create(root, 4096, 20)
+  const vault = await VaultManager.create(root, 4096, 20)
   const dispose = registerVaultApi({ register } as unknown as WebServer, vault, 'http://dsh.test')
   expect(dispose).toBe(unregister)
 
@@ -85,6 +85,33 @@ describe('registerVaultApi', () => {
     expect(await search.json()).toEqual({ results: [{ path: 'Projects/Roadmap.md', line: 2, excerpt: 'Ship the preview.' }] })
   })
 
+  it('browses directories and switches the active vault for subsequent requests', async () => {
+    const { baseUrl, root } = await fixture()
+    const alternate = join(root, 'Alternate')
+    await mkdir(alternate)
+    await writeFile(join(alternate, 'Selected.md'), '# Selected\n')
+
+    const directories = await request(baseUrl, `/dsh-obsidian/api/directories?path=${encodeURIComponent(root)}`)
+    expect(directories.status).toBe(200)
+    expect(await directories.json()).toMatchObject({
+      path: root,
+      directories: [{ name: 'Alternate', path: alternate }, { name: 'Projects', path: join(root, 'Projects') }],
+    })
+
+    const selected = await request(baseUrl, '/dsh-obsidian/api/vault', {
+      method: 'POST',
+      headers: { origin: 'http://dsh.test', 'content-type': 'application/json' },
+      body: JSON.stringify({ root: alternate }),
+    })
+    expect(selected.status).toBe(200)
+    expect(await selected.json()).toEqual({ name: 'Alternate', root: alternate })
+
+    const note = await request(baseUrl, '/dsh-obsidian/api/note?path=Selected.md')
+    expect(note.status).toBe(200)
+    expect(await note.json()).toMatchObject({ path: 'Selected.md', content: '# Selected\n' })
+    expect((await request(baseUrl, '/dsh-obsidian/api/note?path=Home.md')).status).toBe(404)
+  })
+
   it('enforces same-origin, JSON body, and vault-relative path rules for mutations', async () => {
     const { baseUrl } = await fixture()
     const origin = { origin: 'http://dsh.test', 'content-type': 'application/json' }
@@ -111,6 +138,12 @@ describe('registerVaultApi', () => {
     })
     expect(denied.status).toBe(403)
     expect(await denied.json()).toMatchObject({ code: 'ORIGIN_DENIED' })
+
+    const deniedSelection = await request(baseUrl, '/dsh-obsidian/api/vault', {
+      method: 'POST', headers: { ...origin, origin: 'http://attacker.invalid' }, body: JSON.stringify({ root: '/' }),
+    })
+    expect(deniedSelection.status).toBe(403)
+    expect(await deniedSelection.json()).toMatchObject({ code: 'ORIGIN_DENIED' })
 
     const malformedOrigin = await request(baseUrl, '/dsh-obsidian/api/note', {
       method: 'PUT', headers: { ...origin, origin: 'not a URL' }, body: JSON.stringify({ path: 'No.md', content: 'no' }),

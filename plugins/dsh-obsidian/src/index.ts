@@ -3,7 +3,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-tools'
 import { registerVaultApi } from './http-api.ts'
 import { registerNoteTools } from './tools.ts'
-import { VaultService } from './vault-service.ts'
+import { VaultManager } from './vault-manager.ts'
 
 export const name = 'dsh-obsidian'
 export const inject = ['webServer', 'tools']
@@ -19,7 +19,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   if (typeof config.vaultRoot !== 'string' || config.vaultRoot.trim() === '' || typeof config.mutationOrigin !== 'string') {
     throw new Error('dsh-obsidian: vaultRoot and mutationOrigin are required')
   }
-  const vault = await VaultService.create(
+  const vault = await VaultManager.create(
     config.vaultRoot,
     config.maxNoteBytes ?? 2 * 1024 * 1024,
     config.searchResultLimit ?? 100,
@@ -29,4 +29,5 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 }
 
 export { VaultError, VaultService } from './vault-service.ts'
+export { VaultManager } from './vault-manager.ts'
 export type { NoteDocument, NoteSearchResult, VaultTreeNode } from './contracts.ts'

@@ -20,6 +20,11 @@ test('keeps note workflow and composer routing usable across session transitions
     await configureLater.click()
   }
   await page.getByLabel('Obsidian notes').click()
+  await page.getByLabel('Select vault directory').click()
+  await expect(page.getByRole('region', { name: 'Select vault directory' })).toBeVisible()
+  await page.getByRole('button', { name: 'Projects' }).click()
+  await page.getByLabel('Parent directory').click()
+  await page.getByLabel('Cancel vault selection').click()
   await page.getByRole('treeitem', { name: /Home/u }).click()
   await expect(page.getByLabel('Note editor')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Atlas Vault' })).toBeVisible()
