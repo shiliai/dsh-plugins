@@ -3,6 +3,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import { Radio } from 'lucide-react'
 import { RemotePanel } from './RemotePanel.tsx'
+import { installMobileCompatibility } from './mobile-compat.ts'
 import css from './styles.module.css?dsh-inline'
 
 export const inject = ['slots']
@@ -39,6 +40,7 @@ function FooterButton({ wide, open }: FooterProps) {
 
 export function apply(ctx: ClientContext): void {
   clearAccessFragment(window.location, window.history)
+  const disposeMobileCompatibility = installMobileCompatibility()
   let panelDispose: (() => void) | undefined
   const close = (): void => {
     panelDispose?.()
@@ -60,5 +62,8 @@ export function apply(ctx: ClientContext): void {
     label: 'Remote access',
     inject: () => ({ open }),
   }, FooterButton))
-  ctx.effect(() => () => { close() }, 'dsh-remote: client surfaces')
+  ctx.effect(() => () => {
+    close()
+    disposeMobileCompatibility()
+  }, 'dsh-remote: client surfaces')
 }

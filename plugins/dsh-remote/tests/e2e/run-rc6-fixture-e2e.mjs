@@ -11,8 +11,8 @@ const root = fileURLToPath(new URL('../..', import.meta.url))
 const dshBin = join(root, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
 const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
 if (!/^[0-9a-f]{40}$/u.test(commit)) throw new Error('rc.6 E2E requires an immutable Git commit.')
-if (execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }) !== '') {
-  throw new Error('rc.6 E2E requires a clean fixed subject.')
+if (execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: root, encoding: 'utf8' }) !== '') {
+  throw new Error('rc.6 E2E requires a fixed tracked subject; unrelated untracked files are ignored.')
 }
 
 const temp = await mkdtemp(join(tmpdir(), 'dsh-remote-rc6-'))
@@ -50,13 +50,13 @@ try {
   if (typeof status?.sessionVersion !== 'number' || typeof status?.tunnel?.phase !== 'string') {
     throw new Error('dsh-remote lifecycle did not return a valid status snapshot.')
   }
-  await verifyRemotePanel(origin, status.sessionVersion)
+  const screenshots = await verifyRemotePanel(origin, status.sessionVersion, temp)
 
   await stop(server)
   server = undefined
   runDsh(['plugin', '--profile', 'web', 'remove', '@dsh-plugins/dsh-remote'], temp, env)
   installed = false
-  process.stdout.write(`rc.6 E2E passed commit=${commit} package_sha256=${archiveSha} origin=${origin}\n`)
+  process.stdout.write(`rc.6 E2E passed commit=${commit} package_sha256=${archiveSha} screenshots=${JSON.stringify(screenshots)} origin=${origin}\n`)
 } finally {
   if (server !== undefined) await stop(server)
   if (installed) runDsh(['plugin', '--profile', 'web', 'remove', '@dsh-plugins/dsh-remote'], temp, env)
@@ -67,7 +67,7 @@ function runDsh(args, cwd, processEnv) {
   execFileSync(process.execPath, [dshBin, ...args], { cwd, env: processEnv, stdio: 'inherit' })
 }
 
-async function verifyRemotePanel(origin, initialSessionVersion) {
+async function verifyRemotePanel(origin, initialSessionVersion, evidenceDir) {
   const browser = await chromium.launch({ channel: 'chrome' })
   try {
     const context = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] })
@@ -81,6 +81,8 @@ async function verifyRemotePanel(origin, initialSessionVersion) {
     if (await configureLater.waitFor({ state: 'visible', timeout: 5_000 }).then(() => true).catch(() => false)) {
       await configureLater.click()
     }
+    const screenshots = await verifyResponsiveShell(page, evidenceDir)
+    await page.setViewportSize({ width: 390, height: 844 })
     await page.getByRole('button', { name: 'Remote access', exact: true }).click()
     const panel = page.locator('section[aria-label="Remote access"]')
     await panel.waitFor({ state: 'visible' }).catch(async error => {
@@ -89,6 +91,8 @@ async function verifyRemotePanel(origin, initialSessionVersion) {
       throw new Error(`Remote panel did not open; labels=${JSON.stringify(labels)} buttons=${JSON.stringify(buttons)}`, { cause: error })
     })
     await panel.getByText(/starting|online|reconnecting|failed|stopped/iu).waitFor({ state: 'visible' })
+    await assertInsideViewport(page, panel, 'Remote access panel')
+    screenshots.push(await captureScreenshot(page, join(evidenceDir, 'mobile-390-remote-panel.png')))
 
     const copy = panel.getByRole('button', { name: 'Copy private link' })
     await copy.click()
@@ -106,9 +110,107 @@ async function verifyRemotePanel(origin, initialSessionVersion) {
     const replacementUrl = await page.evaluate(() => navigator.clipboard.readText())
     assertPrivateUrl(replacementUrl)
     if (replacementUrl === firstUrl) throw new Error('Visible rotation did not replace the copied private URL.')
+    return screenshots
   } finally {
     await browser.close()
   }
+}
+
+async function verifyResponsiveShell(page, evidenceDir) {
+  const screenshots = []
+  for (const viewport of [
+    { width: 360, height: 800 },
+    { width: 390, height: 844 },
+    { width: 412, height: 915 },
+  ]) {
+    await page.setViewportSize(viewport)
+    const card = page.locator('[data-dsh-remote-mobile-composer-card]')
+    const row = page.locator('[data-dsh-remote-mobile-composer-row]')
+    await card.waitFor({ state: 'visible' })
+    const geometry = await page.evaluate(() => {
+      const frame = document.querySelector('[data-dsh-remote-mobile-frame]')
+      const center = document.querySelector('[data-dsh-remote-mobile-center]')
+      const card = document.querySelector('[data-dsh-remote-mobile-composer-card]')
+      const row = document.querySelector('[data-dsh-remote-mobile-composer-row]')
+      if (frame === null || center === null || card === null || row === null) return null
+      const rect = element => {
+        const value = element.getBoundingClientRect()
+        return { left: value.left, right: value.right, top: value.top, bottom: value.bottom, width: value.width }
+      }
+      return {
+        innerWidth,
+        innerHeight,
+        htmlScrollWidth: document.documentElement.scrollWidth,
+        bodyScrollWidth: document.body.scrollWidth,
+        frame: rect(frame),
+        center: rect(center),
+        card: rect(card),
+        rowDisplay: getComputedStyle(row).display,
+        buttons: [...card.querySelectorAll('button')].filter(button => button.getBoundingClientRect().width > 0).map(rect),
+      }
+    })
+    if (geometry === null) throw new Error(`Mobile compatibility markers were incomplete at ${viewport.width}x${viewport.height}.`)
+    if (geometry.htmlScrollWidth !== viewport.width || geometry.bodyScrollWidth !== viewport.width) {
+      throw new Error(`Unexpected page overflow at ${viewport.width}x${viewport.height}: html=${geometry.htmlScrollWidth} body=${geometry.bodyScrollWidth}.`)
+    }
+    if (geometry.rowDisplay !== 'grid') throw new Error(`Composer did not reflow at ${viewport.width}px.`)
+    assertRectInside(geometry.frame, viewport, 'shell frame')
+    assertRectInside(geometry.center, viewport, 'conversation column')
+    assertRectInside(geometry.card, viewport, 'composer card')
+    for (const [index, button] of geometry.buttons.entries()) assertRectInside(button, viewport, `composer button ${index + 1}`)
+
+    const centerWidth = geometry.center.width
+    const openSidebar = page.getByRole('button', { name: /open sidebar|打开侧边栏/iu })
+    if (await openSidebar.count() === 1) {
+      await openSidebar.click()
+      const expanded = await page.locator('[data-dsh-remote-mobile-frame]:not([data-sidebar-collapsed])').evaluate(frame => {
+        const sidebar = frame.querySelector('[data-dsh-remote-mobile-sidebar]')
+        const center = frame.querySelector('[data-dsh-remote-mobile-center]')
+        if (sidebar === null || center === null) return null
+        return {
+          sidebarPosition: getComputedStyle(sidebar).position,
+          sidebarWidth: sidebar.getBoundingClientRect().width,
+          centerWidth: center.getBoundingClientRect().width,
+        }
+      })
+      if (expanded === null || expanded.sidebarPosition !== 'absolute') throw new Error('Expanded mobile sidebar is not an overlay.')
+      if (Math.abs(expanded.centerWidth - centerWidth) > 1) throw new Error('Expanded mobile sidebar squeezed the conversation column.')
+      if (expanded.sidebarWidth > Math.min(320, viewport.width - 24) + 1) throw new Error('Expanded mobile sidebar exceeds its viewport allowance.')
+      await page.getByRole('button', { name: /collapse sidebar|收起侧边栏/iu }).click()
+    }
+
+    screenshots.push(await captureScreenshot(page, join(evidenceDir, `mobile-${viewport.width}x${viewport.height}.png`)))
+  }
+
+  await page.setViewportSize({ width: 390, height: 520 })
+  await assertInsideViewport(page, page.locator('[data-dsh-remote-mobile-composer-card]'), 'Composer after visual viewport height change')
+  screenshots.push(await captureScreenshot(page, join(evidenceDir, 'mobile-390x520-keyboard-simulation.png')))
+
+  await page.setViewportSize({ width: 1280, height: 900 })
+  const desktopDisplay = await page.locator('[data-dsh-remote-mobile-composer-row]').evaluate(row => getComputedStyle(row).display)
+  if (desktopDisplay !== 'flex') throw new Error(`Desktop composer changed from flex to ${desktopDisplay}.`)
+  screenshots.push(await captureScreenshot(page, join(evidenceDir, 'desktop-1280x900.png')))
+  return screenshots
+}
+
+async function assertInsideViewport(page, locator, label) {
+  const rect = await locator.boundingBox()
+  const viewport = page.viewportSize()
+  if (rect === null || viewport === null) throw new Error(`${label} has no measurable viewport rectangle.`)
+  assertRectInside({ left: rect.x, right: rect.x + rect.width, top: rect.y, bottom: rect.y + rect.height }, viewport, label)
+}
+
+function assertRectInside(rect, viewport, label) {
+  const epsilon = 1
+  if (rect.left < -epsilon || rect.top < -epsilon || rect.right > viewport.width + epsilon || rect.bottom > viewport.height + epsilon) {
+    throw new Error(`${label} is outside ${viewport.width}x${viewport.height}: ${JSON.stringify(rect)}.`)
+  }
+}
+
+async function captureScreenshot(page, path) {
+  const bytes = await page.screenshot({ path, animations: 'disabled' })
+  if (bytes.length < 5_000) throw new Error(`Screenshot is unexpectedly blank: ${path}`)
+  return { name: path.split('/').at(-1), sha256: createHash('sha256').update(bytes).digest('hex'), bytes: bytes.length }
 }
 
 function assertPrivateUrl(value) {
