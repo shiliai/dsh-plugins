@@ -7,3 +7,4 @@ playwright-report/
 *.tgz
 .DS_Store
 .e2e/
+/execution/

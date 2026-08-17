@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>DeepSeek Harness 架构解析</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body data-revision="1">
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="页面导航">
+      <div class="brand">
+        <span class="brand-mark">DSH</span>
+        <span>Architecture Notes</span>
+      </div>
+      <nav>
+        <a class="nav-link is-active" href="#verdict">核心判断</a>
+        <a class="nav-link" href="#architecture">系统架构</a>
+        <a class="nav-link" href="#why">为什么好玩</a>
+        <a class="nav-link" href="#flow">运行数据流</a>
+        <a class="nav-link" href="#plugin">插件实例</a>
+        <a class="nav-link" href="#foundation">底座评估</a>
+        <a class="nav-link" href="#boundaries">风险边界</a>
+      </nav>
+      <div class="source-stamp">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span>0.1.0-rc.6 source review</span>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">SOURCE-GROUNDED EXPLAINER</p>
+          <h1>为什么 DeepSeek Harness 适合作为 Agent 底座</h1>
+        </div>
+        <div class="review-meta">
+          <span>185 个 DSH 包</span>
+          <span>Host + Agent + Client</span>
+        </div>
+      </header>
+
+      <section id="verdict" class="section verdict-section">
+        <div class="section-heading">
+          <span class="section-index">01</span>
+          <div>
+            <p class="eyebrow">VERDICT</p>
+            <h2>它不是一个 Agent 应用，而是一套 Agent 运行时</h2>
+          </div>
+        </div>
+        <div class="verdict-band">
+          <p class="lead">DSH 好玩的根本原因，是把完整 Agent 产品拆成了可组合内核、注册表、事件日志和作用域插件。插件作者只实现领域能力，模型循环、会话、权限、持久化和 UI 基础设施由底座承担。</p>
+          <div class="verdict-split">
+            <div>
+              <strong>适合</strong>
+              <p>可信的本地插件、团队内部插件、垂直 Agent 产品和实验性多 Agent 工作流。</p>
+            </div>
+            <div>
+              <strong>暂不适合</strong>
+              <p>无审核公共插件市场，以及直接暴露公网的多租户 Agent 服务。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="architecture" class="section">
+        <div class="section-heading">
+          <span class="section-index">02</span>
+          <div>
+            <p class="eyebrow">ARCHITECTURE</p>
+            <h2>三层运行平面，共享一个组合内核</h2>
+          </div>
+        </div>
+
+        <div class="architecture" role="img" aria-label="DeepSeek Harness 从 Profile 配置到 Host、Agent 和 Browser 三个运行平面的架构图">
+          <div class="architecture-layer config-layer">
+            <div class="layer-label">COMPOSITION INPUT</div>
+            <div class="node-grid four">
+              <div class="arch-node"><strong>Bundle patches</strong><span>第三方插件包</span></div>
+              <div class="arch-node"><strong>Profile patch</strong><span>当前 Profile 覆盖</span></div>
+              <div class="arch-node"><strong>Home patch</strong><span>机器级偏好</span></div>
+              <div class="arch-node"><strong>--patch</strong><span>本次启动覆盖</span></div>
+            </div>
+          </div>
+
+          <div class="flow-connector"><span>按顺序覆盖</span><b>↓</b></div>
+
+          <div class="architecture-layer cordis-layer">
+            <div class="layer-label">CORDIS KERNEL</div>
+            <div class="kernel-row">
+              <strong>依赖注入</strong><strong>Scope</strong><strong>Fiber 生命周期</strong><strong>事件 Waterfall</strong><strong>配置加载与 HMR</strong>
+            </div>
+          </div>
+
+          <div class="plane-grid">
+            <article class="plane host-plane">
+              <div class="plane-title"><span>HOST PLANE</span><small>进程级共享能力</small></div>
+              <div class="plane-stack">
+                <div class="plane-row"><b>核心注册表</b><span>Agents · Sessions · Tools · LLM · SystemPrompt</span></div>
+                <div class="plane-row"><b>安全与状态</b><span>Persistence · Sandbox · Approval · Settings · Credentials</span></div>
+                <div class="plane-row"><b>能力提供者</b><span>FS · Shell · Web · MCP · Jobs · Subagents · Workflow</span></div>
+                <div class="plane-row"><b>Web Transport</b><span>WebServer · API Gateway · RPC · WebSocket</span></div>
+              </div>
+            </article>
+
+            <article class="plane agent-plane">
+              <div class="plane-title"><span>AGENT PLANE</span><small>每个 Session 的作用域世界</small></div>
+              <div class="scope-chain">
+                <div class="scope-node agent-scope">Agent scope</div>
+                <span>→</span>
+                <div class="scope-node preset-scope">Preset scope</div>
+                <span>→</span>
+                <div class="scope-node global-scope">Global scope</div>
+              </div>
+              <div class="plane-stack">
+                <div class="plane-row"><b>Preset</b><span>Persona · Tools · Skills · Prompt sections</span></div>
+                <div class="plane-row"><b>AgentLoop</b><span>Inbox → Turn → Step → Model / Tool</span></div>
+                <div class="plane-row"><b>局部覆盖</b><span>工具可见性、模型呈现、计划模式、压缩策略</span></div>
+              </div>
+            </article>
+
+            <article class="plane client-plane">
+              <div class="plane-title"><span>BROWSER PLANE</span><small>可插拔产品界面</small></div>
+              <div class="plane-stack">
+                <div class="plane-row"><b>Module Loader</b><span>扫描 dsh.client 并懒加载 Bundle</span></div>
+                <div class="plane-row"><b>Client Runtime</b><span>Session · Workspace · Projection · Remote</span></div>
+                <div class="plane-row"><b>UI Slots</b><span>Sidebar · Conversation · Details · Settings</span></div>
+              </div>
+            </article>
+          </div>
+        </div>
+
+        <p class="source-note"><code>dsh/README.md:30</code> · <code>dsh-base/cordis.patch.yml:1</code> · <code>cordis/README.md:61</code></p>
+      </section>
+
+      <section id="why" class="section">
+        <div class="section-heading">
+          <span class="section-index">03</span>
+          <div>
+            <p class="eyebrow">DESIGN PAYOFF</p>
+            <h2>为什么开发插件会产生“随便怎么玩都行”的感觉</h2>
+          </div>
+        </div>
+
+        <div class="reason-grid">
+          <article class="reason-item">
+            <span class="reason-number">1</span>
+            <h3>组合优先于继承</h3>
+            <p>能力是可覆盖的 YAML 插件行。新增、替换、禁用通常不需要 fork 主程序，激活由服务可用性驱动。</p>
+          </article>
+          <article class="reason-item">
+            <span class="reason-number">2</span>
+            <h3>循环故意保持很薄</h3>
+            <p>AgentLoop 只负责“模型 → 工具 → 再请求”。压缩、重试、权限、计划模式和子 Agent 都挂在扩展点上。</p>
+          </article>
+          <article class="reason-item">
+            <span class="reason-number">3</span>
+            <h3>ToolDefinition 贯穿全栈</h3>
+            <p>一份定义同时驱动模型 Schema、参数校验、并发分类、执行流水线、Code Mode SDK 和 UI 展示。</p>
+          </article>
+          <article class="reason-item">
+            <span class="reason-number">4</span>
+            <h3>Session 是事件源</h3>
+            <p>聊天历史只是 append-only 日志上的投影，因此持久化、回放、压缩、分叉、统计都能独立演进。</p>
+          </article>
+          <article class="reason-item">
+            <span class="reason-number">5</span>
+            <h3>每个 Agent 有独立能力视图</h3>
+            <p>解析顺序是 agent → preset → global；同一进程可并行运行极简、代码和领域 Agent。</p>
+          </article>
+          <article class="reason-item">
+            <span class="reason-number">6</span>
+            <h3>前端也有插件协议</h3>
+            <p>浏览器 Bundle 通过 Slots 贡献侧栏、会话节点、详情面板和设置项，无需修改 Web Shell。</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="flow" class="section">
+        <div class="section-heading">
+          <span class="section-index">04</span>
+          <div>
+            <p class="eyebrow">REQUEST FLOW</p>
+            <h2>一次请求如何穿过系统</h2>
+          </div>
+        </div>
+
+        <ol class="pipeline">
+          <li><span>01</span><div><b>Client</b><p>提交消息，通过 RPC 进入 Host。</p></div></li>
+          <li><span>02</span><div><b>Agent Inbox</b><p>写入 durable splice，开启 Turn。</p></div></li>
+          <li><span>03</span><div><b>Prompt Assembly</b><p>按 Agent scope 汇总 Persona、上下文和可见工具。</p></div></li>
+          <li><span>04</span><div><b>LLM Adapter</b><p>流式返回 reasoning、文本和 tool-call chunks。</p></div></li>
+          <li class="pipeline-branch"><span>05</span><div><b>Tool Pipeline</b><p>pre-execute → guards → approval → execute → post-execute → result。</p></div></li>
+          <li><span>06</span><div><b>Session Log</b><p>记录 assistant/message、tool/call、tool/result 和边界事件。</p></div></li>
+          <li><span>07</span><div><b>Next Step</b><p>有工具结果则再次请求模型；没有工具调用则关闭 Turn。</p></div></li>
+          <li><span>08</span><div><b>Browser Projection</b><p>WebSocket 事件更新会话节点、工具卡片和详情视图。</p></div></li>
+        </ol>
+        <div class="loop-note"><span>工具调用存在时</span><strong>05 → 06 → 03</strong><span>形成可观察、可持久化的 Agent 循环</span></div>
+      </section>
+
+      <section id="plugin" class="section">
+        <div class="section-heading">
+          <span class="section-index">05</span>
+          <div>
+            <p class="eyebrow">REAL PLUGIN</p>
+            <h2>当前 Obsidian 插件如何复用 DSH</h2>
+          </div>
+        </div>
+
+        <div class="plugin-map">
+          <div class="plugin-step"><code>package.json</code><span>声明 Bundle patch 与 Web client</span></div>
+          <b>→</b>
+          <div class="plugin-step"><code>cordis.patch.yml</code><span>注入 webServer 与 tools</span></div>
+          <b>→</b>
+          <div class="plugin-step"><code>src/index.ts</code><span>创建 VaultService 并装配两端</span></div>
+          <b>→</b>
+          <div class="plugin-fan">
+            <div class="plugin-step"><code>src/tools.ts</code><span>六个模型工具</span></div>
+            <div class="plugin-step"><code>src/http-api.ts</code><span>浏览器领域 API</span></div>
+            <div class="plugin-step"><code>src/client/index.tsx</code><span>Sidebar 与 Details Slots</span></div>
+          </div>
+        </div>
+
+        <div class="ownership-strip">
+          <div><span>插件负责</span><strong>Vault、安全路径、编辑器、笔记工具</strong></div>
+          <div><span>DSH 负责</span><strong>会话、模型、权限、循环、持久化、流式 UI</strong></div>
+        </div>
+      </section>
+
+      <section id="foundation" class="section">
+        <div class="section-heading">
+          <span class="section-index">06</span>
+          <div>
+            <p class="eyebrow">FOUNDATION FIT</p>
+            <h2>把 DSH 当底座时，插件可以落在哪一层</h2>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>扩展层</th><th>主要接口</th><th>适合实现</th></tr></thead>
+            <tbody>
+              <tr><td>Profile Bundle</td><td><code>cordis.patch.yml</code></td><td>完整产品组合、默认服务与部署策略</td></tr>
+              <tr><td>Agent Preset</td><td><code>agent.cordis.yml</code></td><td>Persona、工具集、Skills、单会话策略</td></tr>
+              <tr><td>Domain Tool</td><td><code>ctx.tools.register()</code></td><td>业务动作、数据访问、外部系统连接</td></tr>
+              <tr><td>Runtime Adapter</td><td>LLM / MCP / Storage / Subagent registries</td><td>模型、协议、持久化和执行后端</td></tr>
+              <tr><td>Host API</td><td>WebServer / Typert Remote</td><td>浏览器业务 API 和宿主能力</td></tr>
+              <tr><td>Client UI</td><td><code>dsh.client</code> + Slots</td><td>侧栏、详情、会话节点与设置页</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="boundaries" class="section boundaries-section">
+        <div class="section-heading">
+          <span class="section-index">07</span>
+          <div>
+            <p class="eyebrow">BOUNDARIES</p>
+            <h2>真正需要提高警惕的地方</h2>
+          </div>
+        </div>
+
+        <div class="risk-list">
+          <article><span class="risk-level high">TRUST</span><div><h3>插件不是安全沙箱</h3><p>插件与 Preset 是可信同进程代码；用户 Preset 的实际权限可以等同 Shell。</p></div></article>
+          <article><span class="risk-level medium">ABI</span><div><h3>当前仍是 RC 契约</h3><p>Session 格式仍为 0，Client unload 尚有未完成部分。插件应锁定精确版本并跑真实 Profile E2E。</p></div></article>
+          <article><span class="risk-level medium">CONFIG</span><div><h3>Patch 替换整段 config</h3><p>它不是深合并；上游新增字段时，旧覆盖可能静默丢失默认值。</p></div></article>
+          <article><span class="risk-level high">NETWORK</span><div><h3>Web trust fence 不是认证</h3><p>它解决浏览器可达性与 DNS rebinding，不构成公网多用户身份和授权层。</p></div></article>
+          <article><span class="risk-level low">SCALE</span><div><h3>默认架构偏本地单进程</h3><p>分布式、多租户部署仍需补充远程执行、队列、租约、审计和一致性机制。</p></div></article>
+        </div>
+
+        <div class="final-callout">
+          <strong>推荐定位</strong>
+          <p>把 DSH 视为“可信、可组合、Local-first 的 Agent Runtime”。保留 AgentLoop，通过服务注册表、事件、Tools、Preset 和 UI Slots 扩展领域行为。</p>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
