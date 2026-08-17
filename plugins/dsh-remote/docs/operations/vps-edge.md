@@ -29,6 +29,9 @@ streaming responses are not staged by Nginx. A reachable DSH response, including
 an application `502`, `503`, or `504`, passes through unchanged. Only a connection
 error, timeout, or invalid upstream header retries to a container-loopback backup
 that serves the branded retryable `503` page; the backup has no public listener.
+Ordinary HTTP requests keep the Unix-socket upstream connection alive so repeated
+requests reuse the existing SSH forwarding channel. WebSocket requests still set
+the explicit Upgrade and Connection headers required for protocol switching.
 
 The Nginx config is a single-file Docker bind mount. Atomic replacement changes
 the host inode, so both the HTTP staging write and final HTTPS write recreate the
