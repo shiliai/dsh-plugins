@@ -1,0 +1,9 @@
+- insert:
+    - id: dsh-obsidian
+      name: '@dsh-plugins/dsh-obsidian'
+      inject: [webServer, tools]
+      config:
+        vaultRoot: !!js process.cwd()
+        mutationOrigin: !!js process.env.DSH_OBSIDIAN_ORIGIN ?? 'http://127.0.0.1:3080'
+        maxNoteBytes: 2097152
+        searchResultLimit: 100
