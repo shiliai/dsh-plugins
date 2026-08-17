@@ -6,6 +6,7 @@ import httpProxy from 'http-proxy'
 import { REMOTE_COOKIE, RemoteStateStore } from './state-store.ts'
 
 const SESSION_PATH = '/__dsh_remote/session'
+const KEEP_ALIVE_TIMEOUT_MS = 60_000
 const SECURITY_HEADERS: OutgoingHttpHeaders = {
   'Cache-Control': 'no-store',
   'Referrer-Policy': 'no-referrer',
@@ -35,6 +36,8 @@ export class RemoteGateway {
         else send(response, 500, 'Remote service unavailable.')
       })
     })
+    this.server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT_MS
+    this.server.headersTimeout = KEEP_ALIVE_TIMEOUT_MS + 5_000
     this.server.on('connection', socket => {
       this.connections.add(socket)
       socket.once('close', () => { this.connections.delete(socket) })

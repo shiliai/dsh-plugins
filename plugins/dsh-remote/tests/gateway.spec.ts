@@ -62,6 +62,7 @@ describe('RemoteGateway', () => {
     expect(bootstrap.headers.get('cache-control')).toBe('no-store')
     expect(bootstrap.headers.get('referrer-policy')).toBe('no-referrer')
     expect(bootstrap.headers.get('content-security-policy')).toContain("connect-src 'self'")
+    expect(bootstrap.headers.get('keep-alive')).toBe('timeout=60')
     expect(await bootstrap.text()).toContain('history.replaceState')
 
     expect((await fetch(`${baseUrl}/complete`)).status).toBe(401)
