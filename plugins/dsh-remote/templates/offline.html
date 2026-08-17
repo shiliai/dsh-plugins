@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="robots" content="noindex,nofollow">
+    <title>DSH 暂时离线</title>
+    <style>
+      :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+      body { min-height: 100vh; margin: 0; display: grid; place-items: center; background: #f5f6f8; color: #202124; }
+      main { width: min(32rem, calc(100% - 3rem)); text-align: center; }
+      h1 { margin: 0 0 .75rem; font-size: 1.5rem; letter-spacing: 0; }
+      p { margin: 0 0 1.25rem; color: #5f6368; line-height: 1.6; }
+      button { border: 1px solid #c6c9cf; border-radius: 6px; padding: .65rem 1rem; background: #fff; color: #202124; font: inherit; cursor: pointer; }
+      button:hover { background: #eef0f3; }
+      @media (prefers-color-scheme: dark) {
+        body { background: #17181a; color: #f1f3f4; }
+        p { color: #aeb4bb; }
+        button { background: #242629; color: #f1f3f4; border-color: #4d5156; }
+        button:hover { background: #303236; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>DSH 暂时离线</h1>
+      <p>远程连接当前不可用。恢复后可直接重试。</p>
+      <button type="button" onclick="location.reload()">重试</button>
+    </main>
+  </body>
+</html>
+

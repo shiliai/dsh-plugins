@@ -1,0 +1,96 @@
+{
+  "name": "@dsh-plugins/dsh-remote",
+  "version": "0.1.0",
+  "description": "Private remote-access gateway for DeepSeek Harness",
+  "license": "MIT",
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/",
+    "scripts/",
+    "templates/",
+    "docs/operations/vps-edge.md",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "bin": {
+    "dsh-remote-edge": "./scripts/dsh-remote-edge.mjs"
+  },
+  "scripts": {
+    "build": "tsdown && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "pnpm run typecheck && pnpm run test && pnpm run build",
+    "pack:check": "pnpm run build && pnpm pack --dry-run",
+    "e2e:rc6": "node tests/e2e/run-rc6-fixture-e2e.mjs",
+    "release:check": "pnpm run check && pnpm run pack:check && pnpm run e2e:rc6",
+    "prepack": "pnpm run build"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-client-runtime": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-layout": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-sidebar": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-host-webserver": "0.1.0-rc.6",
+    "react": "18.3.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": { "optional": true },
+    "@deepseek-ai/dsh-client-runtime": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-layout": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-sidebar": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-slots": { "optional": true },
+    "@deepseek-ai/dsh-host-webserver": { "optional": true },
+    "react": { "optional": true }
+  },
+  "dependencies": {
+    "http-proxy": "^1.18.1",
+    "lucide-react": "^0.468.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh": "0.1.0-rc.6",
+    "@playwright/test": "^1.55.0",
+    "@types/http-proxy": "^1.17.16",
+    "@types/node": "^24.0.0",
+    "@types/react": "18.3.1",
+    "@types/react-dom": "18.3.1",
+    "@types/ws": "^8.5.14",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "tsdown": "^0.15.6",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4",
+    "ws": "^8.18.3"
+  }
+}
