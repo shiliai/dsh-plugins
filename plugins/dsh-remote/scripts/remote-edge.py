@@ -154,6 +154,12 @@ def render_site(template: str, args: argparse.Namespace, *, https: bool) -> str:
     access_log off;
     server_tokens off;
     client_max_body_size 100m;
+    gzip on;
+    gzip_comp_level 1;
+    gzip_min_length 1024;
+    gzip_proxied any;
+    gzip_types application/json;
+    gzip_vary on;
 
     location / {{
         proxy_pass http://dsh_remote_gateway;
