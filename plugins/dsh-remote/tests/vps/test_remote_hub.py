@@ -56,7 +56,9 @@ class RemoteHubTests(unittest.TestCase):
         self.assertIn("limit_req_zone $binary_remote_addr zone=dsh_hub_admin:10m rate=5r/m;", rendered)
         self.assertIn("server_name dsh.onlyservice.io;", rendered)
         self.assertIn("server_name *.dsh.onlyservice.io;", rendered)
-        self.assertIn("    return 404;", rendered)
+        base_server = rendered[rendered.index("server_name dsh.onlyservice.io;"):rendered.index("server_name *.dsh.onlyservice.io;")]
+        self.assertIn("location / { return 404; }", base_server)
+        self.assertNotRegex(base_server, r"(?m)^    return 404;$")
         self.assertNotIn(f"location {path}/", rendered)
         self.assertIn('add_header Cache-Control "no-store" always;', rendered)
         self.assertNotIn("$request_method", rendered)

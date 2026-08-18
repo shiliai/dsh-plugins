@@ -123,6 +123,28 @@ describe('mobile compatibility markers', () => {
     expect(frame.attributes).not.toContain('data-dsh-remote-mobile-session-active')
   })
 
+  it('recognizes an active conversation through a structural wrapper without matching unrelated active phases', () => {
+    const sidebar = new FakeElement()
+    const center = new FakeElement()
+    const details = new FakeElement()
+    const overlay = new FakeElement()
+    const frame = new FakeElement().append(sidebar, center, details, overlay)
+    const scroll = new FakeElement()
+    const wrapper = new FakeElement().append(scroll)
+    const conversation = new FakeElement().append(wrapper)
+    conversation.attributes.add('data-phase')
+    frame.select('[data-conversation-scroll]', scroll)
+    center.append(conversation)
+    const document = new FakeElement()
+      .select('[data-shell-overlay]', overlay)
+      .select('[data-conversation-scroll]', scroll)
+
+    syncMobileCompatibility(document as unknown as Document, new Set<Element>())
+
+    expect(frame.attributes).toContain('data-dsh-remote-mobile-session-active')
+    expect(conversation.attributes).toContain('data-dsh-remote-mobile-conversation')
+  })
+
   it('pins mobile-only responsive rules and desktop isolation', () => {
     const css = readFileSync(resolve(import.meta.dirname, '../src/client/styles.module.css'), 'utf8')
     expect(css).toContain('@media (max-width: 640px)')

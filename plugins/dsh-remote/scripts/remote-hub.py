@@ -398,7 +398,7 @@ def render_routes(base_domain: str, instances: list[dict[str, Any]], *, https: b
                 "    }",
             ])
         lines.extend([
-            "    return 404;",
+            "    location / { return 404; }",
             "}",
             "",
             "server {",

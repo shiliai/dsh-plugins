@@ -39,6 +39,7 @@ try {
 
   runDsh(['plugin', '--profile', 'web', 'add', archive], temp, env)
   installed = true
+  assertDirectoryPickerComposition(dumpDshConfig(temp, env))
   server = spawn(process.execPath, [dshBin, 'web', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: temp,
     env,
@@ -65,6 +66,37 @@ try {
 
 function runDsh(args, cwd, processEnv) {
   execFileSync(process.execPath, [dshBin, ...args], { cwd, env: processEnv, stdio: 'inherit' })
+}
+
+function dumpDshConfig(cwd, processEnv) {
+  return execFileSync(process.execPath, [dshBin, '--profile', 'web', '--dump-config'], {
+    cwd,
+    env: processEnv,
+    encoding: 'utf8',
+  })
+}
+
+function assertDirectoryPickerComposition(config) {
+  const lines = config.split('\n')
+  const entry = id => {
+    const matches = lines.flatMap((line, index) => line === `- id: ${id}` ? [index] : [])
+    if (matches.length !== 1) throw new Error(`Cordis composition expected one ${id} entry, found ${matches.length}: ${config}`)
+    const start = matches[0]
+    const next = lines.findIndex((line, index) => index > start && line.startsWith('- id: '))
+    return lines.slice(start, next === -1 ? undefined : next).join('\n')
+  }
+  const native = entry('directory-picker')
+  if (!native.includes("name: '@deepseek-ai/dsh-host-directory-picker-auto'") || !native.includes('disabled: true')) {
+    throw new Error(`Cordis composition did not disable the native directory picker: ${native}`)
+  }
+  const browse = entry('directory-picker-browse')
+  const surface = entry('directory-picker-surface')
+  if (!browse.includes("name: '@deepseek-ai/dsh-host-directory-picker-browse'") || browse.includes('disabled: true')) {
+    throw new Error(`Cordis composition did not enable exactly one browse host picker: ${browse}`)
+  }
+  if (!surface.includes("name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'") || surface.includes('disabled: true')) {
+    throw new Error(`Cordis composition did not enable exactly one browser browse surface: ${surface}`)
+  }
 }
 
 async function verifyRemotePanel(origin, initialSessionVersion, evidenceDir) {
