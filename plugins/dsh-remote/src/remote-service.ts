@@ -16,7 +16,7 @@ export class RemoteService {
 
   static async start(webServer: WebServer, config: RemoteConfig): Promise<RemoteService> {
     const resolved = resolveRuntimeConfig(webServer, config)
-    const state = await RemoteStateStore.open(resolved.stateFile)
+    const state = await RemoteStateStore.open(resolved.stateFile, { initialToken: resolved.initialToken })
     const gateway = new RemoteGateway({
       targetPort: webServer.port,
       remoteOrigin: resolved.remoteOrigin,
@@ -74,10 +74,12 @@ export function managementOrigins(config: RemoteConfig, webServer: WebServer): r
 }
 
 export interface ResolvedRemoteConfig {
+  instanceId: string | undefined
   remoteOrigin: string
   sshTarget: string
   remoteSocketPath: string
   stateFile: string
+  initialToken: string | undefined
   gatewayHost: '127.0.0.1'
   gatewayPort: number
   reconnectBaseMs: number
@@ -89,24 +91,39 @@ export interface ResolvedRemoteConfig {
 export function resolveRuntimeConfig(webServer: Pick<WebServer, 'host' | 'port'>, config: RemoteConfig): ResolvedRemoteConfig {
   if (webServer.host !== '127.0.0.1') throw new Error('dsh-remote: webServer must remain bound to loopback.')
   if (config.gatewayHost !== undefined && config.gatewayHost !== '127.0.0.1') throw new Error('dsh-remote: gatewayHost must be 127.0.0.1.')
-  const remoteOrigin = requiredHttpsOrigin(environmentValue('DSH_REMOTE_ORIGIN') ?? config.remoteOrigin, 'remoteOrigin')
+  const instanceId = optionalInstanceId(environmentValue('DSH_REMOTE_INSTANCE_ID') ?? config.instanceId)
+  const baseDomain = requiredDomain(environmentValue('DSH_REMOTE_BASE_DOMAIN') ?? config.baseDomain ?? 'dsh.onlyservice.io', 'baseDomain')
+  const remoteOrigin = requiredHttpsOrigin(
+    environmentValue('DSH_REMOTE_ORIGIN') ?? (instanceId === undefined ? config.remoteOrigin : `https://${instanceId}.${baseDomain}`),
+    'remoteOrigin',
+  )
   const sshTarget = environmentValue('DSH_REMOTE_SSH_TARGET') ?? config.sshTarget
-  const remoteSocketPath = config.remoteSocketPath
+  const remoteSocketPath = environmentValue('DSH_REMOTE_SOCKET_PATH')
+    ?? (instanceId === undefined ? config.remoteSocketPath : `/home/chriswang/.local/share/dsh-remote/instances/${instanceId}.sock`)
   assertSafeSshTarget(sshTarget)
   assertSafeRemoteSocketPath(remoteSocketPath)
-  const stateFile = environmentValue('DSH_REMOTE_STATE_FILE') ?? config.stateFile ?? defaultStatePath()
+  const stateFile = environmentValue('DSH_REMOTE_STATE_FILE') ?? config.stateFile
+    ?? (instanceId === undefined ? defaultStatePath() : defaultInstanceStatePath(instanceId))
   if (!posix.isAbsolute(stateFile)) throw new Error('dsh-remote: stateFile must be absolute.')
   return {
+    instanceId,
     remoteOrigin,
     sshTarget,
     remoteSocketPath,
     stateFile,
+    initialToken: environmentValue('DSH_REMOTE_INITIAL_TOKEN'),
     gatewayHost: '127.0.0.1',
     gatewayPort: boundedInteger(config.gatewayPort ?? 0, 0, 65535, 'gatewayPort'),
     reconnectBaseMs: boundedInteger(config.reconnectBaseMs ?? 500, 100, 60_000, 'reconnectBaseMs'),
     reconnectMaxMs: boundedInteger(config.reconnectMaxMs ?? 30_000, 100, 300_000, 'reconnectMaxMs'),
     reconnectMaxRetries: boundedInteger(config.reconnectMaxRetries ?? 5, 0, 20, 'reconnectMaxRetries'),
     tunnelStabilityDelayMs: boundedInteger(config.tunnelStabilityDelayMs ?? 750, 100, 10_000, 'tunnelStabilityDelayMs'),
+  }
+}
+
+export function assertSafeInstanceId(value: string): void {
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(value) || value.includes('--')) {
+    throw new Error('dsh-remote: instanceId must be a lowercase DNS label without consecutive hyphens.')
   }
 }
 
@@ -131,6 +148,24 @@ export function assertSafeRemoteSocketPath(value: string): void {
 function defaultStatePath(): string {
   const base = process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config')
   return join(base, 'dsh-remote', 'state.json')
+}
+
+function defaultInstanceStatePath(instanceId: string): string {
+  const base = process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config')
+  return join(base, 'dsh-remote', 'instances', `${instanceId}.json`)
+}
+
+function optionalInstanceId(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined
+  assertSafeInstanceId(value)
+  return value
+}
+
+function requiredDomain(value: string, name: string): string {
+  if (value.length > 253 || value.includes('..') || !/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/u.test(value)) {
+    throw new Error(`dsh-remote: ${name} must be a lowercase DNS name.`)
+  }
+  return value
 }
 
 function requiredHttpsOrigin(value: string, name: string): string {

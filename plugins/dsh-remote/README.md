@@ -15,10 +15,24 @@ The patch reads these nonsecret test and deployment overrides at runtime:
 DSH_REMOTE_ORIGIN=https://zsh.onlyservice.io
 DSH_REMOTE_SSH_TARGET=vps-tencent-tokyo
 DSH_REMOTE_STATE_FILE=/absolute/local/path/state.json
+DSH_REMOTE_INITIAL_TOKEN=<43-character-base64url-token>
 ```
 
-The token is never configured through Cordis, environment variables, or DSH
-dump-config. It is generated in the mode-0600 local state file. DSH and the
+For a registered multi-instance Hub node, set the instance identity and SSH
+target. The plugin derives an isolated origin, socket, and state path while the
+legacy single-instance defaults remain unchanged:
+
+```sh
+DSH_REMOTE_INSTANCE_ID=x570
+DSH_REMOTE_BASE_DOMAIN=dsh.onlyservice.io
+DSH_REMOTE_SSH_TARGET=vps-tencent-tokyo
+```
+
+`DSH_REMOTE_INITIAL_TOKEN` is optional and is read only when the mode-0600 state
+file does not exist. It must be exactly 32 random bytes encoded as unpadded
+base64url (43 characters). Existing state always wins, so changing or removing
+the environment value cannot replace a live token or undo a rotation. Keep the
+value out of Cordis configuration and DSH `dump-config` output. DSH and the
 gateway must both bind to `127.0.0.1`; the plugin rejects any public bind.
 
 The default reverse-forward target is
@@ -54,11 +68,68 @@ dsh-remote-edge renewal-check
 dsh-remote-edge rollback --receipt <receipt-id>
 ```
 
+The optional multi-instance Hub is initialized once and then changed through an
+allowlisted registry. Registration rewrites only the generated route file,
+validates Nginx, and reloads atomically; it does not add another Compose mount or
+certificate:
+
+```sh
+dsh-remote-edge hub preflight
+dsh-remote-edge hub apply
+dsh-remote-edge hub status
+dsh-remote-edge hub acknowledge-alert
+dsh-remote-edge instance add x570
+dsh-remote-edge instance status x570
+dsh-remote-edge instance remove x570
+dsh-remote-edge instance rollback --receipt <transaction-id>
+dsh-remote-edge hub renewal-check
+dsh-remote-edge hub rollback --receipt <deployment-receipt-id>
+```
+
+After DSH is installed on a node, install the packed bundle and its persistent
+user service with the same node-side command used by x570:
+
+```sh
+dsh-remote-install-node ./dsh-plugins-dsh-remote-0.1.0.tgz x570
+```
+
+The installer keeps the tarball by SHA-256, backs up the Web profile and any
+existing instance unit, and writes `dsh-remote-<instance>.service`. It requires
+the user's systemd manager to have lingering enabled; use the explicit
+`--enable-linger` final argument only when authorizing that host lifecycle
+change. The service derives the independent origin, socket, token state, and
+local state file from the instance ID. Register the same ID on the Hub only
+after the node service is ready.
+
+Each installed instance unit optionally reads a private host file at
+`~/.config/dsh-remote/<instance-id>.env`. To choose the first private link
+without inspecting the state over an SSH tunnel, create it with mode `0600`
+before the first service start:
+
+```sh
+DSH_REMOTE_INITIAL_TOKEN=<43-character-base64url-token>
+```
+
+The file is not modified by installation or token rotation. Once state exists,
+the configured initial value is ignored.
+
+`install-dsh-node.sh` manages DSH itself with immutable `releases/` and
+`configs/` generations. A validated install atomically switches `current`
+links and prints its receipt ID. Reverse the newest install with
+`install-dsh-node.sh --rollback <receipt-id>`; this restores the prior launcher,
+configuration files/pointer, modes, and hashes without touching sessions, workspaces,
+or legacy `~/.dsh`.
+
 `preflight` is read-only. `apply` is backup-first and stops before activation on a
 failed validation. Nginx streams request and response bodies without proxy
-buffering. `status` distinguishes installed configuration from a functionally
-ready gateway, `renewal-check` exercises Certbot's dry run and certificate checks,
-and `rollback` restores the receipt's exact managed files. See
+buffering. Hub `status` verifies one registry/routes generation and reports each
+node as `online`, `offline`, `insecure`, or `missing`; `online` requires a real
+protected-route response, not just a connectable socket. Certificate automation
+uses the digest-pinned `certbot/dns-cloudflare` image. `renewal-check` exercises
+Certbot's dry run and certificate checks, and `rollback` restores the v2
+receipt's exact managed files and metadata. An unacknowledged health alarm keeps
+the Hub out of `ready`; `hub acknowledge-alert` succeeds only after every
+registered node is healthy. See
 [`docs/operations/vps-edge.md`](docs/operations/vps-edge.md) for the managed
 scope, socket permissions, and recovery details.
 

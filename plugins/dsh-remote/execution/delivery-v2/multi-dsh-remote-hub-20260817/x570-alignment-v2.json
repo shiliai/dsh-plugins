@@ -1,0 +1,21 @@
+{
+  "work_item_id": "WI-X570-RUNTIME",
+  "alignment": {
+    "baseline_revision": "multi-dsh-remote-v2",
+    "stories": [
+      {
+        "id": "X570-01",
+        "role": "DSH owner",
+        "goal": "Install DSH 0.1.0-rc.6 on x570 with a fixed Home and the same usable model configuration",
+        "value": "Use the same model roster on x570 without moving private sessions or disturbing the existing installation",
+        "given": "x570 has the preserved legacy ~/.dsh and the approved settings and credential sources",
+        "when": "the owner starts dsh from a login shell and boots the fixed-home Web profile",
+        "then": "dsh resolves to the rc.6 launcher using /home/chriswang/.local/dsh_home, exposes the approved 7-provider/35-model configuration, keeps configuration files private, copies no session/workspace state, leaves ~/.dsh unchanged, and serves loopback HTTP 200",
+        "evidence_refs": ["E-X570-RUNTIME-V2"],
+        "status": "Complete"
+      }
+    ],
+    "drift_score": 0,
+    "accepted_deviation": null
+  }
+}

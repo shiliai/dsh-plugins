@@ -1,0 +1,129 @@
+{
+  "RF-001": {
+    "changes": [
+      "Add a secret-safe dual-instance E2E driver that opens authenticated zsh and x570 sessions plus live /api/events.mux WebSockets, keeps the original zsh socket open, and performs the x570 outage, recovery, and token-rotation sequence without logging bearer values or cookies."
+    ],
+    "tests": [
+      "On the live deployment, assert zsh protected HTTP is 200 and the same zsh WebSocket completes request/response round trips before, during, and after x570 stop, recovery, and rotation; retain x570 503, recovery 200, old-cookie 401, old-WebSocket close, and new-session/WebSocket checks."
+    ],
+    "docs": [
+      "Document the redacted concurrent isolation check and the rule that root HTTP 200 is not sufficient health evidence."
+    ],
+    "evidence": [
+      "A redacted E2E result bound to the successor deployment identity, recording only status codes, WebSocket round-trip outcomes, and state transitions."
+    ]
+  },
+  "RF-002": {
+    "changes": [
+      "Upgrade Hub deployment receipts to a versioned, secret-free pre/post manifest that captures regular files, symlinks, directories, uid/gid/mode, managed group pre-state, cron and monitoring files, and the complete certificate lineage paths needed for exact restoration.",
+      "Store metadata-preserving backups for every pre-existing managed object, record receipt SHA-256 and predecessor/current state identities, chain-guard rollback, restore or remove every managed object in dependency-safe order, and record a verified rollback result."
+    ],
+    "tests": [
+      "Fixture tests cover apply/rollback when certificate lineage, group, directories, cron, and managed files are absent and when each pre-exists with nondefault content and metadata; compare complete normalized pre/post manifests byte-for-byte and metadata-for-metadata.",
+      "Run a real VPS apply/rollback/reapply canary, verify the rollback manifest equals the captured pre-state, and preserve zsh availability throughout."
+    ],
+    "docs": [
+      "Document receipt schema/location/hash, exact restore ordering, chain guards, automatic versus manual rollback, and the real rollback verification procedure."
+    ],
+    "evidence": [
+      "Successor deployment evidence binds the package hash, deployed receipt hash, pre/post manifest identities, real rollback result, and final reapplied identity."
+    ]
+  },
+  "RF-003": {
+    "changes": [
+      "Refactor install-dsh-node.sh into a locked, receipt-driven installer that stages immutable version/config generations, validates them before activation, and atomically switches stable active pointers used by the launcher and fixed DSH_HOME.",
+      "Capture the complete managed pre-state including content hashes, uid/gid/mode, symlinks, launcher, settings, and credentials; restore it on every failed phase and expose an explicit chain-guarded rollback command while leaving legacy ~/.dsh outside managed scope."
+    ],
+    "tests": [
+      "Add isolated shell integration tests for first install and managed rerun with injected failure after each mutation/activation phase, asserting exact pre-state hashes, metadata, pointers, and absence of mixed releases; also test successful upgrade and explicit rollback."
+    ],
+    "docs": [
+      "Document versioned release/config layout, stable launcher behavior, receipt location, upgrade procedure, explicit rollback, and preserved legacy/session boundaries."
+    ],
+    "evidence": [
+      "Local failure-injection matrix plus x570 managed rerun and rollback/reapply evidence showing rc.6, fixed Home, 0600 configuration, unchanged legacy ~/.dsh, and the approved model roster."
+    ]
+  },
+  "RF-004": {
+    "changes": [
+      "Make the instance installer require an active lingering user manager before enabling its user unit, with an explicit --enable-linger setup path that performs and verifies the authorized host change; fail preflight without either existing linger or that flag.",
+      "Record linger and unit pre-state in the node receipt so rollback restores the previous lifecycle state without changing unrelated users."
+    ],
+    "tests": [
+      "Add command-fixture tests for linger already enabled, missing linger rejection, authorized enablement, enablement failure, and rollback to prior state.",
+      "On x570, verify the unit and reverse tunnel survive termination of the interactive SSH session and recover after an authorized reboot, with the endpoint returning authenticated HTTP/WebSocket traffic."
+    ],
+    "docs": [
+      "Document why linger is required, the explicit enablement command, logout/reboot verification, and rollback behavior."
+    ],
+    "evidence": [
+      "Redacted x570 loginctl/unit state plus post-logout and post-reboot tunnel/endpoint results bound to the successor node and deployment identities."
+    ]
+  },
+  "RF-005": {
+    "changes": [
+      "Serialize Hub apply/rollback/add/remove/status-recovery operations with one inter-process lock acquired before registry read and held through validation, reload, receipt commit, and cleanup.",
+      "Stage registry and routes as one identified generation, embed and verify the same generation ID in both files, maintain a durable pending/committed transaction marker, and recover interrupted transactions deterministically before any new mutator.",
+      "Persist pre/post registry and route files, hashes, metadata, chain identities, and socket quarantine metadata in transaction receipts; add a chain-guarded transaction rollback command.",
+      "For removal, atomically quarantine a stale or forced-live socket before activation, restore the same inode/path/metadata on failure, retain the quarantine through commit for reversible rollback, and only garbage-collect it after its receipt is no longer reversible."
+    ],
+    "tests": [
+      "Deterministic multi-process add/add and add/remove tests prove no lost IDs.",
+      "Failure and process-kill injection after each durable boundary proves recovery selects one complete generation and registry/routes IDs always match.",
+      "Stale and forced-live socket failure tests prove exact path, inode type, owner/group/mode, registry, and routes pre-state restoration; completed add/remove rollback tests verify chain guards and exact reversal."
+    ],
+    "docs": [
+      "Document lock scope, transaction receipt/chain model, crash recovery, socket quarantine, --force limitations, rollback order, and garbage-collection rules."
+    ],
+    "evidence": [
+      "Concurrency/failure-injection suite results and real VPS add/remove/rollback canary bound to generation and receipt hashes."
+    ]
+  },
+  "RF-006": {
+    "changes": [
+      "Replace mutable certificate image tags in issuance, renewal, and deletion paths with one allowlisted certbot/dns-cloudflare image reference pinned by sha256 digest; validate the reference before exposing the mode-0600 credential mount and include the digest in receipts/status."
+    ],
+    "tests": [
+      "Reject tag-only and malformed image references, assert every certificate command uses the same digest, and run production-image issuance/renewal/deletion canaries with credential-redacted output."
+    ],
+    "docs": [
+      "Document the pinned image identity, controlled digest update procedure, and verification command."
+    ],
+    "evidence": [
+      "Package tests plus VPS image inspection and renewal canary bind the exact digest without exposing Cloudflare credential contents."
+    ]
+  },
+  "RF-007": {
+    "changes": [
+      "Expose the clean-node installer as a packaged command and align README and the VPS runbook with the implemented Hub apply/status/renewal/rollback/transaction/node commands."
+    ],
+    "tests": [
+      "Add documentation command-contract tests that resolve every packaged invocation, parse every shown option, and check renewal schedule, receipt paths, rollback chain, socket handling, monitoring, and clean-node bootstrap against generated/runtime values."
+    ],
+    "docs": [
+      "Replace legacy-only renewal text with the DNS-01 Hub workflow; include exact commands, receipt paths, rollback ordering, tunnel stop, --force semantics, stale socket recovery, clean-node install, linger, verification, and incident steps."
+    ],
+    "evidence": [
+      "Passing command-contract tests and a package manifest proving both edge and node installer entry points ship and execute."
+    ]
+  },
+  "RF-008": {
+    "changes": [
+      "Expand Hub status into explicit configured and ready invariants: registry/routes generation equality, registry and managed-file modes/ownership, all required Compose mounts/group_add, socket-directory metadata, Nginx worker group membership, pinned certificate identity/validity, renewal/health schedules, and functional Nginx validation.",
+      "Classify each registered instance as online, offline, insecure, or missing using lstat, exact owner/group/mode, a bounded Unix-socket connect probe, and a bounded functional HTTPS request through that instance's Nginx route to a protected gateway endpoint; online requires the expected gateway 401 response, while a listening but nonresponsive socket is offline.",
+      "Install a secret-free systemd health service/timer covering public route, functional gateway, service/socket, and certificate checks. Attach an OnFailure alert unit that writes a mode-0600 persistent alarm record, emits to the journal, and uses wall as the installed delivery consumer for logged-in operator terminals; include service/timer/alert and retention files in deployment rollback manifests.",
+      "Install bounded journald/log retention for the Hub units and document that wall is the immediate on-host delivery path while the persistent failed-unit/alarm record is the catch-up path for operators who were not logged in; do not claim unconfigured Tencent Cloud account-side alert delivery."
+    ],
+    "tests": [
+      "Add status corruption tests for generation mismatch, missing mounts, wrong registry/socket-directory metadata, absent group membership, broken renewal/health schedules, and certificate identity mismatch.",
+      "Add socket-state tests for listening-and-responsive, listening-but-nonresponsive, stale, missing, wrong-owner, wrong-mode, and regular-file paths, asserting that readiness requires the functional protected-route 401 response.",
+      "On the VPS keep an SSH TTY open, inject a synthetic health failure, prove the OnFailure unit records it and wall delivers the alert text to that operator terminal, then clear the synthetic condition and prove the timer returns healthy."
+    ],
+    "docs": [
+      "Define configured versus ready, every per-instance state, protected-route probe semantics, scheduled check cadence, systemd OnFailure to persistent alarm/journal/wall delivery, operator catch-up and acknowledgement steps, optional Tencent Cloud integration as explicitly unconfigured, and retention limits."
+    ],
+    "evidence": [
+      "Corruption/state test matrix and fresh successor deployment status showing Hub configured, x570 online/ready through the protected-route probe, zsh healthy, pinned certificate valid, monitoring installed, and one synthetic alert observed on an operator SSH TTY with no credential data."
+    ]
+  }
+}

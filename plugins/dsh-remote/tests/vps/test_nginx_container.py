@@ -17,6 +17,10 @@ SPEC = importlib.util.spec_from_file_location("remote_edge_nginx", ROOT / "scrip
 assert SPEC and SPEC.loader
 remote_edge = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(remote_edge)
+HUB_SPEC = importlib.util.spec_from_file_location("remote_hub_nginx", ROOT / "scripts" / "remote-hub.py")
+assert HUB_SPEC and HUB_SPEC.loader
+remote_hub = importlib.util.module_from_spec(HUB_SPEC)
+HUB_SPEC.loader.exec_module(remote_hub)
 
 
 def nginx_image_available() -> bool:
@@ -39,6 +43,20 @@ class NginxContainerTests(unittest.TestCase):
         )
         template = (ROOT / "templates" / "nginx-site.conf").read_text(encoding="utf-8")
         rendered = remote_edge.render_site(template, args, https=False)
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "default.conf"
+            config.write_text(rendered, encoding="utf-8")
+            result = subprocess.run([
+                "docker", "run", "--rm",
+                "-v", f"{config}:/etc/nginx/conf.d/default.conf:ro",
+                "nginx:alpine", "nginx", "-t",
+            ], text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_multi_instance_http_stage_is_accepted_by_production_nginx_image(self) -> None:
+        rendered = remote_hub.render_routes(
+            "dsh.onlyservice.io", [{"id": "build-01"}, {"id": "x570"}], https=False
+        )
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "default.conf"
             config.write_text(rendered, encoding="utf-8")

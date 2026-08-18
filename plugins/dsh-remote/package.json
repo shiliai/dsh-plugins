@@ -29,7 +29,8 @@
     "LICENSE"
   ],
   "bin": {
-    "dsh-remote-edge": "./scripts/dsh-remote-edge.mjs"
+    "dsh-remote-edge": "./scripts/dsh-remote-edge.mjs",
+    "dsh-remote-install-node": "./scripts/install-dsh-remote-instance.sh"
   },
   "scripts": {
     "build": "tsdown && tsc -p tsconfig.build.json",

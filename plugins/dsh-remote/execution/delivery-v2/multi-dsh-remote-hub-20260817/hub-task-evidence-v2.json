@@ -1,0 +1,48 @@
+{
+  "work_item_id": "WI-HUB-DELIVERY",
+  "evidence": {
+    "id": "E-HUB-DEPLOYMENT-V1",
+    "subject": {
+      "kind": "deployment_revision",
+      "value": "multi-dsh-remote-hub-v1:x570.dsh.onlyservice.io"
+    },
+    "source": "Local package verification, SSH x570, SSH vps-tencent-tokyo, public HTTPS/WSS, Cloudflare DNS API, and Let's Encrypt staging/production",
+    "collected_at": "2026-08-18T01:43:41+08:00",
+    "verification": "Verified 26 Vitest tests, 24 Python VPS tests with only two local-image skips covered by the VPS production-image canary, typecheck/build, shell/Python syntax, package contents and diff check. Deployed one wildcard certificate and registry Hub with backup receipt 20260817T173009Z; Nginx validates; Hub status is configured; x570 socket is present and secure. Public token exchange, authenticated HTTP and real /api/events.mux WebSocket succeeded. x570 stop produced registered 503 while unknown remained 404 and zsh remained 200; recovery returned x570 to 200. Rotation closed the old WebSocket, made the old cookie return 401 on a protected path, and allowed a new session/WebSocket. Wildcard renewal dry-run passed. No credential values were emitted.",
+    "result": {
+      "passed": true,
+      "package_sha256": "642ac82fd2679704dfe93a26285ee49af3e5ebc8c7d4b2f4ef5b347cf772690f",
+      "package_file_count": 38,
+      "vitest": "26 passed",
+      "vps_tests": "24 passed, 2 local-image skips",
+      "vps_production_image_canary": "passed",
+      "hub_receipt": "20260817T173009Z",
+      "pre_nginx_sha256": "66f0954eaf98d0a818a9390d9d62230aba7fc84dd335c7c127a3961df33a9b8a",
+      "pre_compose_sha256": "bae521fc4f578746215ded76c2c147583557cba04ff4004a79c04dda62cabf50",
+      "post_nginx_sha256": "4d1495539d042ce3889921b62ab5b6bc7655d65fcb4febbdbab5c34805927dee",
+      "post_compose_sha256": "c97e93332913e7cdb8e84de62b499224c33e4643cc71f341ddd002ee807ee546",
+      "registry_sha256": "66174ac85d3dd6dc435247593d299c613870b701cc70936df0b44bc678cb46f5",
+      "routes_sha256": "670dfa8af510b1c68f5d87e9311a26792d2dd6d3953aff7850ed92fc24279962",
+      "hub_status": "configured",
+      "x570_socket": "present secure mode-0660",
+      "wildcard_certificate": "dsh.onlyservice.io and *.dsh.onlyservice.io, expires 2026-11-15",
+      "renewal_dry_run": "passed",
+      "public_bootstrap_http": 200,
+      "unauthenticated_protected_http": 401,
+      "session_exchange_http": 204,
+      "authenticated_http": 200,
+      "authenticated_websocket": "opened",
+      "offline_registered_http": 503,
+      "unknown_instance_http": 404,
+      "recovered_http": 200,
+      "rotation_old_websocket": "closed",
+      "rotation_old_cookie_http": 401,
+      "rotation_new_session_http": 204,
+      "rotation_new_websocket": "opened",
+      "existing_zsh_http_during_all_checks": 200
+    },
+    "valid_when": "The package artifact, deployed Nginx/Compose/registry/routes identities, wildcard certificate lineage, x570 service/profile/state, DNS target, and existing zsh service remain at the recorded identities and health states.",
+    "invalid_when": "Any package or deployed configuration identity changes, x570 is re-registered or its token rotates again, the wildcard certificate lineage changes, or either public endpoint loses the recorded behavior.",
+    "reuse_scope": "WI-HUB-DELIVERY acceptance and alignment, convergence identity, independent review, final E2E, recovery receipt, and closeout."
+  }
+}

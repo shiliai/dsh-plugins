@@ -17,7 +17,7 @@ export async function apply(ctx: Context, config: RemoteConfig): Promise<void> {
 }
 
 export { RemoteGateway } from './gateway.ts'
-export { RemoteService } from './remote-service.ts'
+export { assertSafeInstanceId, RemoteService } from './remote-service.ts'
 export { RemoteStateStore } from './state-store.ts'
 export { TunnelSupervisor, socketCleanupArgs, socketModeArgs, sshArgs } from './tunnel-supervisor.ts'
 export type { RemoteConfig, RemoteStatus, TunnelPhase, TunnelStatus } from './contracts.ts'

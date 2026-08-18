@@ -25,6 +25,8 @@ export interface RemoteConfig {
   remoteOrigin: string
   sshTarget: string
   remoteSocketPath: string
+  instanceId?: string
+  baseDomain?: string
   stateFile?: string
   gatewayHost?: '127.0.0.1'
   gatewayPort?: number

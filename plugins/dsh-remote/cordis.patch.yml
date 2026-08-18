@@ -3,6 +3,8 @@
       name: '@dsh-plugins/dsh-remote'
       inject: [webServer]
       config:
+        instanceId: !!js process.env.DSH_REMOTE_INSTANCE_ID ?? undefined
+        baseDomain: !!js process.env.DSH_REMOTE_BASE_DOMAIN ?? 'dsh.onlyservice.io'
         remoteOrigin: !!js process.env.DSH_REMOTE_ORIGIN ?? 'https://zsh.onlyservice.io'
         sshTarget: !!js process.env.DSH_REMOTE_SSH_TARGET ?? 'vps-tencent-tokyo'
         remoteSocketPath: '/home/chriswang/.local/share/dsh-remote/tunnel.sock'
