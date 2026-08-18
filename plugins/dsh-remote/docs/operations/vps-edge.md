@@ -70,8 +70,10 @@ the marked HTTPS site and managed certificate-renewal schedule. Any failed step
 invokes automatic restoration from the same receipt.
 
 The HTTPS proxy disables request and response buffering, so large DSH uploads and
-streaming responses are not staged by Nginx. A reachable DSH response, including
-an application `502`, `503`, or `504`, passes through unchanged. Only a connection
+streaming responses are not staged by Nginx. JSON responses of at least 1 KiB are
+gzip-compressed at level 1 when the client advertises support; WebSocket traffic
+is unchanged. A reachable DSH response, including an
+application `502`, `503`, or `504`, passes through unchanged. Only a connection
 error, timeout, or invalid upstream header retries to a container-loopback backup
 that serves the branded retryable `503` page; the backup has no public listener.
 Ordinary HTTP requests keep the Unix-socket upstream connection alive so repeated
