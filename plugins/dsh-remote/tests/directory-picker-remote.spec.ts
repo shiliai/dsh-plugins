@@ -61,10 +61,12 @@ describe('remote directory picker overlay', () => {
     expect(nativeSideEffect).not.toHaveBeenCalled()
   })
 
-  it('replaces the built-in row instead of registering a competing picker', async () => {
+  it('disables the adaptive native picker and registers one complete browse interaction', async () => {
     const patch = await readFile(resolve(import.meta.dirname, '../cordis.patch.yml'), 'utf8')
     expect((patch.match(/^\s*- id: directory-picker$/gm) ?? [])).toHaveLength(1)
+    expect((patch.match(/^\s*- id: directory-picker-browse$/gm) ?? [])).toHaveLength(1)
     expect((patch.match(/^\s*- id: directory-picker-surface$/gm) ?? [])).toHaveLength(1)
+    expect(patch).toContain("name: '@deepseek-ai/dsh-host-directory-picker-auto'\n  disabled: true")
     expect(patch).toContain("name: '@deepseek-ai/dsh-host-directory-picker-browse'")
     expect(patch).toContain("name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'")
   })
