@@ -43,6 +43,7 @@ class FakeElement {
   }
 
   hasAttribute(name: string): boolean { return this.attributes.has(name) }
+  getAttribute(name: string): string | null { return this.attributes.has(name) ? name === 'data-phase' ? 'active' : '' : null }
   setAttribute(name: string): void { this.attributes.add(name) }
   removeAttribute(name: string): void { this.attributes.delete(name) }
   get firstElementChild(): FakeElement | null { return this.children[0] ?? null }
@@ -63,7 +64,7 @@ describe('mobile compatibility markers', () => {
     conversation.attributes.add('data-phase')
     conversation.select('header, [role="banner"]', header)
     center.append(conversation)
-    frame.select('[data-phase="active"]', conversation)
+    frame.select('[data-conversation-scroll]', scroll)
 
     const textarea = new FakeElement()
     const grow = new FakeElement().append(textarea)
@@ -104,6 +105,22 @@ describe('mobile compatibility markers', () => {
     for (const element of [frame, sidebar, center, details, conversation, header, composer, card, row, tools, trailing, footer]) {
       expect([...element.attributes].filter(name => name.startsWith('data-dsh-remote-mobile-'))).toEqual([])
     }
+  })
+
+  it('ignores active phases that do not belong to a conversation', () => {
+    const sidebar = new FakeElement()
+    const center = new FakeElement()
+    const details = new FakeElement()
+    const overlay = new FakeElement()
+    const unrelated = new FakeElement()
+    unrelated.attributes.add('data-phase')
+    const frame = new FakeElement().append(sidebar, center, details, overlay, unrelated)
+      .select('[data-phase="active"]', unrelated)
+    const document = new FakeElement().select('[data-shell-overlay]', overlay)
+
+    syncMobileCompatibility(document as unknown as Document, new Set<Element>())
+
+    expect(frame.attributes).not.toContain('data-dsh-remote-mobile-session-active')
   })
 
   it('pins mobile-only responsive rules and desktop isolation', () => {

@@ -40,7 +40,9 @@ function markFrame(document: Document, marked: Set<Element>): void {
     mark(frame.children[0], MARKERS.sidebar, marked)
     mark(frame.children[1], MARKERS.center, marked)
     mark(frame.children[2], MARKERS.details, marked)
-    if (frame.querySelector('[data-phase="active"]') === null) {
+    const conversationActive = [...frame.querySelectorAll<HTMLElement>('[data-conversation-scroll]')]
+      .some(scroll => scroll.parentElement?.getAttribute('data-phase') === 'active')
+    if (!conversationActive) {
       frame.removeAttribute(MARKERS.sessionActive)
     } else {
       mark(frame, MARKERS.sessionActive, marked)
