@@ -268,10 +268,10 @@ allowBuilds` 读取现有配置，再合并上述 entry。
 `update` 也会完成一次性 source 迁移：
 
 ```sh
-dsh plugin --profile web dlx \
+dsh plugin --profile web --config.dlx-cache-max-age=0 dlx \
   'github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater' \
   check @dsh-plugins/dsh-obsidian
-dsh plugin --profile web dlx \
+dsh plugin --profile web --config.dlx-cache-max-age=0 dlx \
   'github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater' \
   update @dsh-plugins/dsh-obsidian
 ```

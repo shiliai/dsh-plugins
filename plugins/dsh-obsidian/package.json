@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/dsh-obsidian",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Obsidian vault browser, Markdown editor, preview, and note tools for DeepSeek Harness",
   "license": "MIT",
   "repository": {

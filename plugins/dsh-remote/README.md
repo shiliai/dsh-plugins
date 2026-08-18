@@ -142,10 +142,10 @@ Use the repository updater through dsh to detect and apply newer versions. It
 can also perform the one-time source migration for a local or packed install:
 
 ```sh
-dsh plugin --profile web dlx \
+dsh plugin --profile web --config.dlx-cache-max-age=0 dlx \
   'github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater' \
   check @dsh-plugins/dsh-remote
-dsh plugin --profile web dlx \
+dsh plugin --profile web --config.dlx-cache-max-age=0 dlx \
   'github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater' \
   update @dsh-plugins/dsh-remote
 ```

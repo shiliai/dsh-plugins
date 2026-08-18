@@ -23,9 +23,11 @@
 - Build trust must cover both pnpm Git source normalizations for this shorthand:
   `git+https://github.com/shiliai/dsh-plugins.git` and
   `git+ssh://git@github.com/shiliai/dsh-plugins.git`.
-- Run the repository updater through `dsh plugin --profile <profile> dlx` for
-  both update checks and automatic updates. Plain pnpm `outdated` does not
-  detect a newer commit for a Git dependency.
+- Run the repository updater through
+  `dsh plugin --profile <profile> --config.dlx-cache-max-age=0 dlx` for both
+  update checks and automatic updates. The zero cache age makes pnpm resolve
+  the updater's current Git revision on every run. Plain pnpm `outdated` does
+  not detect a newer commit for a Git dependency.
 - Plain pnpm cannot discover GitHub updates for a local path, `link:`, or
   tarball installation. The repository updater must compare its installed
   SemVer and perform the one-time GitHub source migration.
