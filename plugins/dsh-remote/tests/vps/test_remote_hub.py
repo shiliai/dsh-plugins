@@ -53,6 +53,8 @@ class RemoteHubTests(unittest.TestCase):
         self.assertIn(f"location = {path}/status {{", rendered)
         self.assertEqual(rendered.count(f"auth_basic_user_file {remote_hub.HUB_ADMIN_AUTH_DESTINATION};"), 2)
         self.assertEqual(rendered.count("limit_req zone=dsh_hub_admin burst=5 nodelay;"), 2)
+        self.assertEqual(rendered.count("default_type text/html;"), 1)
+        self.assertEqual(rendered.count("charset utf-8;"), 1)
         self.assertIn("limit_req_zone $binary_remote_addr zone=dsh_hub_admin:10m rate=5r/m;", rendered)
         self.assertIn("server_name dsh.onlyservice.io;", rendered)
         self.assertIn("server_name *.dsh.onlyservice.io;", rendered)
