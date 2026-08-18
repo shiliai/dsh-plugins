@@ -396,6 +396,8 @@ def render_routes(base_domain: str, instances: list[dict[str, Any]], *, https: b
                 f"        auth_basic_user_file {HUB_ADMIN_AUTH_DESTINATION};",
                 "        limit_req zone=dsh_hub_admin burst=5 nodelay;",
                 "        limit_req_status 429;",
+                "        default_type text/html;",
+                "        charset utf-8;",
                 "        add_header Cache-Control \"no-store\" always;",
                 f"        alias {HUB_ADMIN_PAGE_DESTINATION};",
                 "    }",

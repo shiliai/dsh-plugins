@@ -147,6 +147,7 @@ class NginxContainerTests(unittest.TestCase):
                 self.assertIn("www-authenticate", base_headers)
                 self.assertEqual(authenticated_status, "200")
                 self.assertNotIn("www-authenticate", authenticated_headers)
+                self.assertIn("content-type: text/html; charset=utf-8", authenticated_headers)
                 self.assertEqual(status_status, "200")
                 self.assertNotIn("www-authenticate", status_headers)
                 self.assertEqual(wildcard_status, "404")
