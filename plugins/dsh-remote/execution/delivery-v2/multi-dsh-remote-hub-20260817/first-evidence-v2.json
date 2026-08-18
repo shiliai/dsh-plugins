@@ -1,0 +1,38 @@
+{
+  "evidence": {
+    "id": "E-FIRST-V2-X570-VPS",
+    "subject": {
+      "kind": "external_revision",
+      "value": "x570:rc6-home-e16ff1d1-settings-1792013c-credentials-6ca1b4d1-lock-6177ec61;vps:nginx-66f0954e-compose-bae521fc;dns:43.167.173.46;zsh:http200"
+    },
+    "source": "SSH x570, SSH vps-tencent-tokyo, Cloudflare and Google public DNS resolvers, and public HTTPS",
+    "collected_at": "2026-08-17T23:39:28+08:00",
+    "verification": "In an x570 login shell dsh resolves to /home/chriswang/.local/bin/dsh and reports 0.1.0-rc.6; launcher contains the fixed Home reference; Home is 0700; settings and credentials are 0600 with approved hashes; frozen lock hash matches; legacy ~/.dsh hashes are unchanged; no session_projcache or copied workspace state exists; transient loopback Web smoke returned HTTP 200. On the VPS Nginx 1.29.5 validates, Nginx and Compose hashes match the restore point, wildcard DNS resolves to 43.167.173.46 via two resolvers, and existing zsh public and loopback HTTPS return 200.",
+    "result": {
+      "passed": true,
+      "x570_version": "0.1.0-rc.6",
+      "x570_command": "/home/chriswang/.local/bin/dsh",
+      "x570_home": "/home/chriswang/.local/dsh_home",
+      "x570_home_mode": "0700",
+      "settings_sha256": "1792013c97b4def01264b22c572740e191f44a8996261b750955e74fae49d7c4",
+      "credentials_sha256": "6ca1b4d13013ab58fc1f2895d624be2704248586b47a99ea79259d55c7a455c5",
+      "configuration_modes": "0600",
+      "installer_sha256": "c57abc20b3e6d19c8175b1edd385d5074b457a28ff0cf48ce052d12c577fede1",
+      "launcher_sha256": "e16ff1d10b31be5454c07725493e357ea446251bffc03d4e9cf936fd3c7a9ce7",
+      "source_commit": "15148dbd9a1d1f1ef1a26e5749b32af0cd663935",
+      "lock_sha256": "6177ec61bdb8194eb5a606813a62ffb0ab2cc7fdfe2cd6e0249dcbfe4bce58e0",
+      "legacy_settings_sha256": "46d16c70c37774b1fe6690a4d2bea6ce4824ffdce7772865f729673df4631fb8",
+      "legacy_credentials_sha256": "cdc901bda98dc8cbc9e369ae66f10f728f9da3fe9ac64c0d9c4299d43e8f82a0",
+      "session_workspace_copy": false,
+      "x570_loopback_http": 200,
+      "vps_nginx_sha256": "66f0954eaf98d0a818a9390d9d62230aba7fc84dd335c7c127a3961df33a9b8a",
+      "vps_compose_sha256": "bae521fc4f578746215ded76c2c147583557cba04ff4004a79c04dda62cabf50",
+      "wildcard_ipv4": "43.167.173.46",
+      "existing_zsh_public_http": 200,
+      "existing_zsh_loopback_http": 200
+    },
+    "valid_when": "The x570 launcher, fixed Home configuration, DSH release tree, VPS Nginx/Compose files, wildcard DNS target, and existing zsh runtime remain at these identities.",
+    "invalid_when": "Any listed x570 installation/configuration hash, VPS configuration hash, DNS target, or existing zsh health state changes.",
+    "reuse_scope": "First Evidence, X570-01 task acceptance, Hub deployment preflight, and recovery restore-point verification."
+  }
+}

@@ -11,6 +11,7 @@ const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/u
 export interface RemoteStateStoreHooks {
   beforeRename?(): Promise<void>
   afterRename?(): Promise<void>
+  initialToken?: string | undefined
 }
 
 export class RemoteStateStore {
@@ -30,7 +31,7 @@ export class RemoteStateStore {
         const now = new Date().toISOString()
         const state: RemoteState = {
           schema: 1,
-          token: token(),
+          token: initialToken(hooks.initialToken),
           sessionVersion: 1,
           createdAt: now,
           rotatedAt: now,
@@ -149,6 +150,12 @@ function parseState(source: string): RemoteState {
 
 function token(): string {
   return randomBytes(TOKEN_BYTES).toString('base64url')
+}
+
+function initialToken(value: string | undefined): string {
+  if (value === undefined) return token()
+  if (!isToken(value)) throw new Error('Remote initial token must be a 256-bit base64url value.')
+  return value
 }
 
 function isToken(value: string): boolean {

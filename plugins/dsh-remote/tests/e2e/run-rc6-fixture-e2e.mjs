@@ -39,6 +39,7 @@ try {
 
   runDsh(['plugin', '--profile', 'web', 'add', archive], temp, env)
   installed = true
+  assertDirectoryPickerComposition(dumpDshConfig(temp, env))
   server = spawn(process.execPath, [dshBin, 'web', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: temp,
     env,
@@ -65,6 +66,37 @@ try {
 
 function runDsh(args, cwd, processEnv) {
   execFileSync(process.execPath, [dshBin, ...args], { cwd, env: processEnv, stdio: 'inherit' })
+}
+
+function dumpDshConfig(cwd, processEnv) {
+  return execFileSync(process.execPath, [dshBin, '--profile', 'web', '--dump-config'], {
+    cwd,
+    env: processEnv,
+    encoding: 'utf8',
+  })
+}
+
+function assertDirectoryPickerComposition(config) {
+  const lines = config.split('\n')
+  const entry = id => {
+    const matches = lines.flatMap((line, index) => line === `- id: ${id}` ? [index] : [])
+    if (matches.length !== 1) throw new Error(`Cordis composition expected one ${id} entry, found ${matches.length}: ${config}`)
+    const start = matches[0]
+    const next = lines.findIndex((line, index) => index > start && line.startsWith('- id: '))
+    return lines.slice(start, next === -1 ? undefined : next).join('\n')
+  }
+  const native = entry('directory-picker')
+  if (!native.includes("name: '@deepseek-ai/dsh-host-directory-picker-auto'") || !native.includes('disabled: true')) {
+    throw new Error(`Cordis composition did not disable the native directory picker: ${native}`)
+  }
+  const browse = entry('directory-picker-browse')
+  const surface = entry('directory-picker-surface')
+  if (!browse.includes("name: '@deepseek-ai/dsh-host-directory-picker-browse'") || browse.includes('disabled: true')) {
+    throw new Error(`Cordis composition did not enable exactly one browse host picker: ${browse}`)
+  }
+  if (!surface.includes("name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'") || surface.includes('disabled: true')) {
+    throw new Error(`Cordis composition did not enable exactly one browser browse surface: ${surface}`)
+  }
 }
 
 async function verifyRemotePanel(origin, initialSessionVersion, evidenceDir) {
@@ -127,6 +159,7 @@ async function verifyResponsiveShell(page, evidenceDir) {
     const card = page.locator('[data-dsh-remote-mobile-composer-card]')
     const row = page.locator('[data-dsh-remote-mobile-composer-row]')
     await card.waitFor({ state: 'visible' })
+    await waitForMobileLayout(page, viewport)
     const geometry = await page.evaluate(() => {
       const frame = document.querySelector('[data-dsh-remote-mobile-frame]')
       const center = document.querySelector('[data-dsh-remote-mobile-center]')
@@ -153,7 +186,7 @@ async function verifyResponsiveShell(page, evidenceDir) {
     if (geometry.htmlScrollWidth !== viewport.width || geometry.bodyScrollWidth !== viewport.width) {
       throw new Error(`Unexpected page overflow at ${viewport.width}x${viewport.height}: html=${geometry.htmlScrollWidth} body=${geometry.bodyScrollWidth}.`)
     }
-    if (geometry.rowDisplay !== 'grid') throw new Error(`Composer did not reflow at ${viewport.width}px.`)
+    if (geometry.rowDisplay !== 'grid') throw new Error(`Composer did not reflow at ${viewport.width}px: ${JSON.stringify(await mobileLayoutEvidence(page))}.`)
     assertRectInside(geometry.frame, viewport, 'shell frame')
     assertRectInside(geometry.center, viewport, 'conversation column')
     assertRectInside(geometry.card, viewport, 'composer card')
@@ -162,6 +195,17 @@ async function verifyResponsiveShell(page, evidenceDir) {
     const openSidebar = page.getByRole('button', { name: /open sidebar|打开侧边栏/iu })
     if (await openSidebar.count() === 1) {
       await openSidebar.click()
+      await page.waitForFunction(() => {
+        const frame = document.querySelector('[data-dsh-remote-mobile-frame]:not([data-sidebar-collapsed])')
+        const sidebar = frame?.querySelector('[data-dsh-remote-mobile-sidebar]')
+        const center = frame?.querySelector('[data-dsh-remote-mobile-center]')
+        if (sidebar === null || center === null || getComputedStyle(sidebar).position !== 'absolute') return false
+        const expectedCenterWidth = frame.getBoundingClientRect().width
+          - (frame.hasAttribute('data-dsh-remote-mobile-session-active') ? 0 : 56)
+        return Math.abs(center.getBoundingClientRect().width - expectedCenterWidth) <= 1
+      }, undefined, { timeout: 10_000 }).catch(async error => {
+        throw new Error(`Expanded mobile sidebar did not settle: ${JSON.stringify(await mobileLayoutEvidence(page))}.`, { cause: error })
+      })
       const expanded = await page.locator('[data-dsh-remote-mobile-frame]:not([data-sidebar-collapsed])').evaluate(frame => {
         const sidebar = frame.querySelector('[data-dsh-remote-mobile-sidebar]')
         const center = frame.querySelector('[data-dsh-remote-mobile-center]')
@@ -176,7 +220,9 @@ async function verifyResponsiveShell(page, evidenceDir) {
       })
       if (expanded === null || expanded.sidebarPosition !== 'absolute') throw new Error('Expanded mobile sidebar is not an overlay.')
       const expectedCenterWidth = expanded.frameWidth - (expanded.sessionActive ? 0 : 56)
-      if (Math.abs(expanded.centerWidth - expectedCenterWidth) > 1) throw new Error('Expanded mobile sidebar squeezed the conversation column.')
+      if (Math.abs(expanded.centerWidth - expectedCenterWidth) > 1) {
+        throw new Error(`Expanded mobile sidebar squeezed the conversation column: ${JSON.stringify({ expanded, expectedCenterWidth, evidence: await mobileLayoutEvidence(page) })}.`)
+      }
       if (expanded.sidebarWidth > Math.min(320, viewport.width - 24) + 1) throw new Error('Expanded mobile sidebar exceeds its viewport allowance.')
       await page.getByRole('button', { name: /collapse sidebar|收起侧边栏/iu }).click()
     }
@@ -193,6 +239,58 @@ async function verifyResponsiveShell(page, evidenceDir) {
   if (desktopDisplay !== 'flex') throw new Error(`Desktop composer changed from flex to ${desktopDisplay}.`)
   screenshots.push(await captureScreenshot(page, join(evidenceDir, 'desktop-1280x900.png')))
   return screenshots
+}
+
+async function waitForMobileLayout(page, viewport) {
+  await page.waitForFunction(({ width }) => {
+    const frame = document.querySelector('[data-dsh-remote-mobile-frame]')
+    const card = document.querySelector('[data-dsh-remote-mobile-composer-card]')
+    const row = document.querySelector('[data-dsh-remote-mobile-composer-row]')
+    return innerWidth === width
+      && frame !== null
+      && card !== null
+      && row !== null
+      && getComputedStyle(row).display === 'grid'
+  }, viewport, { timeout: 10_000 }).catch(async error => {
+    throw new Error(`Mobile layout did not settle at ${viewport.width}x${viewport.height}: ${JSON.stringify(await mobileLayoutEvidence(page))}.`, { cause: error })
+  })
+}
+
+async function mobileLayoutEvidence(page) {
+  return await page.evaluate(() => {
+    const frame = document.querySelector('[data-dsh-remote-mobile-frame]')
+    const sidebar = document.querySelector('[data-dsh-remote-mobile-sidebar]')
+    const center = document.querySelector('[data-dsh-remote-mobile-center]')
+    const card = document.querySelector('[data-dsh-remote-mobile-composer-card]')
+    const row = document.querySelector('[data-dsh-remote-mobile-composer-row]')
+    const describe = element => element === null ? null : {
+      tag: element.tagName,
+      className: element.className,
+      markers: [...element.attributes].filter(attribute => attribute.name.startsWith('data-dsh-remote-mobile')).map(attribute => attribute.name),
+      rect: (() => {
+        const rect = element.getBoundingClientRect()
+        return { width: rect.width, height: rect.height, left: rect.left, right: rect.right }
+      })(),
+      style: {
+        display: getComputedStyle(element).display,
+        position: getComputedStyle(element).position,
+        gridTemplateColumns: getComputedStyle(element).gridTemplateColumns,
+        minWidth: getComputedStyle(element).minWidth,
+      },
+    }
+    return {
+      innerWidth,
+      mediaMatches: matchMedia('(max-width: 640px)').matches,
+      styleLoaded: document.querySelector('style[data-plugin-css="@dsh-plugins/dsh-remote/styles.module.css"]') !== null,
+      frame: describe(frame),
+      sidebar: describe(sidebar),
+      center: describe(center),
+      card: describe(card),
+      row: describe(row),
+      activeConversationCount: document.querySelectorAll('[data-conversation-scroll]').length,
+      activePhaseCount: document.querySelectorAll('[data-phase="active"]').length,
+    }
+  })
 }
 
 async function assertInsideViewport(page, locator, label) {

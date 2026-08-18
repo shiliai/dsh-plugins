@@ -32,6 +32,13 @@ function mark(element: Element | null | undefined, marker: Marker, marked: Set<E
   marked.add(element)
 }
 
+function conversationRoot(scroll: HTMLElement, boundary: Element | null = null): HTMLElement | null {
+  for (let current = scroll.parentElement; current !== null && current !== boundary; current = current.parentElement) {
+    if (current.getAttribute('data-phase') === 'active') return current
+  }
+  return null
+}
+
 function markFrame(document: Document, marked: Set<Element>): void {
   for (const overlay of document.querySelectorAll<HTMLElement>('[data-shell-overlay]')) {
     const frame = overlay.parentElement
@@ -40,7 +47,9 @@ function markFrame(document: Document, marked: Set<Element>): void {
     mark(frame.children[0], MARKERS.sidebar, marked)
     mark(frame.children[1], MARKERS.center, marked)
     mark(frame.children[2], MARKERS.details, marked)
-    if (frame.querySelector('[data-phase="active"]') === null) {
+    const conversationActive = [...frame.querySelectorAll<HTMLElement>('[data-conversation-scroll]')]
+      .some(scroll => conversationRoot(scroll, frame) !== null)
+    if (!conversationActive) {
       frame.removeAttribute(MARKERS.sessionActive)
     } else {
       mark(frame, MARKERS.sessionActive, marked)
@@ -50,8 +59,8 @@ function markFrame(document: Document, marked: Set<Element>): void {
 
 function markConversation(document: Document, marked: Set<Element>): void {
   for (const scroll of document.querySelectorAll<HTMLElement>('[data-conversation-scroll]')) {
-    const conversation = scroll.parentElement
-    if (conversation === null || !conversation.hasAttribute('data-phase')) continue
+    const conversation = conversationRoot(scroll)
+    if (conversation === null) continue
     mark(conversation, MARKERS.conversation, marked)
     mark(conversation.querySelector('header, [role="banner"]'), MARKERS.header, marked)
   }

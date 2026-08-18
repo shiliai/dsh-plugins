@@ -1,0 +1,40 @@
+{
+  "work_item": {
+    "id": "WI-HUB-DELIVERY",
+    "subject": {
+      "kind": "deployment_revision",
+      "value": "multi-dsh-remote-hub-v1:x570.dsh.onlyservice.io"
+    },
+    "start_subject": {
+      "kind": "commit",
+      "value": "34fa08a492c798f8c830cb4cb878ec5f5b066bb5"
+    },
+    "allowed_paths": [
+      "plugins/dsh-remote/cordis.patch.yml",
+      "plugins/dsh-remote/src",
+      "plugins/dsh-remote/scripts",
+      "plugins/dsh-remote/templates",
+      "plugins/dsh-remote/tests",
+      "plugins/dsh-remote/package.json",
+      "plugins/dsh-remote/README.md",
+      "plugins/dsh-remote/docs",
+      "plugins/dsh-remote/execution/delivery-v2/multi-dsh-remote-hub-20260817"
+    ],
+    "excluded_paths": [
+      "plugins/dsh-obsidian",
+      "/Users/chris/.local/dsh_home/storages",
+      "/Users/chris/.local/dsh_home/profiles",
+      "/home/chriswang/.dsh",
+      "unrelated VPS Nginx server blocks, containers, DNS records, certificates, and firewall state"
+    ],
+    "story_ids": ["MDR-01", "MDR-02", "MDR-03"],
+    "acceptance": [
+      "The packaged node-side configuration registers x570 and publishes an authenticated HTTP/WebSocket private-link at https://x570.dsh.onlyservice.io.",
+      "x570 has an independent domain, socket, token, and state; offline and token-rotation tests do not interrupt zsh.onlyservice.io.",
+      "One wildcard DNS/TLS certificate and registry-driven Hub provide atomic add/remove/status, 404 for unknown nodes, 503 for registered offline nodes, renewal verification, and future-node onboarding without per-node certificate or manual Nginx editing."
+    ],
+    "mutation_authority": "external_mutation",
+    "exact_next_action": "Harden and verify the Hub package, deploy wildcard TLS and registry routing to the VPS with rollback receipts, install/register x570, run public HTTP/WebSocket isolation E2E, and bind one deployed subject.",
+    "dependencies": ["WI-X570-RUNTIME"]
+  }
+}

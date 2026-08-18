@@ -3,6 +3,8 @@
       name: '@dsh-plugins/dsh-remote'
       inject: [webServer]
       config:
+        instanceId: !!js process.env.DSH_REMOTE_INSTANCE_ID ?? undefined
+        baseDomain: !!js process.env.DSH_REMOTE_BASE_DOMAIN ?? 'dsh.onlyservice.io'
         remoteOrigin: !!js process.env.DSH_REMOTE_ORIGIN ?? 'https://zsh.onlyservice.io'
         sshTarget: !!js process.env.DSH_REMOTE_SSH_TARGET ?? 'vps-tencent-tokyo'
         remoteSocketPath: '/home/chriswang/.local/share/dsh-remote/tunnel.sock'
@@ -13,3 +15,10 @@
         reconnectMaxMs: 30000
         reconnectMaxRetries: 5
         tunnelStabilityDelayMs: 750
+    - id: directory-picker-surface
+      name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
+    - id: directory-picker-browse
+      name: '@deepseek-ai/dsh-host-directory-picker-browse'
+- id: directory-picker
+  name: '@deepseek-ai/dsh-host-directory-picker-auto'
+  disabled: true
