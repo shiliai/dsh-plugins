@@ -268,10 +268,10 @@ Check and apply updates through the repository updater. It can also perform the
 one-time source migration when this plugin is still local or packed:
 
 ```sh
-dsh plugin --profile web dlx \
+dsh plugin --profile web --config.dlx-cache-max-age=0 dlx \
   'github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater' \
   check @dsh-plugins/dsh-obsidian
-dsh plugin --profile web dlx \
+dsh plugin --profile web --config.dlx-cache-max-age=0 dlx \
   'github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater' \
   update @dsh-plugins/dsh-obsidian
 ```

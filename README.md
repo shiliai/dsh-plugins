@@ -60,9 +60,9 @@ The updater is fetched directly from the same public repository. Run it through
 dsh to check installed SemVer values and update all installed supported plugins:
 
 ```sh
-dsh plugin --profile web dlx \
+dsh plugin --profile web --config.dlx-cache-max-age=0 dlx \
   'github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater' check
-dsh plugin --profile web dlx \
+dsh plugin --profile web --config.dlx-cache-max-age=0 dlx \
   'github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater' update
 ```
 

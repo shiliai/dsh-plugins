@@ -29,7 +29,7 @@ for (const plugin of plugins) {
 }
 
 const agents = await readFile('AGENTS.md', 'utf8')
-assert.match(agents, /dsh plugin --profile <profile> dlx/)
+assert.match(agents, /dsh plugin --profile <profile> --config\.dlx-cache-max-age=0 dlx/)
 assert.match(agents, /github:shiliai\/dsh-plugins#path:\/plugins\/<plugin>/)
 assert.match(agents, /git\+ssh:\/\/git@github\.com\/shiliai\/dsh-plugins\.git/)
 
