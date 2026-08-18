@@ -9,7 +9,7 @@ const plugins = [
   { name: '@dsh-plugins/dsh-remote', directory: 'plugins/dsh-remote' },
 ]
 const manifestBase = process.env.DSH_PLUGIN_UPDATE_MANIFEST_BASE
-  ?? 'https://raw.githubusercontent.com/shiliai/dsh-plugins/main'
+  ?? 'https://api.github.com/repos/shiliai/dsh-plugins/contents'
 const sourceBase = process.env.DSH_PLUGIN_UPDATE_SOURCE_BASE
   ?? 'github:shiliai/dsh-plugins#path:'
 const buildRepositories = process.env.DSH_PLUGIN_UPDATE_BUILD_REPOSITORY
@@ -54,7 +54,10 @@ async function readJson(path) {
 
 async function latestManifest(plugin) {
   const response = await fetch(`${manifestBase}/${plugin.directory}/package.json`, {
-    headers: { accept: 'application/vnd.github.raw+json' },
+    headers: {
+      accept: 'application/vnd.github.raw+json',
+      'user-agent': '@dsh-plugins/updater',
+    },
   })
   if (!response.ok) {
     throw new Error(`cannot read ${plugin.name} release manifest: HTTP ${response.status}`)
