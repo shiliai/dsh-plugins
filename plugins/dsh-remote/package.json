@@ -1,8 +1,15 @@
 {
   "name": "@dsh-plugins/dsh-remote",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Private remote-access gateway for DeepSeek Harness",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shiliai/dsh-plugins.git",
+    "directory": "plugins/dsh-remote"
+  },
+  "homepage": "https://github.com/shiliai/dsh-plugins/tree/main/plugins/dsh-remote#readme",
+  "bugs": "https://github.com/shiliai/dsh-plugins/issues",
   "engines": { "node": "^22.19.0 || >=24.0.0" },
   "type": "module",
   "main": "lib/index.js",
@@ -42,6 +49,7 @@
     "test:hub-admin": "node tests/e2e/run-hub-admin-browser.mjs",
     "e2e:rc6": "node tests/e2e/run-rc6-fixture-e2e.mjs",
     "release:check": "pnpm run check && pnpm run pack:check && pnpm run e2e:rc6",
+    "prepare": "pnpm run build",
     "prepack": "pnpm run build"
   },
   "dsh": {

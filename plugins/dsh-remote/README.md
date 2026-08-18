@@ -92,7 +92,7 @@ After DSH is installed on a node, install the packed bundle and its persistent
 user service with the same node-side command used by x570:
 
 ```sh
-dsh-remote-install-node ./dsh-plugins-dsh-remote-0.1.0.tgz x570
+dsh-remote-install-node ./dsh-plugins-dsh-remote-0.1.1.tgz x570
 ```
 
 The installer keeps the tarball by SHA-256, backs up the Web profile and any
@@ -121,6 +121,37 @@ links and prints its receipt ID. Reverse the newest install with
 `install-dsh-node.sh --rollback <receipt-id>`; this restores the prior launcher,
 configuration files/pointer, modes, and hashes without touching sessions, workspaces,
 or legacy `~/.dsh`.
+
+## GitHub updates
+
+Migrate an existing local or tarball plugin installation to the public GitHub
+source, or install a remotely updatable copy directly:
+
+```sh
+dsh plugin --profile web config set --location=project --json allowBuilds \
+  '{"@dsh-plugins/dsh-remote@git+https://github.com/shiliai/dsh-plugins.git":true}'
+dsh plugin --profile web add \
+  'github:shiliai/dsh-plugins#path:/plugins/dsh-remote'
+```
+
+The stable repository allowlist key authorizes `prepare` for future commits. If
+the profile already trusts other build sources, merge this entry into the JSON
+reported by `dsh plugin --profile web config get --json allowBuilds`.
+
+Use the repository updater through dsh to detect and apply newer versions. It
+can also perform the one-time source migration for a local or packed install:
+
+```sh
+dsh plugin --profile web dlx \
+  'github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater' \
+  check @dsh-plugins/dsh-remote
+dsh plugin --profile web dlx \
+  'github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater' \
+  update @dsh-plugins/dsh-remote
+```
+
+Restart the Web profile after updating. This replaces only the profile plugin
+package; it does not deploy or modify a VPS edge.
 
 `preflight` is read-only. `apply` is backup-first and stops before activation on a
 failed validation. Nginx streams request and response bodies without proxy
