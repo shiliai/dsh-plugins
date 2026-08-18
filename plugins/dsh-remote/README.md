@@ -78,6 +78,8 @@ dsh-remote-edge hub preflight
 dsh-remote-edge hub apply
 dsh-remote-edge hub status
 dsh-remote-edge hub acknowledge-alert
+dsh-remote-edge hub admin-init
+dsh-remote-edge hub admin-rotate
 dsh-remote-edge instance add x570
 dsh-remote-edge instance status x570
 dsh-remote-edge instance remove x570
@@ -132,6 +134,14 @@ the Hub out of `ready`; `hub acknowledge-alert` succeeds only after every
 registered node is healthy. See
 [`docs/operations/vps-edge.md`](docs/operations/vps-edge.md) for the managed
 scope, socket permissions, and recovery details.
+
+Hub administration is deliberately absent until `hub admin-init` creates a
+random, 256-bit path. Enter the password from a TTY, or pipe it on standard
+input with `--password-stdin`; it is never accepted as a command-line option.
+The command prints the resulting path once. `hub admin-rotate` keeps that path
+and atomically replaces its SHA-512 crypt hash. The management page and its
+`/status` JSON are Basic-authenticated and rate-limited; the JSON exposes only
+registered instance IDs and `online`, `offline`, `insecure`, or `missing`.
 
 ## Recovery
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+import getpass
 import fcntl
 import hashlib
 import importlib.util
@@ -12,10 +13,12 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import shlex
 import shutil
 import socket
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -36,6 +39,7 @@ HUB_END = "# END DSH-REMOTE-HUB MANAGED"
 INSTANCE_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 DOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$")
 REGISTRY_SCHEMA = 1
+ADMIN_SCHEMA = 1
 CERTBOT_IMAGE = "certbot/dns-cloudflare@sha256:3bd60102cdef55294a44ffbff10bb54dd086803aa57d3f854933b756d305fbb8"
 TRANSACTION_SCHEMA = "dsh-remote-hub-transaction-v2"
 RECEIPT_SCHEMA = "dsh-remote-hub-receipt-v2"
@@ -98,6 +102,143 @@ def routes_path(args: argparse.Namespace) -> Path:
     return Path(args.hub_site_dir) / "routes" / "routes.conf"
 
 
+def admin_dir(args: argparse.Namespace) -> Path:
+    return Path(args.hub_site_dir) / "admin"
+
+
+def admin_config_path(args: argparse.Namespace) -> Path:
+    return Path(args.state_dir) / "admin.json"
+
+
+def admin_auth_path(args: argparse.Namespace) -> Path:
+    return admin_dir(args) / "users.htpasswd"
+
+
+def admin_status_path(args: argparse.Namespace) -> Path:
+    return admin_dir(args) / "status.json"
+
+
+def admin_page_path(args: argparse.Namespace) -> Path:
+    return admin_dir(args) / "index.html"
+
+
+def load_admin_config(args: argparse.Namespace) -> dict[str, str] | None:
+    path = admin_config_path(args)
+    if not path.is_file():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise HubError("Hub admin configuration is unreadable") from error
+    route = value.get("path") if isinstance(value, dict) else None
+    if value.get("schema") != ADMIN_SCHEMA or not isinstance(route, str) or not re.fullmatch(r"/[A-Za-z0-9_-]{43}", route):
+        raise HubError("Hub admin configuration is invalid")
+    if (path.stat().st_mode & 0o777) != 0o600:
+        raise HubError("Hub admin configuration must be mode 0600")
+    return {"path": route}
+
+
+def admin_route(args: argparse.Namespace) -> str | None:
+    if not hasattr(args, "state_dir"):
+        return None
+    config = load_admin_config(args)
+    return config["path"] if config else None
+
+
+def render_admin_page() -> str:
+    return """<!doctype html>
+<meta charset=\"utf-8\">
+<title>Hub status</title>
+<pre id=\"status\"></pre>
+<script>fetch(`${location.pathname.replace(/\/$/,'')}/status`,{cache:'no-store'}).then(r=>r.ok?r.json():Promise.reject()).then(v=>document.querySelector('#status').textContent=JSON.stringify(v,null,2)).catch(()=>document.querySelector('#status').textContent='Unavailable')</script>
+"""
+
+
+def render_admin_status(args: argparse.Namespace, instances: list[dict[str, Any]]) -> str:
+    return json.dumps({"instances": [{"id": item["id"], "state": item["state"]} for item in instances]}, separators=(",", ":")) + "\n"
+
+
+def read_admin_password(args: argparse.Namespace, *, confirm: bool) -> str:
+    password = sys.stdin.readline().rstrip("\n") if args.password_stdin else getpass.getpass("Hub admin password: ")
+    if confirm:
+        repeated = getpass.getpass("Repeat Hub admin password: ") if not args.password_stdin else password
+        if password != repeated:
+            raise HubError("Hub admin passwords do not match")
+    if len(password) < 12 or "\x00" in password or "\n" in password or "\r" in password:
+        raise HubError("Hub admin password must be at least 12 characters and contain no line breaks")
+    return password
+
+
+def password_hash(password: str) -> str:
+    result = subprocess.run(["openssl", "passwd", "-6", "-stdin"], input=password + "\n", text=True, capture_output=True, check=False)
+    if result.returncode != 0:
+        raise HubError("Unable to create a SHA-512 crypt password hash")
+    hashed = result.stdout.strip()
+    if not re.fullmatch(r"\$6\$[^:$\n]+\$[./0-9A-Za-z]+", hashed):
+        raise HubError("Unable to create a SHA-512 crypt password hash")
+    return hashed
+
+
+def write_admin_auth(args: argparse.Namespace, password: str) -> None:
+    admin_dir(args).mkdir(parents=True, exist_ok=True)
+    edge.atomic_write(admin_auth_path(args), f"dsh-admin:{password_hash(password)}\n", 0o640)
+    set_admin_permissions(args)
+
+
+def set_admin_permissions(args: argparse.Namespace) -> None:
+    group = edge.run(["getent", "group", args.socket_group], check=False)
+    fields = group.stdout.strip().split(":") if group.returncode == 0 else []
+    if len(fields) < 3 or not fields[2].isdigit():
+        raise HubError("Hub socket group is required for private admin files")
+    group_id = int(fields[2])
+    for path in (admin_dir(args),):
+        os.chown(path, 0, group_id)
+        os.chmod(path, 0o750)
+    for path in (admin_auth_path(args), admin_status_path(args), admin_page_path(args)):
+        if path.is_file():
+            os.chown(path, 0, group_id)
+            os.chmod(path, 0o640)
+
+
+def install_admin_files(args: argparse.Namespace) -> None:
+    config = load_admin_config(args)
+    if config is None:
+        return
+    admin_dir(args).mkdir(parents=True, exist_ok=True)
+    edge.atomic_write(admin_page_path(args), render_admin_page(), 0o640)
+    if not admin_auth_path(args).is_file() or (admin_auth_path(args).stat().st_mode & 0o777) != 0o640:
+        raise HubError("Hub admin authentication file is missing or has unsafe permissions")
+    set_admin_permissions(args)
+
+
+def refresh_admin_status(args: argparse.Namespace, instances: list[dict[str, Any]] | None = None) -> None:
+    if load_admin_config(args) is None:
+        return
+    if instances is None:
+        group = edge.run(["getent", "group", args.socket_group], check=False)
+        fields = group.stdout.strip().split(":") if group.returncode == 0 else []
+        group_id = int(fields[2]) if len(fields) >= 3 else None
+        instances = [socket_status(args, item["id"], group_id) for item in load_registry(args)["instances"]]
+    edge.atomic_write(admin_status_path(args), render_admin_status(args, instances), 0o640)
+    set_admin_permissions(args)
+
+
+def admin_configured(args: argparse.Namespace, group_id: int | None) -> bool:
+    config = load_admin_config(args)
+    if config is None:
+        return True
+    if group_id is None:
+        return False
+    expected = (admin_auth_path(args), admin_status_path(args), admin_page_path(args))
+    return (
+        admin_dir(args).is_dir()
+        and (admin_dir(args).stat().st_mode & 0o777) == 0o750
+        and admin_dir(args).stat().st_uid == 0
+        and admin_dir(args).stat().st_gid == group_id
+        and all(path.is_file() and (path.stat().st_mode & 0o777) == 0o640 and path.stat().st_uid == 0 and path.stat().st_gid == group_id for path in expected)
+    )
+
+
 def renewal_script_path(args: argparse.Namespace) -> Path:
     return Path(args.hub_site_dir) / "renew-wildcard-certificate.sh"
 
@@ -155,7 +296,7 @@ def load_registry(args: argparse.Namespace) -> dict[str, Any]:
     return {"schema": REGISTRY_SCHEMA, "base_domain": args.base_domain, "generation": generation, "instances": normalized}
 
 
-def render_routes(base_domain: str, instances: list[dict[str, Any]], *, https: bool, generation: str | None = None) -> str:
+def render_routes(base_domain: str, instances: list[dict[str, Any]], *, https: bool, generation: str | None = None, admin_path: str | None = None) -> str:
     generation = generation or generation_for(instances)
     lines = [
         "# Generated by dsh-remote-edge. Do not edit.",
@@ -164,6 +305,7 @@ def render_routes(base_domain: str, instances: list[dict[str, Any]], *, https: b
         "    default upgrade;",
         "    '' '';",
         "}",
+        "limit_req_zone $binary_remote_addr zone=dsh_hub_admin:10m rate=5r/m;",
         "",
     ]
     for item in sorted(instances, key=lambda value: value["id"]):
@@ -229,10 +371,44 @@ def render_routes(base_domain: str, instances: list[dict[str, Any]], *, https: b
             "server {",
             "    listen 443 ssl;",
             "    http2 on;",
-            f"    server_name {base_domain} *.{base_domain};",
+            f"    server_name {base_domain};",
             f"    ssl_certificate /etc/letsencrypt/live/{base_domain}/fullchain.pem;",
             f"    ssl_certificate_key /etc/letsencrypt/live/{base_domain}/privkey.pem;",
             "    access_log off;",
+            "    server_tokens off;",
+        ])
+        if admin_path:
+            lines.extend([
+                f"    location = {admin_path} {{",
+                "        auth_basic \"restricted\";",
+                "        auth_basic_user_file /etc/nginx/dsh-remote-hub/admin/users.htpasswd;",
+                "        limit_req zone=dsh_hub_admin burst=5 nodelay;",
+                "        limit_req_status 429;",
+                "        add_header Cache-Control \"no-store\" always;",
+                "        alias /etc/nginx/dsh-remote-hub/admin/index.html;",
+                "    }",
+                f"    location = {admin_path}/status {{",
+                "        auth_basic \"restricted\";",
+                "        auth_basic_user_file /etc/nginx/dsh-remote-hub/admin/users.htpasswd;",
+                "        limit_req zone=dsh_hub_admin burst=5 nodelay;",
+                "        limit_req_status 429;",
+                "        default_type application/json;",
+                "        add_header Cache-Control \"no-store\" always;",
+                "        alias /etc/nginx/dsh-remote-hub/admin/status.json;",
+                "    }",
+            ])
+        lines.extend([
+            "    return 404;",
+            "}",
+            "",
+            "server {",
+            "    listen 443 ssl;",
+            "    http2 on;",
+            f"    server_name *.{base_domain};",
+            f"    ssl_certificate /etc/letsencrypt/live/{base_domain}/fullchain.pem;",
+            f"    ssl_certificate_key /etc/letsencrypt/live/{base_domain}/privkey.pem;",
+            "    access_log off;",
+            "    server_tokens off;",
             "    return 404;",
             "}",
             "",
@@ -288,6 +464,7 @@ def update_compose(value: dict[str, Any], args: argparse.Namespace, group_id: in
     desired = {
         "/run/dsh-remote": f"{args.socket_host_dir}:/run/dsh-remote:ro",
         "/etc/nginx/dsh-remote-hub": f"{routes_host}:/etc/nginx/dsh-remote-hub:ro",
+        "/etc/nginx/dsh-remote-hub/admin": f"{admin_dir(args)}:/etc/nginx/dsh-remote-hub/admin:ro",
         "/usr/share/nginx/html/dsh-remote-hub-offline.html": f"{offline_host}:/usr/share/nginx/html/dsh-remote-hub-offline.html:ro",
         "/docker-entrypoint.d/06-dsh-remote-hub-socket-group.sh": f"{group_host}:/docker-entrypoint.d/06-dsh-remote-hub-socket-group.sh:ro",
     }
@@ -372,9 +549,15 @@ def install_renewal(args: argparse.Namespace) -> None:
 def render_health_script(args: argparse.Namespace) -> str:
     registry = shlex.quote(str(registry_path(args)))
     certificate = shlex.quote(str(Path(args.certbot_config) / "live" / args.base_domain / "fullchain.pem"))
+    status_command = " ".join(shlex.quote(value) for value in [
+        "python3", str(Path(args.hub_site_dir) / "bin" / "remote-hub.py"), "hub-status",
+        "--base-domain", args.base_domain, "--offline-template", str(Path(args.hub_site_dir) / "offline.html"),
+        "--group-init-template", str(Path(args.hub_site_dir) / "nginx-socket-group.sh"),
+    ])
     return f"""#!/bin/sh
 set -eu
 
+{status_command} >/dev/null 2>&1 || true
 docker exec {shlex.quote(args.nginx_container)} nginx -t >/dev/null
 openssl x509 -checkend 2592000 -noout -in {certificate} >/dev/null
 python3 - {registry} <<'PY'
@@ -487,7 +670,7 @@ def nginx_syntax_canary(args: argparse.Namespace, registry: dict[str, Any]) -> N
         root = Path(directory)
         routes = root / "routes"
         routes.mkdir()
-        edge.atomic_write(routes / "routes.conf", render_routes(args.base_domain, registry["instances"], https=False), 0o644)
+        edge.atomic_write(routes / "routes.conf", render_routes(args.base_domain, registry["instances"], https=False, admin_path=admin_route(args)), 0o644)
         current = Path(args.nginx_config).read_text(encoding="utf-8")
         edge.atomic_write(root / "nginx.conf", replace_hub_include(current, "/etc/nginx/dsh-remote-hub/routes.conf"), 0o644)
         edge.run([
@@ -525,6 +708,7 @@ def preflight(args: argparse.Namespace) -> dict[str, Any]:
 def managed_paths(args: argparse.Namespace) -> dict[str, Path]:
     return {
         "registry": registry_path(args),
+        "admin_config": admin_config_path(args),
         "routes": routes_path(args),
         "offline": Path(args.hub_site_dir) / "offline.html",
         "group_init": Path(args.hub_site_dir) / "nginx-socket-group.sh",
@@ -539,6 +723,36 @@ def managed_paths(args: argparse.Namespace) -> dict[str, Path]:
     }
 
 
+def admin_configure(args: argparse.Namespace, *, rotate: bool) -> dict[str, Any]:
+    with hub_lock(args):
+        existing = load_admin_config(args)
+        if not rotate and existing is not None:
+            raise HubError("Hub admin is already initialized; use hub admin-rotate")
+        if rotate and existing is None:
+            raise HubError("Hub admin is not initialized")
+        password = read_admin_password(args, confirm=not rotate)
+        config = existing or {"path": "/" + secrets.token_urlsafe(32)}
+        state = Path(args.state_dir)
+        state.mkdir(parents=True, exist_ok=True)
+        os.chmod(state, 0o700)
+        snapshot = admin_snapshot(args)
+        try:
+            if existing is None:
+                edge.atomic_write(admin_config_path(args), json.dumps({"schema": ADMIN_SCHEMA, **config}, sort_keys=True) + "\n", 0o600)
+            write_admin_auth(args, password)
+            install_admin_files(args)
+            if routes_path(args).is_file():
+                registry = load_registry(args)
+                edge.atomic_write(routes_path(args), render_routes(args.base_domain, registry["instances"], https=True, generation=registry["generation"], admin_path=config["path"]), 0o644)
+                refresh_admin_status(args)
+                edge.nginx_validate(args.nginx_container)
+                edge.run(["docker", "exec", args.nginx_container, "nginx", "-s", "reload"])
+        except Exception:
+            restore_admin_snapshot(args, snapshot)
+            raise
+        return {"status": "rotated" if rotate else "initialized", "admin_path": config["path"]}
+
+
 def managed_objects(args: argparse.Namespace) -> dict[str, tuple[Path, bool]]:
     objects = {label: (path, True) for label, path in managed_paths(args).items()}
     objects.update({
@@ -549,8 +763,39 @@ def managed_objects(args: argparse.Namespace) -> dict[str, tuple[Path, bool]]:
         "socket_instances": (Path(args.socket_host_dir) / "instances", False),
         "hub_site_dir": (Path(args.hub_site_dir), False),
         "routes_dir": (routes_path(args).parent, False),
+        "hub_helpers": (Path(args.hub_site_dir) / "bin", True),
+        "admin_dir": (admin_dir(args), True),
     })
     return objects
+
+
+def admin_snapshot(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
+    root = Path(args.state_dir) / "admin-transactions"
+    root.mkdir(parents=True, exist_ok=True)
+    os.chmod(root, 0o700)
+    directory = root / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    suffix = 0
+    while directory.exists():
+        suffix += 1
+        directory = root / f"{directory.name}-{suffix}"
+    directory.mkdir(mode=0o700)
+    objects = {
+        "admin_config": capture_object(directory, "admin_config", admin_config_path(args), True),
+        "admin_dir": capture_object(directory, "admin_dir", admin_dir(args), True),
+        "routes": capture_object(directory, "routes", routes_path(args), True),
+    }
+    receipt = {"schema": "dsh-remote-hub-admin-transaction-v1", "objects": objects}
+    edge.atomic_write(directory / "receipt.json", json.dumps(receipt, sort_keys=True) + "\n", 0o600)
+    return directory, receipt
+
+
+def restore_admin_snapshot(args: argparse.Namespace, snapshot: tuple[Path, dict[str, Any]]) -> None:
+    directory, receipt = snapshot
+    for label in ("routes", "admin_dir", "admin_config"):
+        restore_object(directory, label, receipt["objects"][label])
+    if routes_path(args).is_file():
+        edge.nginx_validate(args.nginx_container)
+        edge.run(["docker", "exec", args.nginx_container, "nginx", "-s", "reload"])
 
 
 def capture_object(destination: Path, label: str, path: Path, include_contents: bool) -> dict[str, Any]:
@@ -687,9 +932,15 @@ def _hub_apply_locked(args: argparse.Namespace) -> dict[str, Any]:
         os.chmod(site / "offline.html", 0o644)
         shutil.copy2(args.group_init_template, site / "nginx-socket-group.sh")
         os.chmod(site / "nginx-socket-group.sh", 0o755)
+        helper_dir = site / "bin"
+        helper_dir.mkdir(exist_ok=True)
+        for helper in ("remote-hub.py", "remote-edge.py"):
+            shutil.copy2(Path(__file__).with_name(helper), helper_dir / helper)
+            os.chmod(helper_dir / helper, 0o700)
         registry = load_registry(args)
         edge.atomic_write(registry_path(args), json.dumps(registry, indent=2, sort_keys=True) + "\n", 0o600)
-        edge.atomic_write(routes_path(args), render_routes(args.base_domain, registry["instances"], https=False, generation=registry["generation"]), 0o644)
+        install_admin_files(args)
+        edge.atomic_write(routes_path(args), render_routes(args.base_domain, registry["instances"], https=False, generation=registry["generation"], admin_path=admin_route(args)), 0o644)
         compose = Path(args.compose_file)
         edge.atomic_write(compose, yaml.safe_dump(update_compose(edge.load_compose(compose), args, group_id), sort_keys=False), 0o644)
         nginx = Path(args.nginx_config)
@@ -699,7 +950,8 @@ def _hub_apply_locked(args: argparse.Namespace) -> dict[str, Any]:
         issue_wildcard_certificate(args)
         install_renewal(args)
         install_monitoring(args)
-        edge.atomic_write(routes_path(args), render_routes(args.base_domain, registry["instances"], https=True, generation=registry["generation"]), 0o644)
+        edge.atomic_write(routes_path(args), render_routes(args.base_domain, registry["instances"], https=True, generation=registry["generation"], admin_path=admin_route(args)), 0o644)
+        refresh_admin_status(args)
         edge.nginx_validate(args.nginx_container)
         edge.run(["docker", "exec", args.nginx_container, "nginx", "-s", "reload"])
         receipt["applied"] = True
@@ -766,7 +1018,7 @@ def transaction(args: argparse.Namespace, registry: dict[str, Any], action: str,
     os.chmod(directory / "routes.pre", 0o600)
     registry["generation"] = generation_for(registry["instances"])
     next_registry = json.dumps(registry, indent=2, sort_keys=True) + "\n"
-    next_routes = render_routes(args.base_domain, registry["instances"], https=True, generation=registry["generation"])
+    next_routes = render_routes(args.base_domain, registry["instances"], https=True, generation=registry["generation"], admin_path=admin_route(args))
     (directory / "registry.post").write_text(next_registry, encoding="utf-8")
     (directory / "routes.post").write_text(next_routes, encoding="utf-8")
     os.chmod(directory / "registry.post", 0o600)
@@ -895,9 +1147,9 @@ def _hub_status_locked(args: argparse.Namespace) -> dict[str, Any]:
     nginx = Path(args.nginx_config)
     compose = edge.load_compose(Path(args.compose_file))["services"]["nginx"]
     destinations = {mount_destination(item) for item in compose.get("volumes", []) if isinstance(item, str)}
-    expected_destinations = {"/run/dsh-remote", "/etc/nginx/dsh-remote-hub", "/usr/share/nginx/html/dsh-remote-hub-offline.html", "/docker-entrypoint.d/06-dsh-remote-hub-socket-group.sh"}
+    expected_destinations = {"/run/dsh-remote", "/etc/nginx/dsh-remote-hub", "/etc/nginx/dsh-remote-hub/admin", "/usr/share/nginx/html/dsh-remote-hub-offline.html", "/docker-entrypoint.d/06-dsh-remote-hub-socket-group.sh"}
     registry_file = registry_path(args)
-    routes_expected = render_routes(args.base_domain, registry["instances"], https=True, generation=registry["generation"])
+    routes_expected = render_routes(args.base_domain, registry["instances"], https=True, generation=registry["generation"], admin_path=admin_route(args))
     registry_secure = registry_file.is_file() and (registry_file.stat().st_mode & 0o777) == 0o600 and registry_file.stat().st_uid == 0
     routes_current = routes.read_text(encoding="utf-8") if routes.is_file() else ""
     instances_dir = Path(args.socket_host_dir) / "instances"
@@ -909,9 +1161,11 @@ def _hub_status_locked(args: argparse.Namespace) -> dict[str, Any]:
         wildcard_certificate_valid(args), renewal_configured(args),
         CERTBOT_IMAGE in renewal_script_path(args).read_text(encoding="utf-8") if renewal_script_path(args).is_file() else False,
         expected_destinations.issubset(destinations), directories_secure, worker_group, group_add, monitoring_configured(args),
+        admin_configured(args, group_id),
         edge.run(["docker", "exec", args.nginx_container, "nginx", "-t"], check=False).returncode == 0,
     ])
     instances = [socket_status(args, item["id"], group_id) for item in registry["instances"]]
+    refresh_admin_status(args, instances)
     alarm_active = (Path(args.state_dir) / "health-alarm").is_file()
     ready = configured and bool(instances) and all(item["ready"] for item in instances) and not alarm_active
     return {"status": "ready" if ready else "configured" if configured else "incomplete", "configured": configured, "ready": ready, "alarm_active": alarm_active, "base_domain": args.base_domain, "generation": registry["generation"], "certbot_image": CERTBOT_IMAGE, "registry_sha256": edge.sha256(registry_file) if registry_file.is_file() else None, "routes_sha256": edge.sha256(routes) if routes.is_file() else None, "instances": instances}
@@ -964,7 +1218,7 @@ def rollback(args: argparse.Namespace) -> dict[str, Any]:
 
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser()
-    value.add_argument("action", choices=("hub-preflight", "hub-apply", "hub-status", "hub-renewal-check", "hub-rollback", "hub-acknowledge-alert", "instance-add", "instance-remove", "instance-status", "instance-rollback"))
+    value.add_argument("action", choices=("hub-preflight", "hub-apply", "hub-status", "hub-renewal-check", "hub-rollback", "hub-acknowledge-alert", "hub-admin-init", "hub-admin-rotate", "instance-add", "instance-remove", "instance-status", "instance-rollback"))
     value.add_argument("--instance-id", default="")
     value.add_argument("--base-domain", default="dsh.onlyservice.io")
     value.add_argument("--expected-ipv4", default="43.167.173.46")
@@ -987,6 +1241,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--group-init-template", required=True)
     value.add_argument("--receipt", default="")
     value.add_argument("--force", action="store_true")
+    value.add_argument("--password-stdin", action="store_true")
     return value
 
 
@@ -1008,6 +1263,10 @@ def main() -> int:
             result = rollback(args)
         elif args.action == "hub-acknowledge-alert":
             result = acknowledge_alert(args)
+        elif args.action == "hub-admin-init":
+            result = admin_configure(args, rotate=False)
+        elif args.action == "hub-admin-rotate":
+            result = admin_configure(args, rotate=True)
         elif args.action == "instance-add":
             result = instance_add(args)
         elif args.action == "instance-remove":

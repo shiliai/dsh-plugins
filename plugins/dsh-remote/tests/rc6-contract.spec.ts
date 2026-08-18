@@ -7,16 +7,20 @@ describe('DSH rc.6 package contract', () => {
   it('pins the supported host and client peer surface to exactly rc.6', async () => {
     const source = await readFile(resolve(import.meta.dirname, '../package.json'), 'utf8')
     const patch = await readFile(resolve(import.meta.dirname, '../cordis.patch.yml'), 'utf8')
-    const manifest = JSON.parse(source) as { peerDependencies: Record<string, string>; devDependencies: Record<string, string>; files: string[]; bin: Record<string, string>; scripts: Record<string, string> }
+    const manifest = JSON.parse(source) as { peerDependencies: Record<string, string>; peerDependenciesMeta: Record<string, { optional?: boolean }>; devDependencies: Record<string, string>; files: string[]; bin: Record<string, string>; scripts: Record<string, string> }
     for (const dependency of [
       '@deepseek-ai/dsh-client-runtime',
       '@deepseek-ai/dsh-client-ui-layout',
       '@deepseek-ai/dsh-client-ui-sidebar',
       '@deepseek-ai/dsh-client-ui-slots',
+      '@deepseek-ai/dsh-client-ui-directory-picker-browse',
       '@deepseek-ai/dsh-host-webserver',
+      '@deepseek-ai/dsh-host-directory-picker-browse',
     ]) {
       expect(manifest.peerDependencies[dependency]).toBe('0.1.0-rc.6')
     }
+    expect(manifest.peerDependenciesMeta['@deepseek-ai/dsh-host-directory-picker-browse']?.optional).toBe(true)
+    expect(manifest.peerDependenciesMeta['@deepseek-ai/dsh-client-ui-directory-picker-browse']?.optional).toBe(true)
     expect(manifest.devDependencies['@deepseek-ai/dsh']).toBe('0.1.0-rc.6')
     expect(manifest.bin['dsh-remote-edge']).toBe('./scripts/dsh-remote-edge.mjs')
     expect(manifest.bin['dsh-remote-install-node']).toBe('./scripts/install-dsh-remote-instance.sh')
@@ -26,6 +30,9 @@ describe('DSH rc.6 package contract', () => {
     expect(patch).toContain('DSH_REMOTE_INSTANCE_ID')
     expect(patch).toContain('DSH_REMOTE_BASE_DOMAIN')
     expect(await readFile(resolve(import.meta.dirname, '../scripts/remote-hub.py'), 'utf8')).toContain('instance-add')
+    const wrapper = await readFile(resolve(import.meta.dirname, '../scripts/dsh-remote-edge.mjs'), 'utf8')
+    expect(wrapper).toContain("const interactiveAdmin = command === 'hub'")
+    expect(wrapper).toContain("interactiveAdmin ? ['-tt'] : []")
     expect(await readFile(resolve(import.meta.dirname, '../scripts/install-dsh-node.sh'), 'utf8')).toContain('DSH_HOME_TARGET')
     expect(await readFile(resolve(import.meta.dirname, '../scripts/install-dsh-remote-instance.sh'), 'utf8')).toContain('DSH_REMOTE_INSTANCE_ID')
     expect(await readFile(resolve(import.meta.dirname, '../scripts/install-dsh-remote-instance.sh'), 'utf8')).toContain('EnvironmentFile=-$environment_file')
@@ -47,6 +54,11 @@ describe('DSH rc.6 package contract', () => {
     expect(runbook).toContain('protected-route')
     expect(runbook).toContain('`401`')
     expect(patch).toContain('DSH_REMOTE_STATE_FILE')
+    expect((patch.match(/^\s*- id: directory-picker$/gm) ?? [])).toHaveLength(1)
+    expect((patch.match(/^\s*- id: directory-picker-surface$/gm) ?? [])).toHaveLength(1)
+    expect((patch.match(/name: '@deepseek-ai\/dsh-host-directory-picker-browse'/g) ?? [])).toHaveLength(1)
+    expect((patch.match(/name: '@deepseek-ai\/dsh-client-ui-directory-picker-browse'/g) ?? [])).toHaveLength(1)
+    expect(patch).not.toContain('@deepseek-ai/dsh-host-directory-picker-auto')
     expect(name).toBe('dsh-remote')
     expect(inject).toEqual(['webServer'])
   })

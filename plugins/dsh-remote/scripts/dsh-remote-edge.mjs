@@ -9,9 +9,10 @@ const legacyActions = new Set(['preflight', 'apply', 'status', 'renewal-check', 
 const command = process.argv[2] ?? 'status'
 const subcommand = process.argv[3]
 const instanceId = command === 'instance' && subcommand !== 'rollback' ? process.argv[4] ?? '' : ''
-const hubActions = new Set(['preflight', 'apply', 'status', 'renewal-check', 'rollback', 'acknowledge-alert'])
+const hubActions = new Set(['preflight', 'apply', 'status', 'renewal-check', 'rollback', 'acknowledge-alert', 'admin-init', 'admin-rotate'])
 const instanceActions = new Set(['add', 'remove', 'status', 'rollback'])
 const legacy = legacyActions.has(command)
+const interactiveAdmin = command === 'hub' && (subcommand === 'admin-init' || subcommand === 'admin-rotate') && !process.argv.includes('--password-stdin')
 if (!legacy && command !== 'hub' && command !== 'instance') fail(`Unknown command: ${command}`)
 if (command === 'hub' && !hubActions.has(subcommand)) fail(`Unknown hub action: ${String(subcommand)}`)
 if (command === 'instance' && (!instanceActions.has(subcommand) || (subcommand !== 'rollback' && (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(instanceId) || instanceId.includes('--'))))) {
@@ -62,7 +63,8 @@ try {
   if (instanceId) remoteArgs.push('--instance-id', instanceId)
   if (receipt) remoteArgs.push('--receipt', receipt)
   if (process.argv.includes('--force')) remoteArgs.push('--force')
-  execute('ssh', ['-o', 'BatchMode=yes', host, remoteArgs.map(shellWord).join(' ')])
+  if (process.argv.includes('--password-stdin')) remoteArgs.push('--password-stdin')
+  execute('ssh', [...(interactiveAdmin ? ['-tt'] : []), '-o', 'BatchMode=yes', host, remoteArgs.map(shellWord).join(' ')])
 } finally {
   spawnSync('ssh', ['-o', 'BatchMode=yes', host, `rm -rf ${stage}`], { stdio: 'ignore' })
 }

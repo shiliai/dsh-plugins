@@ -15,3 +15,7 @@
         reconnectMaxMs: 30000
         reconnectMaxRetries: 5
         tunnelStabilityDelayMs: 750
+    - id: directory-picker-surface
+      name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
+- id: directory-picker
+  name: '@deepseek-ai/dsh-host-directory-picker-browse'

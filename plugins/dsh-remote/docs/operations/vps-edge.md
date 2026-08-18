@@ -47,6 +47,8 @@ dsh-remote-edge hub preflight
 dsh-remote-edge hub apply
 dsh-remote-edge hub status
 dsh-remote-edge hub acknowledge-alert
+dsh-remote-edge hub admin-init
+dsh-remote-edge hub admin-rotate
 dsh-remote-edge hub renewal-check
 dsh-remote-edge instance add x570
 dsh-remote-edge instance status x570
@@ -86,8 +88,8 @@ Hub v2 deployment receipts are stored under
 `/home/chriswang/.local/state/dsh-remote-hub/backups/<receipt-id>/receipt.json`
 with mode 0600. They contain pre/post identities and metadata-preserving backups
 for Nginx, Compose, the complete wildcard certificate lineage, renewal and
-monitoring units, managed files/directories, and group pre-state, but no access
-credential. Bind the receipt SHA-256 shown by `hub apply` to deployment evidence.
+monitoring units, managed files/directories, and group pre-state, but no plaintext
+access credential. Bind the receipt SHA-256 shown by `hub apply` to deployment evidence.
 `hub rollback` is chain guarded: stop every registered tunnel, roll back the
 newest instance transactions first, then the newest Hub deployment receipt. It
 restores the exact pre-state, validates Compose and Nginx, records a verified
@@ -116,6 +118,32 @@ to the socket GID. Each registered node is `online`, `offline`, `insecure`, or
 owner/group and a bounded HTTPS request through that node's Nginx route to
 return the gateway's expected unauthenticated `401` on `/api/events.mux`. A
 listening but nonresponsive socket is offline; a regular file is insecure.
+
+## Hidden Hub administration
+
+Run `dsh-remote-edge hub admin-init` after Hub apply. It reads a new management
+password from the controlling TTY and prints one randomly generated 256-bit
+path. For automation, pipe exactly one password line and pass
+`--password-stdin`; passwords are never command arguments. The Hub writes only
+an `openssl passwd -6` SHA-512 crypt hash to the mode-0640
+`dsh-remote-hub/admin/users.htpasswd` file, while the random path is held in the
+mode-0600 state configuration. Rotate the password with `hub admin-rotate`;
+the random path remains stable and the authentication file is atomically
+replaced. Apply receipts include their exact pre-state; each initialization or
+rotation also creates a mode-0700 local transaction snapshot containing only
+the prior hash and generated files, so failed Nginx validation or reload
+restores the prior configuration, route, status, and hash without recording a
+plaintext password.
+
+The generated routes expose only exact matches for the random page path and
+its `/status` JSON endpoint. Both use the same Basic-authentication file and a
+five-request-per-minute per-client Nginx limit. The base host, common admin
+paths, unknown paths, and unknown hosts continue through the unauthenticated
+generic `404` server and do not send an authentication challenge. The status
+projection is read-only and contains only IDs with `online`, `offline`,
+`insecure`, or `missing`; it excludes origins, socket paths, tokens, hostnames,
+and probe details. `hub status` refreshes it from the same protected-route
+`401` check; the installed health timer does so at least every five minutes.
 
 The legacy edge cron runs at `03:17` with webroot renewal. The Hub cron is
 `/etc/cron.d/dsh-remote-hub-cert-renew`, runs daily at `03:23` VPS time, and uses
