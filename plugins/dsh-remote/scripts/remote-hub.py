@@ -179,10 +179,11 @@ button:hover { background: #e8edf0; } button:focus-visible { outline: 2px solid 
 .metric, .instances { border: 1px solid #d6dce1; border-radius: 6px; background: #fff; }
 .metric { padding: 17px; } .metric-label { color: #5d6975; font-size: 13px; } .metric-value { display: block; margin-top: 5px; font-size: 28px; font-variant-numeric: tabular-nums; }
 .instances { overflow: hidden; } .section-heading { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; padding: 17px; border-bottom: 1px solid #d6dce1; } h2 { margin: 0; font-size: 16px; }
-ul { list-style: none; padding: 0; margin: 0; } li { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 13px 17px; border-bottom: 1px solid #e5e9ec; } li:last-child { border-bottom: 0; }
-.instance-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; } .state { color: #4c5b67; font-size: 14px; text-transform: capitalize; }
+ul { list-style: none; padding: 0; margin: 0; } li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 13px 17px; border-bottom: 1px solid #e5e9ec; } li:last-child { border-bottom: 0; }
+.instance-details { min-width: 0; display: grid; gap: 4px; } .instance-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; } .state { color: #4c5b67; font-size: 14px; text-transform: capitalize; }
+.instance-link { color: #1769aa; font-size: 14px; font-weight: 600; white-space: nowrap; } .instance-link:focus-visible { outline: 2px solid #1769aa; outline-offset: 2px; }
 .notice { margin: 0; padding: 26px 17px; color: #5d6975; } .notice[hidden] { display: none; } .notice.error { color: #9f2727; }
-@media (prefers-color-scheme: dark) { :root { background: #12191f; color: #e6edf2; } header, .section-heading { border-color: #34424d; } .metric, .instances { background: #19232b; border-color: #34424d; } li { border-color: #2b3943; } .eyebrow, .updated, .metric-label, .notice { color: #aab6bf; } .state { color: #c2ccd3; } button { border-color: #8c9aa4; } button:hover { background: #283640; } .notice.error { color: #ff9b9b; } }
+@media (prefers-color-scheme: dark) { :root { background: #12191f; color: #e6edf2; } header, .section-heading { border-color: #34424d; } .metric, .instances { background: #19232b; border-color: #34424d; } li { border-color: #2b3943; } .eyebrow, .updated, .metric-label, .notice { color: #aab6bf; } .state { color: #c2ccd3; } .instance-link { color: #8ac6ff; } button { border-color: #8c9aa4; } button:hover { background: #283640; } .notice.error { color: #ff9b9b; } }
 @media (max-width: 560px) { main { width: min(100% - 24px, 920px); padding-top: 24px; } h1 { font-size: 24px; } .summary { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -207,6 +208,8 @@ ul { list-style: none; padding: 0; margin: 0; } li { display: flex; justify-cont
 <script>
 (() => {
   const refreshIntervalMs = 45_000;
+  const INSTANCE_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+  const VALID_STATES = new Set(['online', 'offline', 'insecure', 'missing']);
   const elements = {
     updated: document.getElementById('updated'), online: document.getElementById('online-count'),
     total: document.getElementById('total-count'), list: document.getElementById('instances'),
@@ -222,11 +225,17 @@ ul { list-style: none; padding: 0; margin: 0; } li { display: flex; justify-cont
     elements.list.replaceChildren();
     for (const instance of instances) {
       const row = document.createElement('li');
+      const details = document.createElement('div');
       const id = document.createElement('span');
       const state = document.createElement('span');
-      id.className = 'instance-id'; state.className = 'state';
+      const link = document.createElement('a');
+      details.className = 'instance-details'; id.className = 'instance-id'; state.className = 'state'; link.className = 'instance-link';
       id.textContent = instance.id; state.textContent = instance.state;
-      row.append(id, state); elements.list.append(row);
+      const target = new URL('/', 'https://dsh.invalid');
+      target.hostname = `${instance.id}.${window.location.hostname}`;
+      link.href = target.href; link.target = '_blank'; link.rel = 'noopener noreferrer';
+      link.textContent = 'Open DSH Web'; link.setAttribute('aria-label', `Open DSH Web for ${instance.id}`);
+      details.append(id, state); row.append(details, link); elements.list.append(row);
     }
   };
   let inFlight = null;
@@ -241,7 +250,9 @@ ul { list-style: none; padding: 0; margin: 0; } li { display: flex; justify-cont
     && Object.prototype.hasOwnProperty.call(item, 'id')
     && Object.prototype.hasOwnProperty.call(item, 'state')
     && typeof item.id === 'string'
-    && typeof item.state === 'string';
+    && INSTANCE_ID_RE.test(item.id)
+    && !item.id.includes('--')
+    && VALID_STATES.has(item.state);
   const refresh = () => {
     if (inFlight !== null) return inFlight;
     elements.refresh.disabled = true; elements.section.setAttribute('aria-busy', 'true'); setNotice('loading');
