@@ -39,6 +39,7 @@
     "test:watch": "vitest",
     "check": "pnpm run typecheck && pnpm run test && pnpm run build",
     "pack:check": "pnpm run build && pnpm pack --dry-run",
+    "test:hub-admin": "node tests/e2e/run-hub-admin-browser.mjs",
     "e2e:rc6": "node tests/e2e/run-rc6-fixture-e2e.mjs",
     "release:check": "pnpm run check && pnpm run pack:check && pnpm run e2e:rc6",
     "prepack": "pnpm run build"

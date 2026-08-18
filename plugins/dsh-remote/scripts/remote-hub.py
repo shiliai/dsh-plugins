@@ -159,10 +159,123 @@ def admin_route(args: argparse.Namespace) -> str | None:
 
 def render_admin_page() -> str:
     return """<!doctype html>
-<meta charset=\"utf-8\">
-<title>Hub status</title>
-<pre id=\"status\"></pre>
-<script>fetch(`${location.pathname.replace(/\/$/,'')}/status`,{cache:'no-store'}).then(r=>r.ok?r.json():Promise.reject()).then(v=>document.querySelector('#status').textContent=JSON.stringify(v,null,2)).catch(()=>document.querySelector('#status').textContent='Unavailable')</script>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DSH Hub</title>
+<style>
+:root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f5f7f8; color: #17212b; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+main { width: min(920px, calc(100% - 32px)); margin: 0 auto; padding: 40px 0 56px; }
+header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; border-bottom: 1px solid #d6dce1; padding-bottom: 24px; }
+h1 { margin: 0; font-size: 28px; font-weight: 650; letter-spacing: 0; }
+.eyebrow, .updated { margin: 0; color: #5d6975; font-size: 13px; }
+.eyebrow { margin-bottom: 7px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
+button { border: 1px solid #7c8995; border-radius: 4px; background: transparent; color: inherit; cursor: pointer; font: inherit; padding: 9px 12px; white-space: nowrap; }
+button:hover { background: #e8edf0; } button:focus-visible { outline: 2px solid #1769aa; outline-offset: 2px; }
+.summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 24px 0; }
+.metric, .instances { border: 1px solid #d6dce1; border-radius: 6px; background: #fff; }
+.metric { padding: 17px; } .metric-label { color: #5d6975; font-size: 13px; } .metric-value { display: block; margin-top: 5px; font-size: 28px; font-variant-numeric: tabular-nums; }
+.instances { overflow: hidden; } .section-heading { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; padding: 17px; border-bottom: 1px solid #d6dce1; } h2 { margin: 0; font-size: 16px; }
+ul { list-style: none; padding: 0; margin: 0; } li { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 13px 17px; border-bottom: 1px solid #e5e9ec; } li:last-child { border-bottom: 0; }
+.instance-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; } .state { color: #4c5b67; font-size: 14px; text-transform: capitalize; }
+.notice { margin: 0; padding: 26px 17px; color: #5d6975; } .notice[hidden] { display: none; } .notice.error { color: #9f2727; }
+@media (prefers-color-scheme: dark) { :root { background: #12191f; color: #e6edf2; } header, .section-heading { border-color: #34424d; } .metric, .instances { background: #19232b; border-color: #34424d; } li { border-color: #2b3943; } .eyebrow, .updated, .metric-label, .notice { color: #aab6bf; } .state { color: #c2ccd3; } button { border-color: #8c9aa4; } button:hover { background: #283640; } .notice.error { color: #ff9b9b; } }
+@media (max-width: 560px) { main { width: min(100% - 24px, 920px); padding-top: 24px; } h1 { font-size: 24px; } .summary { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div><p class="eyebrow">Operations</p><h1>DSH Hub</h1><p class="updated" id="updated" aria-live="polite">Last updated: Loading</p></div>
+    <button type="button" id="refresh">Refresh</button>
+  </header>
+  <section class="summary" aria-label="Hub summary">
+    <div class="metric"><span class="metric-label">Online</span><strong class="metric-value" id="online-count">-</strong></div>
+    <div class="metric"><span class="metric-label">Total instances</span><strong class="metric-value" id="total-count">-</strong></div>
+  </section>
+  <section class="instances" aria-labelledby="instances-heading" aria-busy="true">
+    <div class="section-heading"><h2 id="instances-heading">Instances</h2><span class="updated">Refreshes every 45 seconds</span></div>
+    <p class="notice" id="loading">Loading instances</p>
+    <p class="notice" id="empty" hidden>No instances are registered.</p>
+    <p class="notice error" id="error" hidden>Unable to refresh instance status. Try again.</p>
+    <ul id="instances" hidden></ul>
+  </section>
+</main>
+<script>
+(() => {
+  const refreshIntervalMs = 45_000;
+  const elements = {
+    updated: document.getElementById('updated'), online: document.getElementById('online-count'),
+    total: document.getElementById('total-count'), list: document.getElementById('instances'),
+    loading: document.getElementById('loading'), empty: document.getElementById('empty'),
+    error: document.getElementById('error'), section: document.querySelector('.instances'),
+    refresh: document.getElementById('refresh'),
+  };
+  const setNotice = (name) => {
+    for (const key of ['loading', 'empty', 'error']) elements[key].hidden = key !== name;
+    elements.list.hidden = Boolean(name);
+  };
+  const renderInstances = (instances) => {
+    elements.list.replaceChildren();
+    for (const instance of instances) {
+      const row = document.createElement('li');
+      const id = document.createElement('span');
+      const state = document.createElement('span');
+      id.className = 'instance-id'; state.className = 'state';
+      id.textContent = instance.id; state.textContent = instance.state;
+      row.append(id, state); elements.list.append(row);
+    }
+  };
+  let inFlight = null;
+  let refreshTimer = null;
+  const scheduleRefresh = () => {
+    window.clearTimeout(refreshTimer);
+    refreshTimer = window.setTimeout(() => { void refresh(); }, refreshIntervalMs);
+  };
+  const isValidInstance = (item) => item !== null
+    && typeof item === 'object'
+    && Object.keys(item).length === 2
+    && Object.prototype.hasOwnProperty.call(item, 'id')
+    && Object.prototype.hasOwnProperty.call(item, 'state')
+    && typeof item.id === 'string'
+    && typeof item.state === 'string';
+  const refresh = () => {
+    if (inFlight !== null) return inFlight;
+    elements.refresh.disabled = true; elements.section.setAttribute('aria-busy', 'true'); setNotice('loading');
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 10_000);
+    inFlight = (async () => {
+      const response = await fetch(`${location.pathname.replace(/\\/$/, '')}/status`, { cache: 'no-store', signal: controller.signal });
+      if (!response.ok) throw new Error('status request failed');
+      const payload = await response.json();
+      if (!payload || !Array.isArray(payload.instances)) throw new Error('invalid status response');
+      if (!payload.instances.every(isValidInstance)) throw new Error('invalid status response');
+      const instances = payload.instances;
+      renderInstances(instances);
+      elements.online.textContent = String(instances.filter((item) => item.state === 'online').length);
+      elements.total.textContent = String(instances.length);
+      elements.updated.textContent = `Last updated: ${new Date().toLocaleString()}`;
+      setNotice(instances.length ? null : 'empty');
+    })().catch(() => {
+      elements.online.textContent = '-'; elements.total.textContent = '-';
+      elements.updated.textContent = 'Last updated: Unavailable'; setNotice('error');
+    }).finally(() => {
+      window.clearTimeout(timeout);
+      inFlight = null;
+      elements.refresh.disabled = false; elements.section.setAttribute('aria-busy', 'false');
+      scheduleRefresh();
+    });
+    return inFlight;
+  };
+  elements.refresh.addEventListener('click', refresh);
+  void refresh();
+})();
+</script>
+</body>
+</html>
 """
 
 
