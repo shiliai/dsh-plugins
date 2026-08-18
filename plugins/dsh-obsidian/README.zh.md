@@ -243,12 +243,40 @@ dsh --profile web --dump-config
 
 ## 更新与卸载
 
-如需更新源码 checkout，请重新构建并添加插件：
+如需更新本地源码 checkout，请重新构建并添加插件：
 
 ```sh
 pnpm run build
 dsh plugin --profile web add "$(pwd)"
 ```
+
+如需让现有安装支持从公开 GitHub 仓库检测更新，可执行一次来源迁移；
+新安装也可以直接使用同一命令：
+
+```sh
+dsh plugin --profile web config set --location=project --json allowBuilds \
+  '{"@dsh-plugins/dsh-obsidian@git+https://github.com/shiliai/dsh-plugins.git":true}'
+dsh plugin --profile web add \
+  'github:shiliai/dsh-plugins#path:/plugins/dsh-obsidian'
+```
+
+这个稳定的仓库 allowlist key 会继续授权未来 commit 的 `prepare`。如果 profile
+已经信任其他 build source，请先用 `dsh plugin --profile web config get --json
+allowBuilds` 读取现有配置，再合并上述 entry。
+
+通过仓库 updater 检查并自动更新；如果当前仍为本地目录或 tarball 安装，
+`update` 也会完成一次性 source 迁移：
+
+```sh
+dsh plugin --profile web dlx \
+  'github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater' \
+  check @dsh-plugins/dsh-obsidian
+dsh plugin --profile web dlx \
+  'github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater' \
+  update @dsh-plugins/dsh-obsidian
+```
+
+更新后请重启 Web profile。
 
 卸载命令：
 

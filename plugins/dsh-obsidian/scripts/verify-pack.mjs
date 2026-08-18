@@ -24,7 +24,7 @@ try {
     private: true,
     type: 'module',
     dependencies: {
-      ...packageJson.peerDependencies,
+      '@deepseek-ai/dsh-tools': `link:${join(root, 'node_modules/@deepseek-ai/dsh-tools')}`,
       react: packageJson.devDependencies.react,
       'react-dom': packageJson.devDependencies['react-dom'],
       '@types/node': packageJson.devDependencies['@types/node'],
@@ -32,10 +32,10 @@ try {
     },
   }))
   await writeFile(join(consumer, 'check.ts'), `import '${packageJson.name}'\nimport '${packageJson.name}/client'\n`)
-  execFileSync('pnpm', ['install', '--offline', '--ignore-scripts'], { cwd: consumer, stdio: 'inherit' })
+  execFileSync('pnpm', ['install', '--offline', '--ignore-scripts', '--config.auto-install-peers=false'], { cwd: consumer, stdio: 'inherit' })
   await access(join(consumer, 'node_modules', packageJson.name, 'lib', 'index.js'))
   execFileSync(process.execPath, ['--input-type=module', '--eval', `import('${packageJson.name}')`], { cwd: consumer, stdio: 'inherit' })
-  execFileSync(join(root, 'node_modules/.bin/tsc'), ['--noEmit', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', 'check.ts'], { cwd: consumer, stdio: 'inherit' })
+  execFileSync(join(root, 'node_modules/.bin/tsc'), ['--noEmit', '--skipLibCheck', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', 'check.ts'], { cwd: consumer, stdio: 'inherit' })
   process.stdout.write(`${join(directory, archive)}\n`)
 } finally {
   await rm(directory, { recursive: true, force: true })

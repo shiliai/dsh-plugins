@@ -243,12 +243,40 @@ Increase `maxNoteBytes` in a complete config override, restart DSH and verify th
 
 ## Update and remove
 
-Rebuild and add the plugin again to update a source checkout:
+For an existing local checkout, rebuild and add the plugin again:
 
 ```sh
 pnpm run build
 dsh plugin --profile web add "$(pwd)"
 ```
+
+To migrate an existing installation to the public GitHub source, or install a
+remotely updatable copy directly:
+
+```sh
+dsh plugin --profile web config set --location=project --json allowBuilds \
+  '{"@dsh-plugins/dsh-obsidian@git+https://github.com/shiliai/dsh-plugins.git":true}'
+dsh plugin --profile web add \
+  'github:shiliai/dsh-plugins#path:/plugins/dsh-obsidian'
+```
+
+The stable repository allowlist key authorizes `prepare` for future commits. If
+the profile already trusts other build sources, merge this entry into the JSON
+reported by `dsh plugin --profile web config get --json allowBuilds`.
+
+Check and apply updates through the repository updater. It can also perform the
+one-time source migration when this plugin is still local or packed:
+
+```sh
+dsh plugin --profile web dlx \
+  'github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater' \
+  check @dsh-plugins/dsh-obsidian
+dsh plugin --profile web dlx \
+  'github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater' \
+  update @dsh-plugins/dsh-obsidian
+```
+
+Restart the Web profile after updating.
 
 Remove it with:
 

@@ -1,0 +1,16 @@
+{
+  "name": "@dsh-plugins/updater",
+  "version": "0.1.0",
+  "description": "Detect and update installed DSH plugins from the dsh-plugins GitHub monorepo",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "dsh-plugins-update": "./cli.mjs"
+  },
+  "files": [
+    "cli.mjs"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
