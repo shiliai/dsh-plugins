@@ -138,7 +138,7 @@ if (command === 'update') {
   const candidates = results.filter((result) => ['outdated', 'migration-required'].includes(result.status))
   if (candidates.length) {
     configureBuildTrust(candidates)
-    for (const plugin of candidates) pnpm(['add', sourceSpec(plugin)])
+    for (const plugin of candidates) pnpm(['add', '--workspace-root', sourceSpec(plugin)])
     const updatedProfile = await readJson(join(profileDir, 'package.json'))
     results = await Promise.all(selected.map((plugin) => inspect(plugin, updatedProfile)))
     const incomplete = results.filter((result) => !['current', 'not-installed'].includes(result.status))
