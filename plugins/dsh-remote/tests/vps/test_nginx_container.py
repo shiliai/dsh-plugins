@@ -119,7 +119,7 @@ class NginxContainerTests(unittest.TestCase):
                 "docker", "run", "-d", "--rm", "-p", f"127.0.0.1:{port}:443",
                 "-v", f"{config}:/etc/nginx/conf.d/default.conf:ro",
                 "-v", f"{root}:/etc/letsencrypt:ro",
-                "-v", f"{admin}:/etc/nginx/dsh-remote-hub/admin:ro",
+                "-v", f"{admin}:{remote_hub.HUB_ADMIN_DESTINATION}:ro",
                 "nginx:alpine",
             ], text=True, capture_output=True, check=True).stdout.strip()
             try:

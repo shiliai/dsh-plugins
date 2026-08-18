@@ -43,6 +43,18 @@ ADMIN_SCHEMA = 1
 CERTBOT_IMAGE = "certbot/dns-cloudflare@sha256:3bd60102cdef55294a44ffbff10bb54dd086803aa57d3f854933b756d305fbb8"
 TRANSACTION_SCHEMA = "dsh-remote-hub-transaction-v2"
 RECEIPT_SCHEMA = "dsh-remote-hub-receipt-v2"
+HUB_ROUTES_DESTINATION = "/etc/nginx/dsh-remote-hub"
+HUB_ROUTES_FILE_DESTINATION = f"{HUB_ROUTES_DESTINATION}/routes.conf"
+HUB_ADMIN_DESTINATION = "/etc/nginx/dsh-remote-hub-admin"
+HUB_ADMIN_AUTH_DESTINATION = f"{HUB_ADMIN_DESTINATION}/users.htpasswd"
+HUB_ADMIN_PAGE_DESTINATION = f"{HUB_ADMIN_DESTINATION}/index.html"
+HUB_ADMIN_STATUS_DESTINATION = f"{HUB_ADMIN_DESTINATION}/status.json"
+HUB_OFFLINE_DESTINATION = "/usr/share/nginx/html/dsh-remote-hub-offline.html"
+HUB_GROUP_INIT_DESTINATION = "/docker-entrypoint.d/06-dsh-remote-hub-socket-group.sh"
+LEGACY_HUB_MOUNT_DESTINATIONS = {
+    "/etc/nginx/dsh-remote-hub/admin",
+    "/etc/nginx/dsh-remote-hub-routes.conf",
+}
 
 
 def canonical_json(value: Any) -> str:
@@ -381,20 +393,20 @@ def render_routes(base_domain: str, instances: list[dict[str, Any]], *, https: b
             lines.extend([
                 f"    location = {admin_path} {{",
                 "        auth_basic \"restricted\";",
-                "        auth_basic_user_file /etc/nginx/dsh-remote-hub/admin/users.htpasswd;",
+                f"        auth_basic_user_file {HUB_ADMIN_AUTH_DESTINATION};",
                 "        limit_req zone=dsh_hub_admin burst=5 nodelay;",
                 "        limit_req_status 429;",
                 "        add_header Cache-Control \"no-store\" always;",
-                "        alias /etc/nginx/dsh-remote-hub/admin/index.html;",
+                f"        alias {HUB_ADMIN_PAGE_DESTINATION};",
                 "    }",
                 f"    location = {admin_path}/status {{",
                 "        auth_basic \"restricted\";",
-                "        auth_basic_user_file /etc/nginx/dsh-remote-hub/admin/users.htpasswd;",
+                f"        auth_basic_user_file {HUB_ADMIN_AUTH_DESTINATION};",
                 "        limit_req zone=dsh_hub_admin burst=5 nodelay;",
                 "        limit_req_status 429;",
                 "        default_type application/json;",
                 "        add_header Cache-Control \"no-store\" always;",
-                "        alias /etc/nginx/dsh-remote-hub/admin/status.json;",
+                f"        alias {HUB_ADMIN_STATUS_DESTINATION};",
                 "    }",
             ])
         lines.extend([
@@ -453,22 +465,26 @@ def mount_destination(value: str) -> str:
     return parts[1] if len(parts) >= 2 else ""
 
 
+def hub_mounts(args: argparse.Namespace) -> dict[str, str]:
+    offline_host = str(Path(args.hub_site_dir) / "offline.html")
+    group_host = str(Path(args.hub_site_dir) / "nginx-socket-group.sh")
+    return {
+        "/run/dsh-remote": f"{args.socket_host_dir}:/run/dsh-remote:ro",
+        HUB_ROUTES_DESTINATION: f"{routes_path(args).parent}:{HUB_ROUTES_DESTINATION}:ro",
+        HUB_ADMIN_DESTINATION: f"{admin_dir(args)}:{HUB_ADMIN_DESTINATION}:ro",
+        HUB_OFFLINE_DESTINATION: f"{offline_host}:{HUB_OFFLINE_DESTINATION}:ro",
+        HUB_GROUP_INIT_DESTINATION: f"{group_host}:{HUB_GROUP_INIT_DESTINATION}:ro",
+    }
+
+
 def update_compose(value: dict[str, Any], args: argparse.Namespace, group_id: int) -> dict[str, Any]:
     service = value["services"]["nginx"]
     volumes = service.setdefault("volumes", [])
     if not isinstance(volumes, list):
         raise HubError("nginx volumes must be a list")
-    routes_host = str(routes_path(args).parent)
-    offline_host = str(Path(args.hub_site_dir) / "offline.html")
-    group_host = str(Path(args.hub_site_dir) / "nginx-socket-group.sh")
-    desired = {
-        "/run/dsh-remote": f"{args.socket_host_dir}:/run/dsh-remote:ro",
-        "/etc/nginx/dsh-remote-hub": f"{routes_host}:/etc/nginx/dsh-remote-hub:ro",
-        "/etc/nginx/dsh-remote-hub/admin": f"{admin_dir(args)}:/etc/nginx/dsh-remote-hub/admin:ro",
-        "/usr/share/nginx/html/dsh-remote-hub-offline.html": f"{offline_host}:/usr/share/nginx/html/dsh-remote-hub-offline.html:ro",
-        "/docker-entrypoint.d/06-dsh-remote-hub-socket-group.sh": f"{group_host}:/docker-entrypoint.d/06-dsh-remote-hub-socket-group.sh:ro",
-    }
-    retained = [entry for entry in volumes if not isinstance(entry, str) or mount_destination(entry) not in desired]
+    desired = hub_mounts(args)
+    managed_destinations = set(desired) | LEGACY_HUB_MOUNT_DESTINATIONS
+    retained = [entry for entry in volumes if not isinstance(entry, str) or mount_destination(entry) not in managed_destinations]
     existing_destinations = {mount_destination(entry) for entry in retained if isinstance(entry, str)}
     for destination, entry in sorted(desired.items()):
         if destination not in existing_destinations:
@@ -672,12 +688,12 @@ def nginx_syntax_canary(args: argparse.Namespace, registry: dict[str, Any]) -> N
         routes.mkdir()
         edge.atomic_write(routes / "routes.conf", render_routes(args.base_domain, registry["instances"], https=False, admin_path=admin_route(args)), 0o644)
         current = Path(args.nginx_config).read_text(encoding="utf-8")
-        edge.atomic_write(root / "nginx.conf", replace_hub_include(current, "/etc/nginx/dsh-remote-hub/routes.conf"), 0o644)
+        edge.atomic_write(root / "nginx.conf", replace_hub_include(current, HUB_ROUTES_FILE_DESTINATION), 0o644)
         edge.run([
             "docker", "run", "--rm",
             "--network", f"container:{args.nginx_container}",
             "-v", f"{root / 'nginx.conf'}:/etc/nginx/conf.d/default.conf:ro",
-            "-v", f"{routes}:/etc/nginx/dsh-remote-hub:ro",
+            "-v", f"{routes}:{HUB_ROUTES_DESTINATION}:ro",
             "-v", f"{args.certbot_config}:/etc/letsencrypt:ro",
             image, "nginx", "-t",
         ], capture=False)
@@ -944,7 +960,7 @@ def _hub_apply_locked(args: argparse.Namespace) -> dict[str, Any]:
         compose = Path(args.compose_file)
         edge.atomic_write(compose, yaml.safe_dump(update_compose(edge.load_compose(compose), args, group_id), sort_keys=False), 0o644)
         nginx = Path(args.nginx_config)
-        include = "/etc/nginx/dsh-remote-hub/routes.conf"
+        include = HUB_ROUTES_FILE_DESTINATION
         edge.atomic_write(nginx, replace_hub_include(nginx.read_text(encoding="utf-8"), include), 0o644)
         edge.activate_bound_config(compose, args.nginx_container, group_id)
         issue_wildcard_certificate(args)
@@ -1146,8 +1162,9 @@ def _hub_status_locked(args: argparse.Namespace) -> dict[str, Any]:
     routes = routes_path(args)
     nginx = Path(args.nginx_config)
     compose = edge.load_compose(Path(args.compose_file))["services"]["nginx"]
-    destinations = {mount_destination(item) for item in compose.get("volumes", []) if isinstance(item, str)}
-    expected_destinations = {"/run/dsh-remote", "/etc/nginx/dsh-remote-hub", "/etc/nginx/dsh-remote-hub/admin", "/usr/share/nginx/html/dsh-remote-hub-offline.html", "/docker-entrypoint.d/06-dsh-remote-hub-socket-group.sh"}
+    volumes = [item for item in compose.get("volumes", []) if isinstance(item, str)]
+    destinations = {mount_destination(item) for item in volumes}
+    expected_mounts = hub_mounts(args)
     registry_file = registry_path(args)
     routes_expected = render_routes(args.base_domain, registry["instances"], https=True, generation=registry["generation"], admin_path=admin_route(args))
     registry_secure = registry_file.is_file() and (registry_file.stat().st_mode & 0o777) == 0o600 and registry_file.stat().st_uid == 0
@@ -1160,7 +1177,7 @@ def _hub_status_locked(args: argparse.Namespace) -> dict[str, Any]:
         HUB_BEGIN in nginx.read_text(encoding="utf-8"), routes_current == routes_expected, registry_secure,
         wildcard_certificate_valid(args), renewal_configured(args),
         CERTBOT_IMAGE in renewal_script_path(args).read_text(encoding="utf-8") if renewal_script_path(args).is_file() else False,
-        expected_destinations.issubset(destinations), directories_secure, worker_group, group_add, monitoring_configured(args),
+        all(entry in volumes for entry in expected_mounts.values()), not destinations.intersection(LEGACY_HUB_MOUNT_DESTINATIONS), directories_secure, worker_group, group_add, monitoring_configured(args),
         admin_configured(args, group_id),
         edge.run(["docker", "exec", args.nginx_container, "nginx", "-t"], check=False).returncode == 0,
     ])

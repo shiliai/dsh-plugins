@@ -51,7 +51,7 @@ class RemoteHubTests(unittest.TestCase):
         rendered = remote_hub.render_routes("dsh.onlyservice.io", [{"id": "x570"}], https=True, admin_path=path)
         self.assertIn(f"location = {path} {{", rendered)
         self.assertIn(f"location = {path}/status {{", rendered)
-        self.assertEqual(rendered.count("auth_basic_user_file /etc/nginx/dsh-remote-hub/admin/users.htpasswd;"), 2)
+        self.assertEqual(rendered.count(f"auth_basic_user_file {remote_hub.HUB_ADMIN_AUTH_DESTINATION};"), 2)
         self.assertEqual(rendered.count("limit_req zone=dsh_hub_admin burst=5 nodelay;"), 2)
         self.assertIn("limit_req_zone $binary_remote_addr zone=dsh_hub_admin:10m rate=5r/m;", rendered)
         self.assertIn("server_name dsh.onlyservice.io;", rendered)
@@ -169,17 +169,20 @@ class RemoteHubTests(unittest.TestCase):
 
     def test_hub_include_is_idempotent_and_preserves_legacy_managed_block(self) -> None:
         original = "# BEGIN DSH-REMOTE MANAGED\nlegacy\n# END DSH-REMOTE MANAGED\n"
-        first = remote_hub.replace_hub_include(original, "/etc/nginx/dsh-remote-hub/routes.conf")
-        second = remote_hub.replace_hub_include(first, "/etc/nginx/dsh-remote-hub/routes.conf")
+        first = remote_hub.replace_hub_include(original, remote_hub.HUB_ROUTES_FILE_DESTINATION)
+        second = remote_hub.replace_hub_include(first, remote_hub.HUB_ROUTES_FILE_DESTINATION)
         self.assertEqual(first, second)
         self.assertIn("# BEGIN DSH-REMOTE MANAGED", second)
         self.assertEqual(second.count(remote_hub.HUB_BEGIN), 1)
 
-    def test_compose_adds_one_routes_mount_and_preserves_legacy_socket_mount(self) -> None:
+    def test_compose_uses_non_overlapping_directory_mounts_and_migrates_legacy_admin_mount(self) -> None:
         args = types.SimpleNamespace(socket_host_dir="/srv/dsh-remote", hub_site_dir="/srv/dsh-hub")
         value = {"services": {"nginx": {
             "volumes": [
                 "/srv/dsh-remote:/run/dsh-remote:ro",
+                "/srv/dsh-hub/routes:/etc/nginx/dsh-remote-hub:ro",
+                "/srv/dsh-hub/admin:/etc/nginx/dsh-remote-hub/admin:ro",
+                "/srv/dsh-hub/routes.conf:/etc/nginx/dsh-remote-hub-routes.conf:ro",
                 "/srv/legacy.html:/usr/share/nginx/html/dsh-remote-offline.html:ro",
             ],
             "group_add": ["991"],
@@ -187,10 +190,37 @@ class RemoteHubTests(unittest.TestCase):
         first = remote_hub.update_compose(value, args, 991)
         second = remote_hub.update_compose(first, args, 991)
         volumes = second["services"]["nginx"]["volumes"]
+        destinations = {remote_hub.mount_destination(entry) for entry in volumes if isinstance(entry, str)}
         self.assertIn("other", second["services"])
         self.assertEqual(sum(entry.endswith(":/run/dsh-remote:ro") for entry in volumes), 1)
-        self.assertEqual(sum(entry.endswith(":/etc/nginx/dsh-remote-hub:ro") for entry in volumes), 1)
+        self.assertTrue({
+            remote_hub.HUB_ROUTES_DESTINATION,
+            remote_hub.HUB_ADMIN_DESTINATION,
+            remote_hub.HUB_OFFLINE_DESTINATION,
+            remote_hub.HUB_GROUP_INIT_DESTINATION,
+        }.issubset(destinations))
+        self.assertFalse(destinations.intersection(remote_hub.LEGACY_HUB_MOUNT_DESTINATIONS))
+        routes_mount = next(entry for entry in volumes if remote_hub.mount_destination(entry) == remote_hub.HUB_ROUTES_DESTINATION)
+        self.assertEqual(Path(routes_mount.split(":", 1)[0]), Path("/srv/dsh-hub/routes"))
+        self.assertNotEqual(Path(routes_mount.split(":", 1)[0]).name, "routes.conf")
+        hub_destinations = [destination for destination in destinations if "dsh-remote-hub" in destination]
+        self.assertFalse(any(
+            left != right and (left.startswith(right + "/") or right.startswith(left + "/"))
+            for left in hub_destinations for right in hub_destinations
+        ))
         self.assertEqual(second["services"]["nginx"]["group_add"], ["991"])
+
+    def test_directory_routes_mount_observes_atomic_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            routes_directory = Path(directory) / "routes"
+            routes_directory.mkdir()
+            routes = routes_directory / "routes.conf"
+            remote_hub.edge.atomic_write(routes, "http routes\n", 0o644)
+            old_inode = routes.stat().st_ino
+            remote_hub.edge.atomic_write(routes, "https routes\n", 0o644)
+            self.assertNotEqual(routes.stat().st_ino, old_inode)
+            # A directory bind mount resolves this pathname after os.replace, unlike a file bind mount.
+            self.assertEqual((routes_directory / "routes.conf").read_text(encoding="utf-8"), "https routes\n")
 
     def test_registry_rejects_duplicates_and_sorts_instances(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -302,7 +332,7 @@ class RemoteHubTests(unittest.TestCase):
 
             def inspect_canary(command: list[str], *, capture: bool) -> None:
                 observed["command"] = command
-                routes_mount = next(value for value in command if value.endswith(":/etc/nginx/dsh-remote-hub:ro"))
+                routes_mount = next(value for value in command if value.endswith(f":{remote_hub.HUB_ROUTES_DESTINATION}:ro"))
                 rendered = (Path(routes_mount.split(":", 1)[0]) / "routes.conf").read_text(encoding="utf-8")
                 self.assertNotIn("listen 443", rendered)
                 self.assertIn("server_name x570.dsh.onlyservice.io", rendered)
