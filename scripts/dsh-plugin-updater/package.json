@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/updater",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Detect and update installed DSH plugins from the dsh-plugins GitHub monorepo",
   "license": "MIT",
   "type": "module",
