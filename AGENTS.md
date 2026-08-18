@@ -20,6 +20,9 @@
 
 - Public installs use pnpm's GitHub monorepo subdirectory source:
   `github:shiliai/dsh-plugins#path:/plugins/<plugin>`.
+- Build trust must cover both pnpm Git source normalizations for this shorthand:
+  `git+https://github.com/shiliai/dsh-plugins.git` and
+  `git+ssh://git@github.com/shiliai/dsh-plugins.git`.
 - Run the repository updater through `dsh plugin --profile <profile> dlx` for
   both update checks and automatic updates. Plain pnpm `outdated` does not
   detect a newer commit for a Git dependency.

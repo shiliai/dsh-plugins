@@ -31,11 +31,13 @@ for (const plugin of plugins) {
 const agents = await readFile('AGENTS.md', 'utf8')
 assert.match(agents, /dsh plugin --profile <profile> dlx/)
 assert.match(agents, /github:shiliai\/dsh-plugins#path:\/plugins\/<plugin>/)
+assert.match(agents, /git\+ssh:\/\/git@github\.com\/shiliai\/dsh-plugins\.git/)
 
 const readme = await readFile('README.md', 'utf8')
 for (const plugin of plugins) {
   assert.ok(readme.includes(`github:shiliai/dsh-plugins#path:/${plugin.directory}`))
 }
 assert.ok(readme.includes('github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater'))
+assert.ok(readme.includes('git+ssh://git@github.com/shiliai/dsh-plugins.git'))
 
 console.log(`verified ${plugins.length} independently versioned GitHub-source plugins`)

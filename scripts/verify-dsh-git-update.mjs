@@ -70,7 +70,7 @@ try {
   await run('git', ['-C', source, 'config', 'user.email', 'fixture'])
   await writePlugin('0.1.0')
   await run('git', ['-C', source, 'add', '.'])
-  await run('git', ['-C', source, 'commit', '--quiet', '-m', 'fixture 0.1.0'])
+  await run('git', ['-c', 'core.hooksPath=/dev/null', '-C', source, 'commit', '--quiet', '-m', 'fixture 0.1.0'])
 
   await run('pnpm', ['--dir', plugin, 'pack', '--pack-destination', root])
   const archive = join(root, 'dsh-plugins-dsh-obsidian-0.1.0.tgz')
@@ -81,7 +81,7 @@ try {
   ])
   await writePlugin('0.1.1')
   await run('git', ['-C', source, 'add', '.'])
-  await run('git', ['-C', source, 'commit', '--quiet', '-m', 'fixture 0.1.1'])
+  await run('git', ['-c', 'core.hooksPath=/dev/null', '-C', source, 'commit', '--quiet', '-m', 'fixture 0.1.1'])
   latestVersion = '0.1.1'
   const updaterSpec = `git+file://${source}#path:/scripts/dsh-plugin-updater`
 

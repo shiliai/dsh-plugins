@@ -129,7 +129,7 @@ source, or install a remotely updatable copy directly:
 
 ```sh
 dsh plugin --profile web config set --location=project --json allowBuilds \
-  '{"@dsh-plugins/dsh-remote@git+https://github.com/shiliai/dsh-plugins.git":true}'
+  '{"@dsh-plugins/dsh-remote@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-remote@git+ssh://git@github.com/shiliai/dsh-plugins.git":true}'
 dsh plugin --profile web add \
   'github:shiliai/dsh-plugins#path:/plugins/dsh-remote'
 ```

@@ -12,8 +12,12 @@ const manifestBase = process.env.DSH_PLUGIN_UPDATE_MANIFEST_BASE
   ?? 'https://raw.githubusercontent.com/shiliai/dsh-plugins/main'
 const sourceBase = process.env.DSH_PLUGIN_UPDATE_SOURCE_BASE
   ?? 'github:shiliai/dsh-plugins#path:'
-const buildRepository = process.env.DSH_PLUGIN_UPDATE_BUILD_REPOSITORY
-  ?? 'git+https://github.com/shiliai/dsh-plugins.git'
+const buildRepositories = process.env.DSH_PLUGIN_UPDATE_BUILD_REPOSITORY
+  ? [process.env.DSH_PLUGIN_UPDATE_BUILD_REPOSITORY]
+  : [
+      'git+https://github.com/shiliai/dsh-plugins.git',
+      'git+ssh://git@github.com/shiliai/dsh-plugins.git',
+    ]
 const profileDir = process.cwd()
 
 function usage(message) {
@@ -106,7 +110,9 @@ function configureBuildTrust(selected) {
   if (typeof allowBuilds !== 'object' || Array.isArray(allowBuilds)) {
     throw new Error('profile allowBuilds must be an object')
   }
-  for (const plugin of selected) allowBuilds[`${plugin.name}@${buildRepository}`] = true
+  for (const plugin of selected) {
+    for (const repository of buildRepositories) allowBuilds[`${plugin.name}@${repository}`] = true
+  }
   pnpm(['config', 'set', '--location=project', '--json', 'allowBuilds', JSON.stringify(allowBuilds)])
 }
 
