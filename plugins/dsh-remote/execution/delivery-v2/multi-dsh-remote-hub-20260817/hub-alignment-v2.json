@@ -1,0 +1,43 @@
+{
+  "work_item_id": "WI-HUB-DELIVERY",
+  "alignment": {
+    "baseline_revision": "multi-dsh-remote-v2",
+    "stories": [
+      {
+        "id": "MDR-01",
+        "role": "DSH owner",
+        "goal": "Add nodes such as x570 through node-side installation and registration and obtain an independent endpoint",
+        "value": "Reach each DSH host through its own private link without bespoke edge work",
+        "given": "x570 has the fixed DSH runtime and the reusable Hub is configured",
+        "when": "the owner installs the packed dsh-remote bundle, starts the instance service, and registers x570",
+        "then": "https://x570.dsh.onlyservice.io exchanges its private token for a session and serves authenticated HTTP and WebSocket traffic",
+        "evidence_refs": ["E-HUB-DEPLOYMENT-V1"],
+        "status": "Complete"
+      },
+      {
+        "id": "MDR-02",
+        "role": "DSH owner",
+        "goal": "Keep each node on an independent domain, socket, token, and state",
+        "value": "Operate or recover one node without interrupting other remote instances",
+        "given": "x570 and the existing zsh endpoint are concurrently healthy",
+        "when": "x570 is taken offline, recovered, and its token is rotated",
+        "then": "x570 alone returns 503 while offline, recovers to 200, invalidates its old cookie and WebSocket, and zsh remains 200 throughout",
+        "evidence_refs": ["E-HUB-DEPLOYMENT-V1"],
+        "status": "Complete"
+      },
+      {
+        "id": "MDR-03",
+        "role": "DSH owner",
+        "goal": "Operate one wildcard DNS/TLS and a registry-driven Hub",
+        "value": "Add future nodes without per-node certificates or manual Nginx editing",
+        "given": "wildcard DNS points to the VPS and the existing Nginx deployment is healthy",
+        "when": "the owner applies the Hub and adds an allowlisted instance ID",
+        "then": "one wildcard certificate and one generated route mount serve the registry, unknown nodes return 404, registered offline nodes return 503, add/remove validate atomically, and renewal dry-run succeeds",
+        "evidence_refs": ["E-HUB-DEPLOYMENT-V1"],
+        "status": "Complete"
+      }
+    ],
+    "drift_score": 0,
+    "accepted_deviation": null
+  }
+}

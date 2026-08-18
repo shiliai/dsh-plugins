@@ -39,6 +39,21 @@ describe('RemoteStateStore', () => {
     expect(reloaded.current()).toEqual(rotated)
   })
 
+  it('uses an environment-provided token only when creating the state file', async () => {
+    const path = await statePath()
+    const configured = Buffer.alloc(32, 7).toString('base64url')
+    const store = await RemoteStateStore.open(path, { initialToken: configured })
+    expect(store.accessToken()).toBe(configured)
+
+    const replacement = Buffer.alloc(32, 9).toString('base64url')
+    expect((await RemoteStateStore.open(path, { initialToken: replacement })).accessToken()).toBe(configured)
+  })
+
+  it('rejects an invalid initial token before creating state', async () => {
+    const path = await statePath()
+    await expect(RemoteStateStore.open(path, { initialToken: 'not-a-token' })).rejects.toThrow('256-bit base64url')
+  })
+
   it('rejects a state file that could expose a persistent bearer credential', async () => {
     const path = await statePath()
     await mkdir(join(path, '..'), { recursive: true })

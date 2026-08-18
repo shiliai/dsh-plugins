@@ -1,0 +1,126 @@
+{
+  "reports": [
+    {
+      "reviewer_identity": "01a010d4-f6cd-7912-9fcd-8b8cfe1dc8b1",
+      "subject": {
+        "kind": "deployment_revision",
+        "value": "multi-dsh-remote-hub-v1:x570.dsh.onlyservice.io"
+      },
+      "result": "1 P1 finding"
+    },
+    {
+      "reviewer_identity": "01a010d4-f66f-7dc0-b384-cca629597eb7",
+      "subject": {
+        "kind": "deployment_revision",
+        "value": "multi-dsh-remote-hub-v1:x570.dsh.onlyservice.io"
+      },
+      "result": "1 P1 and 4 P2 findings"
+    },
+    {
+      "reviewer_identity": "01a010d4-f72a-7293-9b4f-2cac1bab6380",
+      "subject": {
+        "kind": "deployment_revision",
+        "value": "multi-dsh-remote-hub-v1:x570.dsh.onlyservice.io"
+      },
+      "result": "3 P1 and 3 P2 findings"
+    }
+  ],
+  "findings": [
+    {
+      "id": "RF-001",
+      "reviewer_identity": "01a010d4-f6cd-7912-9fcd-8b8cfe1dc8b1",
+      "subject": {
+        "kind": "deployment_revision",
+        "value": "multi-dsh-remote-hub-v1:x570.dsh.onlyservice.io"
+      },
+      "path_or_evidence": "BUS-MDR02-001; E-HUB-DEPLOYMENT-V1 proves only unauthenticated zsh root HTTP 200",
+      "story_or_invariant": "MDR-02: x570 outage, recovery, and token rotation must not interrupt an authenticated zsh HTTP/WebSocket session",
+      "severity": "P1",
+      "closure_condition": "Establish an authenticated zsh session and live WebSocket, then during x570 stop/recovery/token rotation prove zsh protected HTTP remains 200 and the same zsh WebSocket completes a round trip while retaining the x570 503/recovery/old-cookie/new-session assertions without exposing either token or cookie."
+    },
+    {
+      "id": "RF-002",
+      "reviewer_identity": "01a010d4-f72a-7293-9b4f-2cac1bab6380",
+      "subject": {
+        "kind": "deployment_revision",
+        "value": "multi-dsh-remote-hub-v1:x570.dsh.onlyservice.io"
+      },
+      "path_or_evidence": "F-OPS-001; scripts/remote-hub.py deployment snapshot and restore paths; E-FIRST-V2-X570-VPS; E-HUB-DEPLOYMENT-V1",
+      "story_or_invariant": "MDR-03 and Contract recovery: restore exact Nginx, Compose, certificate, cron, group, directory, and managed-file pre-state",
+      "severity": "P1",
+      "closure_condition": "Capture and restore a complete pre-state manifest, test apply/rollback with absent and pre-existing certificate/group states, prove byte and metadata equality, and bind the secret-free receipt hash plus real rollback result to replacement deployment evidence."
+    },
+    {
+      "id": "RF-003",
+      "reviewer_identity": "01a010d4-f72a-7293-9b4f-2cac1bab6380",
+      "subject": {
+        "kind": "deployment_revision",
+        "value": "multi-dsh-remote-hub-v1:x570.dsh.onlyservice.io"
+      },
+      "path_or_evidence": "F-OPS-002 and QSDI-004; scripts/install-dsh-node.sh managed rerun overwrites runtime and configuration without restoring an existing managed installation",
+      "story_or_invariant": "X570-01 and MDR-01: failed initial install or managed upgrade preserves the exact prior runtime and private configuration",
+      "severity": "P1",
+      "closure_condition": "Lock installation, stage immutable versioned releases and configuration separately, switch an active pointer atomically, retain a complete pre-upgrade manifest/backup and explicit rollback command, and pass injected-failure tests for initial install and managed rerun after every mutating phase with exact hash and mode restoration."
+    },
+    {
+      "id": "RF-004",
+      "reviewer_identity": "01a010d4-f72a-7293-9b4f-2cac1bab6380",
+      "subject": {
+        "kind": "deployment_revision",
+        "value": "multi-dsh-remote-hub-v1:x570.dsh.onlyservice.io"
+      },
+      "path_or_evidence": "F-OPS-003; scripts/install-dsh-remote-instance.sh installs a user unit without checking or enabling linger",
+      "story_or_invariant": "MDR-01: the node service and reverse tunnel remain available after logout and reboot",
+      "severity": "P1",
+      "closure_condition": "Use an explicitly authorized linger setup or an appropriate system service, document the lifecycle choice, fail preflight when its prerequisite is absent, and prove service/tunnel recovery after logout and reboot."
+    },
+    {
+      "id": "RF-005",
+      "reviewer_identity": "01a010d4-f66f-7dc0-b384-cca629597eb7",
+      "subject": {
+        "kind": "deployment_revision",
+        "value": "multi-dsh-remote-hub-v1:x570.dsh.onlyservice.io"
+      },
+      "path_or_evidence": "QSDI-001, QSDI-002, and F-OPS-004; scripts/remote-hub.py registry/routes transaction and instance_remove socket cleanup",
+      "story_or_invariant": "MDR-01, MDR-02, and MDR-03: add/remove is serialized, crash-consistent, reversible, and never loses registrations or socket pre-state",
+      "severity": "P1",
+      "closure_condition": "Serialize every mutator from read through activation, durably stage one registry/routes generation, keep pre/post identities and backups in chain-guarded receipts, defer or reversibly quarantine socket cleanup, and pass concurrent add/add, add/remove, commit-boundary kill/failure, and completed transaction rollback tests proving no lost IDs and exact pre-state restoration."
+    },
+    {
+      "id": "RF-006",
+      "reviewer_identity": "01a010d4-f66f-7dc0-b384-cca629597eb7",
+      "subject": {
+        "kind": "deployment_revision",
+        "value": "multi-dsh-remote-hub-v1:x570.dsh.onlyservice.io"
+      },
+      "path_or_evidence": "QSDI-003; scripts/remote-hub.py certificate issuance and renewal use a mutable certbot/dns-cloudflare tag",
+      "story_or_invariant": "MDR-03: Cloudflare credentials are exposed only to an immutable approved certificate automation image",
+      "severity": "P2",
+      "closure_condition": "Pin issuance and renewal to an immutable image digest, reject tag-only references in tests, record the digest in receipt/evidence, and rerun credential-redacted issuance and renewal canaries."
+    },
+    {
+      "id": "RF-007",
+      "reviewer_identity": "01a010d4-f72a-7293-9b4f-2cac1bab6380",
+      "subject": {
+        "kind": "deployment_revision",
+        "value": "multi-dsh-remote-hub-v1:x570.dsh.onlyservice.io"
+      },
+      "path_or_evidence": "F-OPS-005; docs/operations/vps-edge.md and README.md omit or conflict with Hub renewal, rollback, receipt, socket, and clean-node workflows",
+      "story_or_invariant": "MDR-01 and MDR-03: an operator can safely onboard, renew, diagnose, and roll back the Hub using packaged commands",
+      "severity": "P2",
+      "closure_condition": "Document exact packaged Hub commands, receipt paths, DNS-01 renewal schedule, rollback ordering and chain, tunnel-stop and --force semantics, stale-socket handling, clean-node bootstrap, and verification; test every documented invocation."
+    },
+    {
+      "id": "RF-008",
+      "reviewer_identity": "01a010d4-f66f-7dc0-b384-cca629597eb7",
+      "subject": {
+        "kind": "deployment_revision",
+        "value": "multi-dsh-remote-hub-v1:x570.dsh.onlyservice.io"
+      },
+      "path_or_evidence": "QSDI-005 and F-OPS-006; scripts/remote-hub.py hub_status and socket_status can report configured for stale or inconsistent state",
+      "story_or_invariant": "MDR-01 and MDR-03: status truthfully distinguishes configured from ready and detects stale sockets, generated-state corruption, node/service failure, and renewal failure",
+      "severity": "P2",
+      "closure_condition": "Validate registry/routes generation equality, required mounts and metadata, Nginx group membership, certificate and node readiness, and online/offline/insecure/missing sockets with a bounded probe; add corruption/state tests plus documented scheduled checks, alerting, and bounded log retention, then bind fresh deployment evidence."
+    }
+  ]
+}

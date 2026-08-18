@@ -1,0 +1,32 @@
+{
+  "work_item": {
+    "id": "WI-X570-RUNTIME",
+    "subject": {
+      "kind": "external_revision",
+      "value": "x570:rc6-home-e16ff1d1-settings-1792013c-credentials-6ca1b4d1-lock-6177ec61"
+    },
+    "start_subject": {
+      "kind": "external_revision",
+      "value": "x570:rc6-installed-awaiting-v2-verification"
+    },
+    "allowed_paths": [],
+    "excluded_paths": [
+      "plugins/dsh-obsidian",
+      "/Users/chris/.local/dsh_home/storages",
+      "/Users/chris/.local/dsh_home/profiles",
+      "/home/chriswang/.dsh",
+      "unrelated VPS Nginx server blocks, containers, DNS records, certificates, and firewall state",
+      "all repository source files",
+      "vps-tencent-tokyo"
+    ],
+    "story_ids": ["X570-01"],
+    "acceptance": [
+      "A login shell resolves dsh to /home/chriswang/.local/bin/dsh, reports 0.1.0-rc.6, and the launcher fixes DSH_HOME to /home/chriswang/.local/dsh_home.",
+      "Settings and credential files match the approved source hashes and mode 0600; all referenced provider credentials are present without exposing values.",
+      "The fixed Home has no copied sessions or workspaces, legacy ~/.dsh hashes remain unchanged, and a loopback Web smoke returns HTTP 200."
+    ],
+    "mutation_authority": "read_only",
+    "exact_next_action": "Bind fresh x570 verification evidence to the installed runtime, run X570-01 playback, and complete the task without further mutation.",
+    "dependencies": []
+  }
+}
