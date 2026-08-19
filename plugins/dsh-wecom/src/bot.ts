@@ -1,5 +1,6 @@
 import { generateReqId, WSClient } from '@wecom/aibot-node-sdk'
 import type { WsFrame } from '@wecom/aibot-node-sdk'
+import { makeLogger, sdkLogger, type Logger, type LogLevel } from './log.ts'
 import { safeErrorKind, truncateUtf8 } from './safety.ts'
 
 export interface WecomBotOptions {
@@ -7,6 +8,8 @@ export interface WecomBotOptions {
   botSecret: string
   heartbeatInterval?: number
   maxReconnectAttempts?: number
+  /** Diagnostic verbosity. Defaults to 'info' (SDK auth/connect visible). */
+  logLevel?: LogLevel
 }
 
 export interface InboundMessage {
@@ -42,21 +45,20 @@ export class WecomBot {
   private readonly seen = new Map<string, number>()
   private readonly dedupTtlMs = 10 * 60_000
   private readonly maxDedupEntries = 10_000
+  private readonly log: Logger
 
   constructor(options: WecomBotOptions) {
     this.options = options
+    this.log = makeLogger(options.logLevel ?? 'info')
     this.client = new WSClient({
       botId: options.botId,
       secret: options.botSecret,
       heartbeatInterval: options.heartbeatInterval ?? 30000,
       maxReconnectAttempts: options.maxReconnectAttempts ?? -1,
-      // The SDK's default debug logger serializes inbound frame bodies.
-      logger: {
-        debug: () => {},
-        info: () => {},
-        warn: () => {},
-        error: () => {},
-      },
+      // Forward SDK info/warn/error (auth, connect, disconnect) but DROP debug,
+      // because the SDK logs full inbound frame bodies at debug. Our own debug
+      // lines (identity-only) go through the bridge logger instead.
+      logger: sdkLogger(this.log),
     })
   }
 
@@ -110,6 +112,12 @@ export class WecomBot {
         senderId: body?.from?.userid as string | undefined,
       }
       if (text === '' || this.isDuplicate(msg.msgId)) return
+      this.log.info('inbound text', {
+        chatId: msg.chatId === '' ? undefined : msg.chatId,
+        chatType: msg.chatType,
+        msgId: msg.msgId === '' ? undefined : msg.msgId,
+        bytes: Buffer.byteLength(text, 'utf8'),
+      })
       // EventEmitter intentionally ignores returned promises. Own this boundary
       // so a failed turn cannot become an unhandled rejection or stop later work.
       void Promise.resolve().then(() => onMessage(msg)).catch((error: unknown) => this.handleMessageFailure(frame, error))
@@ -122,10 +130,18 @@ export class WecomBot {
   }
 
   async replyText(frame: WsFrame, content: string): Promise<void> {
+    this.log.debug('reply outbound', {
+      chatId: (frame?.body?.chatid ?? frame?.body?.from?.userid ?? '') as string,
+      bytes: Buffer.byteLength(content, 'utf8'),
+    })
     await this.client.replyStream(frame, generateReqId('stream'), truncateUtf8(content), true)
   }
 
   async sendText(chatId: string, content: string): Promise<void> {
+    this.log.debug('send outbound', {
+      chatId,
+      bytes: Buffer.byteLength(content, 'utf8'),
+    })
     await this.client.sendMessage(chatId, {
       msgtype: 'markdown',
       markdown: { content: truncateUtf8(content) },

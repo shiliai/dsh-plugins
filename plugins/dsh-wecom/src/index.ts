@@ -7,6 +7,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import { WecomBot, type InboundMessage } from './bot.ts'
 import { parseCommand, renderHelp, resolveWorkingDir } from './commands.ts'
 import { summarizeTurn, type TurnResult } from './frame.ts'
+import { makeLogger, isLogLevel, type Logger, type LogLevel } from './log.ts'
 import { isAllowed, resolveAllowedDirectory, safeErrorKind, truncateUtf8 } from './safety.ts'
 import { registerWecomTools } from './tools.ts'
 
@@ -28,6 +29,8 @@ export interface Config {
   defaultPreset?: string
   maxLiveChats?: number
   idleChatMs?: number
+  /** Diagnostic verbosity: error | warn | info (default) | debug. */
+  logLevel?: LogLevel
 }
 
 interface LiveHandle {
@@ -89,10 +92,12 @@ export class WecomAgentBridge {
   private readonly config: Config
   private readonly epoch = randomUUID()
   private readonly idleSweep: ReturnType<typeof setInterval>
+  private readonly log: Logger
   private accepting = true
 
   constructor(private ctx: Context, private bot: WecomBot, config: Config) {
     this.config = config
+    this.log = makeLogger(config.logLevel ?? 'info')
     const interval = Math.max(1_000, Math.min(config.idleChatMs ?? 30 * 60_000, 60_000))
     this.idleSweep = setInterval(() => {
       void this.evictIdle()
@@ -146,11 +151,15 @@ export class WecomAgentBridge {
   }
 
   private async resetContext(st: ChatState): Promise<void> {
-    if (st.handle) await st.handle.dispose()
+    if (st.handle) {
+      this.log.debug('reset: dispose generation', { chatId: st.chatId, chatType: st.chatType, generation: st.generation })
+      await st.handle.dispose()
+    }
     st.handle = undefined
     st.modelSelection = undefined
     st.generation += 1
     st.lastActiveAt = Date.now()
+    this.log.info('new generation', { chatId: st.chatId, chatType: st.chatType, generation: st.generation })
   }
 
   private async ensureAgent(st: ChatState): Promise<LiveHandle> {
@@ -170,6 +179,14 @@ export class WecomAgentBridge {
       await presets.mount(agentCtx, resolvedPreset.id)
     }
     const meta = { cwd: st.cwd, agentPreset: resolvedPreset.id }
+    this.log.info('agent create', {
+      chatId: st.chatId,
+      chatType: st.chatType,
+      generation: st.generation,
+      cwd: st.cwd,
+      preset: resolvedPreset.id,
+      model: `${selection.provider}/${selection.model}`,
+    })
     const created: DshAgentHandle = await agents.create({
       sessionId: this.sessionIdOf(st),
       meta,
@@ -186,6 +203,14 @@ export class WecomAgentBridge {
     const { agent } = await this.ensureAgent(st)
     const sessions = this.ctx.get('sessions')
     const firstSeq = agent.session.seq
+    this.log.debug('run turn', {
+      chatId: st.chatId,
+      chatType: st.chatType,
+      generation: st.generation,
+      cwd: st.cwd,
+      seq: firstSeq,
+      bytes: Buffer.byteLength(message.text, 'utf8'),
+    })
     agent.followup(createUserMessage({ content: [{ type: 'text', text: message.text }], source: { kind: 'user' } }))
     await agent.whenIdle()
     if (sessions) await sessions.flush(agent.session)
@@ -196,6 +221,12 @@ export class WecomAgentBridge {
     const parsed = parseCommand(message.text)
     if (!parsed) return null
     const st = this.chatState(message)
+    this.log.info('command', {
+      chatId: st.chatId,
+      chatType: st.chatType,
+      command: parsed.name,
+      argsBytes: Buffer.byteLength(parsed.arg, 'utf8'),
+    })
     switch (parsed.name) {
       case 'help': return { text: renderHelp(), ok: true }
       case 'new':
@@ -218,6 +249,7 @@ export class WecomAgentBridge {
     const old = st.cwd
     await this.resetContext(st)
     st.cwd = cwd
+    this.log.info('cd', { chatId: st.chatId, from: old, to: cwd })
     return { text: `工作目录已切换：\`${old}\` -> \`${cwd}\`（已开启新会话）。`, ok: true }
   }
 
@@ -242,6 +274,7 @@ export class WecomAgentBridge {
     if (current?.id === resolved.id) return { text: `当前已是 Agent「${resolved.name ?? resolved.id}」。`, ok: true }
     await this.resetContext(st)
     st.presetId = resolved.id
+    this.log.info('agent switch', { chatId: st.chatId, preset: resolved.id })
     return { text: `已切换到 Agent「${resolved.name ?? resolved.id}」（已开启新会话）。`, ok: true }
   }
 
@@ -340,19 +373,33 @@ export class WecomAgentBridge {
 }
 
 export async function apply(ctx: Context, config: Config): Promise<void> {
+  const log = makeLogger(isLogLevel(config.logLevel) ? config.logLevel : 'info')
   if (!config.botId || !config.botSecret) {
-    // eslint-disable-next-line no-console
-    console.warn('[dsh-wecom] missing bot credentials; plugin disabled')
+    log.warn('missing bot credentials; plugin disabled')
     return
   }
-  const bot = new WecomBot({ botId: config.botId, botSecret: config.botSecret })
+  log.info('apply boot', {
+    botId: config.botId ? `${config.botId.slice(0, 6)}…` : '',
+    allowChats: config.allowChats ?? [],
+    allowGroupSenders: config.allowGroupSenders ?? [],
+    outboundAllowChats: config.outboundAllowChats ?? [],
+    defaultCwd: config.defaultCwd ?? process.cwd(),
+    defaultPreset: config.defaultPreset,
+    allowedCwdRoots: config.allowedCwdRoots ?? [],
+    logLevel: isLogLevel(config.logLevel) ? config.logLevel : 'info',
+  })
+  const bot = new WecomBot({ botId: config.botId, botSecret: config.botSecret, logLevel: isLogLevel(config.logLevel) ? config.logLevel : 'info' })
   const bridge = new WecomAgentBridge(ctx, bot, config)
   registerWecomTools(ctx, bot, config.outboundAllowChats)
   await bot.start(async (message) => {
-    if (!isInboundAuthorized(message, config)) return
+    if (!isInboundAuthorized(message, config)) {
+      log.warn('inbound denied', { chatId: message.chatId, chatType: message.chatType })
+      return
+    }
     await bridge.enqueue(message)
   })
   ctx.effect(() => async () => {
+    log.info('shutdown')
     bot.disconnect()
     await bridge.dispose()
   }, 'dsh-wecom.dispose')

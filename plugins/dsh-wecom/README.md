@@ -54,6 +54,8 @@ Add a user patch with explicit identities and roots appropriate for the host:
         allowGroupSenders: ['userid-a']
         # Agent-initiated messages use this separate default-deny allowlist.
         outboundAllowChats: ['userid-a']
+        # Diagnostic verbosity: error | warn | info (default) | debug.
+        logLevel: 'info'
         defaultCwd: '/srv/dsh-workspace'
         allowedCwdRoots: ['/srv/dsh-workspace']
         # Optional. Without this, agentPresets.defaultId is used.
@@ -66,6 +68,19 @@ Add a user patch with explicit identities and roots appropriate for the host:
 authorizes the group id, and `allowGroupSenders` must separately authorize the
 sender userid. Use `'*'` only as an intentional full allowlist. There is no
 `denyListReply` setting: denied messages receive no response.
+
+### Diagnostics / logging
+
+The plugin logs every line with a `[dsh-wecom]` prefix. By default (`info`) it
+writes one line per inbound message, per slash command, per agent creation /
+generation reset, and the SDK's connect / auth / disconnect lifecycle (e.g.
+`Authentication successful`). Set `logLevel: 'debug'` for extra per-turn and
+per-reply detail.
+
+Privacy is preserved at every level: logs never include message bodies, tokens,
+or raw frames — only identities (chat id / chat type / msg id) and byte
+counts. The WeCom SDK's own `debug` logs (which serialize frame bodies) are
+always dropped, even at `debug`. Only identity and metadata are emitted.
 
 `/cd` first resolves the target with `realpath`, then requires it to be under
 `allowedCwdRoots`. This blocks absolute-path, `..`, and symlink escapes. With
