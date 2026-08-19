@@ -42,7 +42,7 @@ export function renderHelp(): string {
 export function resolveWorkingDir(input: string, base: string): string {
   const arg = input.trim()
   if (arg === '' || arg === '~' || arg === '-') return homedir()
-  if (arg === '~/' ) return homedir()
+  if (arg === '~/') return homedir()
   if (arg.startsWith('~/')) return join(homedir(), arg.slice(2))
   if (arg.startsWith('~')) return join(homedir(), arg.slice(1))
   return isAbsolute(arg) ? arg : resolve(base, arg)

@@ -1,13 +1,12 @@
-# dsh-wecom — WeCom smart-robot long-connection bridge
-# Resident WebSocket bot on a DSH agent session (conversation memory).
+# dsh-wecom: credentials and allowlists are intentionally configured by users.
 - insert:
     - id: dsh-wecom
       name: '@dsh-plugins/dsh-wecom'
-      inject: [tools, agents, agentDefaultModel, sessions]
+      inject: [tools, agents, agentDefaultModel, agentPresets, sessions]
       config:
         botId: !!js process.env.WECOM_BOT_ID ?? ''
         botSecret: !!js process.env.WECOM_BOT_SECRET ?? ''
-        # Optional: filter which chats may talk to the bot (comma-separated
-        # userid offsets are not matched; use sender display names/keywords).
-        allowChats: []   # empty = allow all
-        denyListReply: true
+        # Empty allowlists deny access. See README for explicit identities.
+        allowChats: []
+        allowGroupSenders: []
+        outboundAllowChats: []

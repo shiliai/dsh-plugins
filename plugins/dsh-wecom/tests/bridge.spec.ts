@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { sep } from 'node:path'
-import { WecomAgentBridge } from '../src/index.ts'
+import { mkdtemp, mkdir, rm, symlink } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, sep } from 'node:path'
+import { WecomAgentBridge, isInboundAuthorized } from '../src/index.ts'
 import type { InboundMessage } from '../src/bot.ts'
 
 // ---- fakes ----
@@ -43,38 +45,50 @@ function presetsService() {
       return hit
     },
     mount: async () => Promise.resolve(),
-    composedPreset: () => PRESET_ROWS[0]!.id,
   }
 }
 
-function baseContext(opts: { withPresets?: boolean } = {}) {
+function baseContext(opts: {
+  withPresets?: boolean
+  selection?: { provider: string; model: string }
+  whenIdle?: (index: number) => Promise<void>
+  dispose?: (index: number) => Promise<void>
+} = {}) {
   const agents: FakeAgent[] = []
+  const creates: Array<Record<string, unknown>> = []
+  const resumes = vi.fn()
+  const selection = opts.selection ?? { provider: 'p', model: 'm' }
   const mockCtx = {
     get(name: string): unknown {
       if (name === 'agents') {
         return {
           get: (_id: unknown) => undefined,
-          create: async () => {
-            const a = makeAgent(`agent${agents.length + 1}`)
+          create: async (options: Record<string, unknown>) => {
+            creates.push(options)
+            const index = agents.length
+            const a = makeAgent(`agent${index + 1}`)
+            if (opts.whenIdle) a.whenIdle = () => opts.whenIdle!(index)
             agents.push(a)
-            return { agent: a, dispose: async () => {} }
+            return { agent: a, dispose: async () => opts.dispose?.(index) }
           },
+          resume: resumes,
         }
       }
       if (name === 'agentDefaultModel') {
-        return { currentSelection: () => ({ provider: 'p', model: 'm' }) }
+        return { currentSelection: () => selection }
       }
       if (name === 'sessions') return { flush: async () => {} }
-      if (name === 'agentPresets' && opts.withPresets) return presetsService()
+      if (name === 'agentPresets' && opts.withPresets !== false) return presetsService()
       return undefined
     },
   }
-  return { mockCtx, agents }
+  return { mockCtx, agents, creates, resumes, selection }
 }
 
 function fakeBot() {
   const replies: Array<{ frame: unknown; content: string }> = []
   return {
+    identity: 'bot-a',
     replies,
     replyText: vi.fn(async (frame: unknown, content: string) => {
       replies.push({ frame, content })
@@ -99,7 +113,7 @@ describe('WecomAgentBridge', () => {
 
   it('keeps conversation memory per chat (followup accumulates on same agent)', async () => {
     const { mockCtx, agents } = baseContext()
-    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's', maxReplyChars: 2000 })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's' })
     await bridge.enqueue(msg('u1', '我叫小王'))
     await bridge.enqueue(msg('u1', '我叫什么'))
     // both turns go through the same agent
@@ -148,7 +162,7 @@ describe('slash commands', () => {
   })
 
   it('/new starts a fresh conversation (new agent on next turn)', async () => {
-    const { mockCtx, agents } = baseContext()
+    const { mockCtx, agents, creates, resumes } = baseContext()
     const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's' })
     await bridge.enqueue(msg('u1', '第一句'))
     expect(agents).toHaveLength(1)
@@ -158,6 +172,8 @@ describe('slash commands', () => {
     await bridge.enqueue(msg('u1', '新会话第一句'))
     // fresh agent spawned for the new generation
     expect(agents).toHaveLength(2)
+    expect(creates[0]!.sessionId).not.toEqual(creates[1]!.sessionId)
+    expect(resumes).not.toHaveBeenCalled()
   })
 
   it('/pwd reports the working directory', async () => {
@@ -217,6 +233,17 @@ describe('slash commands', () => {
     expect(res.text).toContain('未找到')
   })
 
+  it('/agent can recover from an invalid configured default preset', async () => {
+    const { mockCtx, creates } = baseContext()
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, {
+      botId: 'b', botSecret: 's', defaultPreset: 'missing',
+    })
+    const switched = await bridge.enqueue(msg('u1', '/agent minimal'))
+    expect(switched.ok).toBe(true)
+    await bridge.enqueue(msg('u1', 'hello'))
+    expect((creates[0]!.meta as { agentPreset: string }).agentPreset).toBe('minimal')
+  })
+
   it('/status shows session, cwd, agent and model', async () => {
     const { mockCtx } = baseContext({ withPresets: true })
     const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's', defaultPreset: 'standard' })
@@ -234,5 +261,182 @@ describe('slash commands', () => {
     const res = await bridge.enqueue(msg('u1', '/frobnicate'))
     expect(res.text).toContain('未知命令')
     expect(agents).toHaveLength(0)
+  })
+
+  it('uses agentPresets.defaultId consistently when defaultPreset is omitted', async () => {
+    const { mockCtx, creates } = baseContext({ withPresets: true })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's' })
+    const list = await bridge.enqueue(msg('u1', '/agent'))
+    expect(list.text).toContain('当前')
+    await bridge.enqueue(msg('u1', 'hello'))
+    expect((creates[0]!.meta as { agentPreset: string }).agentPreset).toBe('standard')
+    const status = await bridge.enqueue(msg('u1', '/status'))
+    expect(status.text).toContain('standard')
+  })
+
+  it('rejects a broken preset', async () => {
+    const brokenPresets = {
+      defaultId: 'broken',
+      list: async () => [{ id: 'broken', name: 'Broken', broken: 'missing tool' }],
+      resolve: async () => ({ id: 'broken' }),
+      mount: async () => {},
+    }
+    const { mockCtx } = baseContext()
+    const ctx = { ...mockCtx, get: (name: string) => name === 'agentPresets' ? brokenPresets : mockCtx.get(name) }
+    const bridge = new WecomAgentBridge(ctx as never, fakeBot() as never, { botId: 'b', botSecret: 's' })
+    const result = await bridge.enqueue(msg('u1', '/agent Broken'))
+    expect(result.ok).toBe(false)
+  })
+
+  it('prefers an exact preset id even when display names are ambiguous', async () => {
+    const rows = [
+      { id: 'standard', name: 'Shared' },
+      { id: 'other', name: 'standard' },
+      { id: 'third', name: 'standard' },
+      { id: 'fourth', name: 'Shared' },
+    ]
+    const exactPresets = {
+      defaultId: 'standard',
+      list: async () => rows,
+      resolve: async (id?: string) => rows.find(row => row.id === id)!,
+      mount: async () => {},
+    }
+    const { mockCtx, creates } = baseContext()
+    const ctx = { ...mockCtx, get: (name: string) => name === 'agentPresets' ? exactPresets : mockCtx.get(name) }
+    const bridge = new WecomAgentBridge(ctx as never, fakeBot() as never, { botId: 'b', botSecret: 's' })
+    expect((await bridge.enqueue(msg('u1', '/agent Shared'))).ok).toBe(false)
+    await bridge.enqueue(msg('u1', 'hello'))
+    expect((creates[0]!.meta as { agentPreset: string }).agentPreset).toBe('standard')
+  })
+
+  it('reports the model captured by the live agent, not a later global selection', async () => {
+    const { mockCtx, selection } = baseContext({ withPresets: true })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's' })
+    await bridge.enqueue(msg('u1', 'create agent'))
+    selection.model = 'later-model'
+    const result = await bridge.enqueue(msg('u1', '/status'))
+    expect(result.text).toContain('p/m')
+    expect(result.text).not.toContain('later-model')
+  })
+
+  it('settles queues and evicts excess idle chats', async () => {
+    const { mockCtx } = baseContext()
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, {
+      botId: 'b', botSecret: 's', maxLiveChats: 1, idleChatMs: 0,
+    })
+    await bridge.enqueue(msg('u1', 'one'))
+    await bridge.enqueue(msg('u2', 'two'))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(bridge.resourceSnapshot().queues).toBe(0)
+    expect(bridge.resourceSnapshot().states).toBeLessThanOrEqual(1)
+  })
+
+  it('does not let one failed idle disposal abort another chat', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { mockCtx } = baseContext({
+      dispose: async (index) => { if (index === 0) throw new Error('dispose failed') },
+    })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, {
+      botId: 'b', botSecret: 's', maxLiveChats: 1, idleChatMs: 0,
+    })
+    try {
+      await bridge.enqueue(msg('u1', 'one'))
+      await expect(bridge.enqueue(msg('u2', 'two'))).resolves.toMatchObject({ ok: true })
+    } finally {
+      await bridge.dispose()
+      error.mockRestore()
+    }
+  })
+
+  it('waits for same-chat eviction before creating a replacement agent', async () => {
+    let releaseDispose!: () => void
+    const disposing = new Promise<void>((resolve) => { releaseDispose = resolve })
+    const dispose = vi.fn(async (index: number) => {
+      if (index === 0) await disposing
+    })
+    const { mockCtx, agents } = baseContext({ dispose })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, {
+      botId: 'b', botSecret: 's', maxLiveChats: 1, idleChatMs: 0,
+    })
+    await bridge.enqueue(msg('u1', 'first'))
+    const otherChat = bridge.enqueue(msg('u2', 'second'))
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledWith(0))
+    const replacement = bridge.enqueue(msg('u1', 'again'))
+    expect(agents).toHaveLength(1)
+    releaseDispose()
+    await otherChat
+    const result = await replacement
+    expect(result.text).not.toContain('agent1:again')
+    expect(agents).toHaveLength(3)
+    await bridge.dispose()
+  })
+
+  it('drains active chat queues before disposing agents and rejects new ingress', async () => {
+    let releaseIdle!: () => void
+    const idle = new Promise<void>((resolve) => { releaseIdle = resolve })
+    const dispose = vi.fn(async () => {})
+    const whenIdle = vi.fn(async () => idle)
+    const { mockCtx } = baseContext({ dispose, whenIdle })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's' })
+    const turn = bridge.enqueue(msg('u1', 'slow turn'))
+    await vi.waitFor(() => expect(whenIdle).toHaveBeenCalled())
+    const shutdown = bridge.dispose()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(dispose).not.toHaveBeenCalled()
+    await expect(bridge.enqueue(msg('u2', 'late turn'))).rejects.toThrow('shutting down')
+    releaseIdle()
+    await turn
+    await shutdown
+    expect(dispose).toHaveBeenCalledTimes(1)
+    expect(bridge.resourceSnapshot()).toEqual({ states: 0, queues: 0, liveAgents: 0 })
+  })
+
+  it('keeps cwd and preset state unchanged when the old agent fails to dispose', async () => {
+    const { mockCtx } = baseContext({ dispose: async () => { throw new Error('dispose failed') } })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, {
+      botId: 'b', botSecret: 's', defaultCwd: process.cwd(), defaultPreset: 'standard',
+    })
+    await bridge.enqueue(msg('u1', 'create live agent'))
+    await expect(bridge.enqueue(msg('u1', '/cd src'))).rejects.toThrow('dispose failed')
+    expect((await bridge.enqueue(msg('u1', '/pwd'))).text).toContain(process.cwd())
+    await expect(bridge.enqueue(msg('u1', '/agent minimal'))).rejects.toThrow('dispose failed')
+    const list = await bridge.enqueue(msg('u1', '/agent'))
+    expect(list.text).toContain('【当前】 标准模式 (`standard`)')
+  })
+
+  it('refuses to create an uncomposed agent when the preset service is absent', async () => {
+    const { mockCtx } = baseContext({ withPresets: false })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's' })
+    await expect(bridge.enqueue(msg('u1', 'hello'))).rejects.toThrow('agentPresets service unavailable')
+  })
+})
+
+describe('authorization and cwd containment', () => {
+  it('denies by default, requires group senders, and permits explicit direct users', () => {
+    expect(isInboundAuthorized(msg('u1', 'hello'), { botId: 'b', botSecret: 's' })).toBe(false)
+    expect(isInboundAuthorized(msg('u1', 'hello'), { botId: 'b', botSecret: 's', allowChats: ['u1'] })).toBe(true)
+    const group = { ...msg('g1', 'hello'), chatType: 'group', senderId: 'u1' }
+    expect(isInboundAuthorized(group, { botId: 'b', botSecret: 's', allowChats: ['*'] })).toBe(false)
+    expect(isInboundAuthorized(group, { botId: 'b', botSecret: 's', allowChats: ['g1'], allowGroupSenders: ['u1'] })).toBe(true)
+  })
+
+  it('/cd permits descendants and rejects absolute, parent, and symlink escapes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-wecom-root-'))
+    const outside = await mkdtemp(join(tmpdir(), 'dsh-wecom-outside-'))
+    try {
+      await mkdir(join(root, 'inside'))
+      await symlink(outside, join(root, 'escape'))
+      const { mockCtx } = baseContext()
+      const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, {
+        botId: 'b', botSecret: 's', defaultCwd: root, allowedCwdRoots: [root],
+      })
+      expect((await bridge.enqueue(msg('u1', '/cd inside'))).ok).toBe(true)
+      expect((await bridge.enqueue(msg('u1', `/cd ${outside}`))).ok).toBe(false)
+      expect((await bridge.enqueue(msg('u1', '/cd ../../'))).ok).toBe(false)
+      expect((await bridge.enqueue(msg('u1', '/cd escape'))).ok).toBe(false)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(outside, { recursive: true, force: true })
+    }
   })
 })

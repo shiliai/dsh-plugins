@@ -12,9 +12,9 @@
   and `repository.directory` set to the package's monorepo directory.
 - GitHub-source packages must keep a `prepare` script that produces all files
   declared by `main`, `types`, `exports`, and `bin`.
-- Release tags are plugin-scoped: `dsh-obsidian-v<version>` and
-  `dsh-remote-v<version>`. Create a tag only after the package release check and
-  root version check pass.
+- Release tags are plugin-scoped: `dsh-obsidian-v<version>`,
+  `dsh-remote-v<version>`, and `dsh-wecom-v<version>`. Create a tag only after
+  the package release check and root version check pass.
 
 ## Install and update contract
 

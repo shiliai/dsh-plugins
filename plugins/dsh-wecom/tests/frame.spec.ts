@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { extractTextFromFrame, summarizeTurn } from '../src/frame.ts'
+import { truncateUtf8 } from '../src/safety.ts'
 
 describe('extractTextFromFrame', () => {
   it('extracts plain text content', () => {
@@ -10,6 +11,14 @@ describe('extractTextFromFrame', () => {
   it('returns empty for no text', () => {
     expect(extractTextFromFrame({ body: {} } as never)).toBe('')
     expect(extractTextFromFrame({ body: { image: {} } } as never)).toBe('')
+  })
+})
+
+describe('truncateUtf8', () => {
+  it('does not split a Unicode code point at the byte limit', () => {
+    const result = truncateUtf8('a'.repeat(20_479) + '😀')
+    expect(Buffer.byteLength(result, 'utf8')).toBe(20_479)
+    expect(result.endsWith('😀')).toBe(false)
   })
 })
 

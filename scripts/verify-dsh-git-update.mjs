@@ -7,21 +7,25 @@ import { dirname, join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { promisify } from 'node:util'
 
+const fixturePlugins = [
+  { name: '@dsh-plugins/dsh-obsidian', directory: 'plugins/dsh-obsidian', bundleId: 'dsh-obsidian' },
+  { name: '@dsh-plugins/dsh-wecom', directory: 'plugins/dsh-wecom', bundleId: 'dsh-wecom' },
+]
 const requireFromPlugin = createRequire(resolve('plugins/dsh-obsidian/package.json'))
 const dshPackage = requireFromPlugin.resolve('@deepseek-ai/dsh/package.json')
 const dshBin = join(dirname(dshPackage), 'lib/bin.js')
 const root = await mkdtemp(join(tmpdir(), 'dsh-plugin-git-update-'))
 const source = join(root, 'source')
-const plugin = join(source, 'plugins/dsh-obsidian')
 const updaterFixture = join(source, 'scripts/dsh-plugin-updater')
 const dshHome = join(root, 'dsh-home')
-let latestVersion = '0.1.0'
+const latestVersions = new Map(fixturePlugins.map((plugin) => [plugin.name, '0.1.0']))
 const exec = promisify(execFile)
 
 const server = createServer((request, response) => {
-  if (request.url === '/plugins/dsh-obsidian/package.json') {
+  const fixture = fixturePlugins.find((plugin) => request.url === `/${plugin.directory}/package.json`)
+  if (fixture) {
     response.setHeader('content-type', 'application/json')
-    response.end(JSON.stringify({ name: '@dsh-plugins/dsh-obsidian', version: latestVersion }))
+    response.end(JSON.stringify({ name: fixture.name, version: latestVersions.get(fixture.name) }))
     return
   }
   response.statusCode = 404
@@ -46,9 +50,11 @@ async function run(command, args) {
   return result.stdout
 }
 
-async function writePlugin(version) {
+async function writePlugin(fixture, version) {
+  const plugin = join(source, fixture.directory)
+  await mkdir(plugin, { recursive: true })
   await writeFile(join(plugin, 'package.json'), `${JSON.stringify({
-    name: '@dsh-plugins/dsh-obsidian',
+    name: fixture.name,
     version,
     type: 'module',
     main: './index.js',
@@ -57,57 +63,65 @@ async function writePlugin(version) {
   }, null, 2)}\n`)
   await writeFile(join(plugin, 'prepare.mjs'), "import { writeFile } from 'node:fs/promises'\nawait writeFile('prepared.txt', 'prepared\\n')\n")
   await writeFile(join(plugin, 'index.js'), `export const version = '${version}'\n`)
-  await writeFile(join(plugin, 'cordis.patch.yml'), "- id: dsh-obsidian\n  name: '@dsh-plugins/dsh-obsidian'\n")
+  await writeFile(join(plugin, 'cordis.patch.yml'), `- id: ${fixture.bundleId}\n  name: '${fixture.name}'\n`)
 }
 
 try {
-  await mkdir(plugin, { recursive: true })
   await mkdir(updaterFixture, { recursive: true })
   await writeFile(join(updaterFixture, 'package.json'), await readFile(resolve('scripts/dsh-plugin-updater/package.json')))
   await writeFile(join(updaterFixture, 'cli.mjs'), await readFile(resolve('scripts/dsh-plugin-updater/cli.mjs')))
   await run('git', ['init', '--quiet', source])
   await run('git', ['-C', source, 'config', 'user.name', 'DSH Update Test'])
   await run('git', ['-C', source, 'config', 'user.email', 'fixture'])
-  await writePlugin('0.1.0')
+  for (const fixture of fixturePlugins) await writePlugin(fixture, '0.1.0')
   await run('git', ['-C', source, 'add', '.'])
   await run('git', ['-c', 'core.hooksPath=/dev/null', '-C', source, 'commit', '--quiet', '-m', 'fixture 0.1.0'])
 
-  await run('pnpm', ['--dir', plugin, 'pack', '--pack-destination', root])
-  const archive = join(root, 'dsh-plugins-dsh-obsidian-0.1.0.tgz')
-  await run(process.execPath, [dshBin, 'plugin', '--profile', 'web', 'add', archive])
+  for (const fixture of fixturePlugins) {
+    const plugin = join(source, fixture.directory)
+    await run('pnpm', ['--dir', plugin, 'pack', '--pack-destination', root])
+    const archiveName = fixture.name.replace(/^@/, '').replaceAll('/', '-')
+    await run(process.execPath, [dshBin, 'plugin', '--profile', 'web', 'add', join(root, `${archiveName}-0.1.0.tgz`)])
+  }
   await run(process.execPath, [
     dshBin, 'plugin', '--profile', 'web',
     'config', 'set', '--location=project', '--json', 'allowBuilds', '{"existing-package":false}',
   ])
-  await writePlugin('0.1.1')
+  for (const fixture of fixturePlugins) await writePlugin(fixture, '0.1.1')
   await run('git', ['-C', source, 'add', '.'])
   await run('git', ['-c', 'core.hooksPath=/dev/null', '-C', source, 'commit', '--quiet', '-m', 'fixture 0.1.1'])
-  latestVersion = '0.1.1'
+  for (const fixture of fixturePlugins) latestVersions.set(fixture.name, '0.1.1')
   const updaterSpec = `git+file://${source}#path:/scripts/dsh-plugin-updater`
 
   const check = await run(process.execPath, [
     dshBin, 'plugin', '--profile', 'web', 'dlx', updaterSpec, 'check',
   ])
   assert.match(check, /@dsh-plugins\/dsh-obsidian: 0\.1\.0 -> 0\.1\.1 \(outdated\)/)
+  assert.match(check, /@dsh-plugins\/dsh-wecom: 0\.1\.0 -> 0\.1\.1 \(outdated\)/)
 
   await run(process.execPath, [
     dshBin, 'plugin', '--profile', 'web', 'dlx', updaterSpec, 'update',
   ])
 
   const profile = join(dshHome, 'profiles/web')
-  const installed = JSON.parse(await readFile(join(profile, 'node_modules/@dsh-plugins/dsh-obsidian/package.json'), 'utf8'))
-  assert.equal(installed.version, '0.1.1')
-  assert.equal(await readFile(join(profile, 'node_modules/@dsh-plugins/dsh-obsidian/prepared.txt'), 'utf8'), 'prepared\n')
   const profileManifest = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'))
-  assert.ok(profileManifest.dsh.profile.bundles.includes('@dsh-plugins/dsh-obsidian'))
-  assert.match(profileManifest.dependencies['@dsh-plugins/dsh-obsidian'], /^git\+file:/)
+  for (const fixture of fixturePlugins) {
+    const installedPath = join(profile, 'node_modules', ...fixture.name.split('/'))
+    const installed = JSON.parse(await readFile(join(installedPath, 'package.json'), 'utf8'))
+    assert.equal(installed.version, '0.1.1')
+    assert.equal(await readFile(join(installedPath, 'prepared.txt'), 'utf8'), 'prepared\n')
+    assert.ok(profileManifest.dsh.profile.bundles.includes(fixture.name))
+    assert.match(profileManifest.dependencies[fixture.name], /^git\+file:/)
+  }
   const allowBuilds = JSON.parse(await run(process.execPath, [
     dshBin, 'plugin', '--profile', 'web', 'config', 'get', '--json', 'allowBuilds',
   ]))
   assert.equal(allowBuilds['existing-package'], false)
-  assert.equal(allowBuilds[`@dsh-plugins/dsh-obsidian@git+file://${source}`], true)
+  for (const fixture of fixturePlugins) {
+    assert.equal(allowBuilds[`${fixture.name}@git+file://${source}`], true)
+  }
 
-  console.log('verified dsh update detection, source migration, automatic update, and bundle reconciliation')
+  console.log('verified multi-plugin update detection, source migration, automatic update, and bundle reconciliation')
 } finally {
   await new Promise((resolveClose) => server.close(resolveClose))
   await rm(root, { recursive: true, force: true })

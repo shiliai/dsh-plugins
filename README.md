@@ -8,6 +8,7 @@ Monorepo for independently versioned DeepSeek Harness plugins.
 plugins/
   dsh-obsidian/
   dsh-remote/
+  dsh-wecom/
 tools/
   dsh-explainer/
 ```
@@ -30,6 +31,7 @@ Run one plugin command with a workspace filter:
 ```sh
 pnpm --filter @dsh-plugins/dsh-remote check
 pnpm --filter @dsh-plugins/dsh-obsidian pack:check
+pnpm --filter @dsh-plugins/dsh-wecom check
 ```
 
 The static architecture explainer is development material, not a DSH plugin.
@@ -39,17 +41,19 @@ Run it with `node tools/dsh-explainer/server.mjs`.
 
 Install from the public GitHub monorepo so dsh can track the remote source. Git
 dependencies run each plugin's `prepare` script, so first trust this repository
-for the two package identities. This stable repository rule continues to match
+for each package identity. This stable repository rule continues to match
 new commits. If the profile already has `allowBuilds` entries, include them in
 the JSON instead of replacing them.
 
 ```sh
 dsh plugin --profile web config set --location=project --json allowBuilds \
-  '{"@dsh-plugins/dsh-obsidian@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-obsidian@git+ssh://git@github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-remote@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-remote@git+ssh://git@github.com/shiliai/dsh-plugins.git":true}'
+  '{"@dsh-plugins/dsh-obsidian@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-obsidian@git+ssh://git@github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-remote@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-remote@git+ssh://git@github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-wecom@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-wecom@git+ssh://git@github.com/shiliai/dsh-plugins.git":true}'
 dsh plugin --profile web add \
   'github:shiliai/dsh-plugins#path:/plugins/dsh-obsidian'
 dsh plugin --profile web add \
   'github:shiliai/dsh-plugins#path:/plugins/dsh-remote'
+dsh plugin --profile web add \
+  'github:shiliai/dsh-plugins#path:/plugins/dsh-wecom'
 ```
 
 The same commands migrate an existing local path, `link:`, or tarball
@@ -66,7 +70,7 @@ dsh plugin --profile web --config.dlx-cache-max-age=0 dlx \
   'github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater' update
 ```
 
-Append one or both package names to limit the operation. The update command
+Append one or more package names to limit the operation. The update command
 also performs the one-time migration for an installed local path, `link:`, or
 tarball source, and merges repository build trust with existing `allowBuilds`.
 

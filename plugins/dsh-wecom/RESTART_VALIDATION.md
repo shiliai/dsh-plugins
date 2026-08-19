@@ -1,55 +1,67 @@
-# dsh-wecom 插件 — 重启与端到端验证操作清单
+# dsh-wecom restart and live validation runbook
 
-目标：让 `@dsh-plugins/dsh-wecom` 插件随 DSH web 加载，把企微智能机器人长连接
-桥接到 DSH agent 会话（有对话记忆）。
+This runbook is intentionally host-neutral. Replace `<profile>` and service
+commands with values for the deployment being tested. Never put a real bot
+secret in this repository, a shell history, or a test report.
 
-## 前置（已完成 ✅，无需再动）
-- 插件已构建到 `lib/`，单测通过
-- 已安装进 `~/.dsh/profiles/web/node_modules/@dsh-plugins/dsh-wecom`
-- `~/.dsh/profiles/web/package.json` 的 `bundles` 已含 `@dsh-plugins/dsh-wecom`
-- `~/.dsh/profiles/web/cordis.patch.yml` 已 insert `dsh-wecom`（读 env 的 botId/botSecret）
+## Before restart
 
-## 机器人凭据（重启时注入）
-```
-WECOM_BOT_ID=<你的机器人Bot ID>
-WECOM_BOT_SECRET=<你的机器人Secret>
-```
-> ⚠️ 请用你在企微后台拿到的真实 Bot ID / Secret 替换上面的占位符。
-> 插件从 `process.env.WECOM_BOT_ID / WECOM_BOT_SECRET` 读取。请勿把真实凭证写进会公开提交的文件。
+1. Install or update the plugin through `dsh plugin`; do not edit a profile
+   manifest or lockfile directly. See `README.md` for the supported GitHub
+   source and updater commands.
+2. Configure `WECOM_BOT_ID` and `WECOM_BOT_SECRET` in the environment used by
+   the DSH process.
+3. Configure explicit `allowChats`, `allowGroupSenders`,
+   `outboundAllowChats`, and `allowedCwdRoots` values. Empty allowlists deny
+   access.
+4. Confirm that no other process is holding the same robot long connection.
+5. Record the currently installed Git revision and preserve the previous
+   service configuration for rollback.
 
-## 重启步骤
+## Restart
 
-### 方式 A：手动重启（推荐，最可控）
-1. 先停当前 DSH（你平时如何停 3180 就怎么停；launchd 服务名为 `io.onlyservice.dsh-web`）
-2. 确保没有其它进程占用机器人的长连接
-   ```bash
-   ps aux | grep -E "bridge_wecom_dsh|listen_test" | grep -v grep   # 应为空
-   ```
-3. 带 env 启动 DSH：
-   ```bash
-   export WECOM_BOT_ID=<你的机器人Bot ID>
-   export WECOM_BOT_SECRET=<你的机器人Secret>
-   # 用你平时启动 3180 的命令（dsh web --host 127.0.0.1 --port 3180）
-   ```
-4. 观察启动日志里是否有：
-   - `[dsh-wecom]` 相关日志（若 botId/botSecret 缺失会打 "plugin disabled"）
-   - SDK 的 "Authentication successful"
+1. Stop the DSH process using the deployment's service manager.
+2. Start the same profile with its configured environment.
+3. Confirm that the process remains healthy and that the `dsh-wecom` bundle is
+   present in the effective configuration. Missing credentials intentionally
+   disable the plugin and produce a warning.
 
-### 方式 B：改造 launchd plist 注入 env
-在 plist 的 `<EnvironmentVariables>` 里加 `WECOM_BOT_ID` / `WECOM_BOT_SECRET`，
-然后 `launchctl bootout` + `launchctl bootstrap`（或 `kickstart -k`）。
+Conversation memory is process-local. A restart starts a new process epoch and
+does not resume prior WeCom sessions.
 
-## 端到端验证
-重启后，企微里给「王慧卿的机器人」发消息，预期：
-1. 机器人**自动回复**（agent 处理）
-2. 连续发两条，第二条能**记住第一条**的上下文（对话记忆）→ 证明复用同一 agent 会话
-3. （可选）在 DSH 里让 agent 调用 `wecom_send_message` 工具主动发企微
+## Live validation
 
-## 排障
-- 机器人不回复：确认没别的进程占长连接、botId/secret 正确注入、机器人仍是长连接 API 模式
-- 日志看不到插件：检查 `dump-config` 是否含 dsh-wecom、bundle 是否正确加载
-- agent 不工作：确认 DSH 有可用的模型选择（agentDefaultModel）与凭证
+Use test identities that appear in the configured allowlists.
 
-## 备注
-- 当前记忆为**进程内**：DSH 重启后企微会话上下文重置（后续可加 JSONL 持久化 + `agents.resume`）
-- 一个机器人同一时间仅一个长连接；插件需与 GUI 同进程运行（本设计如此）
+1. Send `/status` from an allowed direct chat. Verify the reported working
+   directory and default preset. The live model appears after the first agent
+   turn.
+2. Send two related messages and verify that the second answer uses the first
+   turn's context.
+3. Send `/new`, then verify that the earlier conversational context is no
+   longer used.
+4. Exercise `/agent` and switch to a known healthy preset. Verify that the next
+   message starts a new session with that preset.
+5. Exercise `/cd` with an allowed descendant, then try an absolute path, `..`,
+   and a symlink that escape the configured roots. Only the contained path
+   should succeed.
+6. From an unauthorized direct chat, verify that the bot sends no response.
+7. In a permitted group, verify that an allowed sender succeeds and a sender
+   absent from `allowGroupSenders` receives no response.
+8. Invoke `wecom_send_message` for one allowed and one denied destination. Only
+   the explicitly allowed destination should receive a message.
+9. Restart once more and verify that the service reconnects and old process
+   memory is not restored.
+
+The automated suite uses fakes and does not replace this credentialed network
+test. Record the profile, plugin Git revision, test identities, and pass/fail
+result without recording message bodies or credentials.
+
+## Rollback
+
+1. Stop the affected profile.
+2. Restore the previously validated plugin revision and configuration through
+   `dsh plugin` operations.
+3. Start the profile and repeat the direct-chat smoke test.
+4. If the plugin must be disabled, remove its bundle through `dsh plugin` and
+   restart the profile. Do not hand-edit the profile manifest or lockfile.

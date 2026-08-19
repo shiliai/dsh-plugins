@@ -1,8 +1,9 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { WecomBot } from './bot.ts'
+import { isAllowed, truncateUtf8 } from './safety.ts'
 
-export function registerWecomTools(ctx: Context, bot: WecomBot): void {
+export function registerWecomTools(ctx: Context, bot: WecomBot, outboundAllowChats: readonly string[] = []): void {
   ctx.tools.register(defineTool({
     name: 'wecom_send_message',
     description: 'Send a Markdown message to a WeCom chat (single user userid or group chatid) through the resident bot long connection.',
@@ -24,8 +25,9 @@ export function registerWecomTools(ctx: Context, bot: WecomBot): void {
     },
     isConcurrencySafe: () => false,
     execute: async (args: { chatId: string; content: string }) => {
-      const content = (args.content ?? '').slice(0, 20000)
+      const content = truncateUtf8(args.content ?? '')
       if (!args.chatId || !content) return { ok: false, message: 'chatId and content are required' }
+      if (!isAllowed(args.chatId, outboundAllowChats)) return { ok: false, message: 'target chat is not authorized' }
       try {
         await bot.sendText(args.chatId, content)
         return { ok: true, message: 'sent' }
