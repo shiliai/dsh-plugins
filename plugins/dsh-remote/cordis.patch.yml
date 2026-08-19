@@ -3,14 +3,17 @@
       name: '@dsh-plugins/dsh-remote'
       inject: [webServer]
       config:
+        mode: !!js process.env.DSH_REMOTE_MODE ?? 'ssh'
+        sshCompatibility: !!js process.env.DSH_REMOTE_SSH_COMPATIBILITY === 'true'
         instanceId: !!js process.env.DSH_REMOTE_INSTANCE_ID ?? undefined
         baseDomain: !!js process.env.DSH_REMOTE_BASE_DOMAIN ?? 'dsh.onlyservice.io'
         remoteOrigin: !!js process.env.DSH_REMOTE_ORIGIN ?? 'https://zsh.onlyservice.io'
         sshTarget: !!js process.env.DSH_REMOTE_SSH_TARGET ?? 'vps-tencent-tokyo'
         remoteSocketPath: '/home/chriswang/.local/share/dsh-remote/tunnel.sock'
+        agentSocketPath: !!js process.env.DSH_REMOTE_AGENT_SOCKET_PATH ?? undefined
         stateFile: !!js process.env.DSH_REMOTE_STATE_FILE ?? undefined
         gatewayHost: '127.0.0.1'
-        gatewayPort: 0
+        gatewayPort: !!js "process.env.DSH_REMOTE_MODE === 'host' ? Number(process.env.DSH_REMOTE_GATEWAY_PORT ?? 29321) : 0"
         reconnectBaseMs: 500
         reconnectMaxMs: 30000
         reconnectMaxRetries: 5

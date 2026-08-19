@@ -22,9 +22,12 @@ export interface RemoteStatus {
 }
 
 export interface RemoteConfig {
+  mode?: 'ssh' | 'host'
+  sshCompatibility?: boolean
   remoteOrigin: string
   sshTarget: string
   remoteSocketPath: string
+  agentSocketPath?: string
   instanceId?: string
   baseDomain?: string
   stateFile?: string
