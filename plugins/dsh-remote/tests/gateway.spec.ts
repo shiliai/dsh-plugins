@@ -166,11 +166,16 @@ describe('RemoteGateway', () => {
     expect(launched.status).toBe(204)
     const cookie = launched.headers.getSetCookie()[0]?.split(';', 1)[0]
     expect(cookie).toBe(`__Host-dsh_remote_host=${'g'.repeat(43)}`)
+    if (cookie === undefined) throw new Error('Expected Host session cookie.')
     const privateState = await state.rotate()
     expect(privateState.sessionVersion).toBe(2)
     const proxied = await fetch(`${baseUrl}/host-session`, { headers: { cookie: `${cookie}; dsh=preserved` } })
     expect(proxied.status).toBe(200)
     expect((await proxied.json()).cookie).toBe('dsh=preserved')
+    const forcedBootstrap = await fetch(`${baseUrl}/__dsh_remote/launch`, { headers: { cookie } })
+    expect(forcedBootstrap.status).toBe(200)
+    expect(await forcedBootstrap.text()).toContain('dsh-host-launch')
+    expect((await fetch(`${baseUrl}/__dsh_remote/launch`, { method: 'POST', headers: { cookie } })).status).toBe(405)
 
     const replay = await fetch(`${baseUrl}/__dsh_remote/session`, {
       method: 'POST',

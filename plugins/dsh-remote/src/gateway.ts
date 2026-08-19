@@ -7,6 +7,7 @@ import { redeemLaunch } from './agent-ipc.ts'
 import { REMOTE_COOKIE, RemoteStateStore } from './state-store.ts'
 
 const SESSION_PATH = '/__dsh_remote/session'
+const LAUNCH_PATH = '/__dsh_remote/launch'
 const HOST_COOKIE = '__Host-dsh_remote_host'
 const KEEP_ALIVE_TIMEOUT_MS = 60_000
 const SECURITY_HEADERS: OutgoingHttpHeaders = {
@@ -103,6 +104,11 @@ export class RemoteGateway {
     const path = new URL(request.url ?? '/', 'http://gateway.local').pathname
     if (path === SESSION_PATH) {
       await this.handleSession(request, response)
+      return
+    }
+    if (path === LAUNCH_PATH) {
+      if (request.method === 'GET') sendBootstrap(response)
+      else send(response, 405, 'Method not allowed.', { Allow: 'GET' })
       return
     }
     const sessionVersion = this.authenticate(request.headers.cookie)
