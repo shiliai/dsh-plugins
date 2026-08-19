@@ -1,11 +1,13 @@
 import { createServer, type IncomingMessage, type OutgoingHttpHeaders, type Server, type ServerResponse } from 'node:http'
 import type { Socket } from 'node:net'
 import type { Duplex } from 'node:stream'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import httpProxy from 'http-proxy'
+import { redeemLaunch } from './agent-ipc.ts'
 import { REMOTE_COOKIE, RemoteStateStore } from './state-store.ts'
 
 const SESSION_PATH = '/__dsh_remote/session'
+const HOST_COOKIE = '__Host-dsh_remote_host'
 const KEEP_ALIVE_TIMEOUT_MS = 60_000
 const SECURITY_HEADERS: OutgoingHttpHeaders = {
   'Cache-Control': 'no-store',
@@ -20,6 +22,7 @@ export interface RemoteGatewayOptions {
   state: RemoteStateStore
   host?: '127.0.0.1'
   port?: number
+  agentSocketPath?: string
 }
 
 export class RemoteGateway {
@@ -27,6 +30,7 @@ export class RemoteGateway {
   private readonly proxy = httpProxy.createProxyServer({ changeOrigin: true, ws: true, xfwd: false })
   private readonly upgradedSockets = new Map<number, Set<Duplex>>()
   private readonly connections = new Set<Socket>()
+  private readonly hostSessions = new Map<string, number>()
   private boundPort: number | undefined
 
   constructor(private readonly options: RemoteGatewayOptions) {
@@ -101,7 +105,7 @@ export class RemoteGateway {
       await this.handleSession(request, response)
       return
     }
-    const sessionVersion = this.options.state.authenticateCookie(request.headers.cookie)
+    const sessionVersion = this.authenticate(request.headers.cookie)
     if (path === '/' && request.method === 'GET' && sessionVersion === null) {
       sendBootstrap(response)
       return
@@ -134,19 +138,34 @@ export class RemoteGateway {
       return
     }
     const body = await readJson(request, 1024)
-    if (!isTokenRequest(body) || !this.options.state.verifyBearer(body.token)) {
+    let cookie: string
+    let maxAge: number
+    if (isTokenRequest(body) && this.options.state.verifyBearer(body.token)) {
+      cookie = `${REMOTE_COOKIE}=${this.options.state.sessionCookie()}`
+      maxAge = 31_536_000
+    } else if (isLaunchRequest(body) && this.options.agentSocketPath !== undefined) {
+      try {
+        const result = await redeemLaunch(this.options.agentSocketPath, body.launchTicket)
+        this.hostSessions.set(digest(result.sessionGrant), Date.now() + 8 * 60 * 60 * 1000)
+        cookie = `${HOST_COOKIE}=${result.sessionGrant}`
+        maxAge = 28_800
+      } catch {
+        send(response, 403, 'Access denied.')
+        return
+      }
+    } else {
       send(response, 403, 'Access denied.')
       return
     }
     response.writeHead(204, {
       ...SECURITY_HEADERS,
-      'Set-Cookie': `${REMOTE_COOKIE}=${this.options.state.sessionCookie()}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=31536000`,
+      'Set-Cookie': `${cookie}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${maxAge}`,
     })
     response.end()
   }
 
   private handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
-    const version = this.options.state.authenticateCookie(request.headers.cookie)
+    const version = this.authenticate(request.headers.cookie)
     if (version === null || request.headers.origin !== this.options.remoteOrigin) {
       rejectUpgrade(socket, version === null ? 401 : 403)
       return
@@ -170,6 +189,20 @@ export class RemoteGateway {
     }
   }
 
+  private authenticate(header: string | undefined): number | null {
+    const privateVersion = this.options.state.authenticateCookie(header)
+    if (privateVersion !== null) return privateVersion
+    const grant = cookieValue(header, HOST_COOKIE)
+    if (grant === undefined || !/^[A-Za-z0-9_-]{43}$/u.test(grant)) return null
+    const key = digest(grant)
+    const expiry = this.hostSessions.get(key)
+    if (expiry === undefined || expiry <= Date.now()) {
+      this.hostSessions.delete(key)
+      return null
+    }
+    return Number.MAX_SAFE_INTEGER
+  }
+
   private target(): string {
     return `http://127.0.0.1:${this.options.targetPort}`
   }
@@ -183,7 +216,7 @@ export class RemoteGateway {
 
 function sendBootstrap(response: ServerResponse): void {
   const nonce = randomBytes(16).toString('base64url')
-  const body = `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Connecting</title><main id="status">Connecting...</main><script nonce="${nonce}">(()=>{const match=/^#\\/access\\/([A-Za-z0-9_-]{43})$/.exec(location.hash);const status=document.getElementById('status');if(!match){status.textContent='Invalid link.';return}fetch('${SESSION_PATH}',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:match[1]})}).then(response=>{if(!response.ok)throw new Error('denied');history.replaceState(null,'','/');location.replace('/')}).catch(()=>{status.textContent='Invalid link.'})})()</script>`
+  const body = `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Connecting</title><main id="status">Connecting...</main><script nonce="${nonce}">(()=>{const privateMatch=/^#\\/access\\/([A-Za-z0-9_-]{43})$/.exec(location.hash);const hostMatch=/^#dsh-host-launch=([A-Za-z0-9_-]{43})$/.exec(location.hash);const status=document.getElementById('status');const body=privateMatch?{token:privateMatch[1]}:hostMatch?{launchTicket:hostMatch[1]}:null;if(!body){status.textContent='Invalid link.';return}fetch('${SESSION_PATH}',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(response=>{if(!response.ok)throw new Error('denied');history.replaceState(null,'','/');location.replace('/')}).catch(()=>{status.textContent='Invalid link.'})})()</script>`
   send(response, 200, body, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` })
 }
 
@@ -207,7 +240,7 @@ function withoutRemoteCookie(headers: IncomingMessage['headers']): Record<string
     .map(([key, value]) => [key, Array.isArray(value) ? value.join(', ') : value]))
   const cookie = normalized.cookie
   if (cookie === undefined) return normalized
-  const kept = cookie.split(';').filter(part => !part.trim().startsWith(`${REMOTE_COOKIE}=`)).join(';').trim()
+  const kept = cookie.split(';').filter(part => !part.trim().startsWith(`${REMOTE_COOKIE}=`) && !part.trim().startsWith(`${HOST_COOKIE}=`)).join(';').trim()
   if (kept === '') delete normalized.cookie
   else normalized.cookie = kept
   return normalized
@@ -240,7 +273,29 @@ function mediaType(value: string | undefined): string | undefined {
 }
 
 function isTokenRequest(value: unknown): value is { token: string } {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) && typeof (value as { token?: unknown }).token === 'string'
+  return exactObject(value, ['token']) && typeof value.token === 'string'
+}
+
+function isLaunchRequest(value: unknown): value is { launchTicket: string } {
+  return exactObject(value, ['launchTicket']) && typeof value.launchTicket === 'string' && /^[A-Za-z0-9_-]{43}$/u.test(value.launchTicket)
+}
+
+function exactObject(value: unknown, keys: string[]): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key))
+}
+
+function cookieValue(header: string | undefined, name: string): string | undefined {
+  if (header === undefined) return undefined
+  for (const part of header.split(';')) {
+    const [key, ...rest] = part.trim().split('=')
+    if (key === name) return rest.join('=')
+  }
+  return undefined
+}
+
+function digest(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('base64url')
 }
 
 function isServerResponse(value: ServerResponse | Duplex): value is ServerResponse {

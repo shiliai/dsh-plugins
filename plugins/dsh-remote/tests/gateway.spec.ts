@@ -1,4 +1,5 @@
 import { createServer, type Server } from 'node:http'
+import { createServer as createNetServer, type Server as NetServer } from 'node:net'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,6 +13,7 @@ const servers: Server[] = []
 const gateways: RemoteGateway[] = []
 const webSocketServers: WebSocketServer[] = []
 const webSocketOrigins: Array<string | undefined> = []
+const agentServers: NetServer[] = []
 
 afterEach(async () => {
   await Promise.all(gateways.splice(0).map(gateway => gateway.close()))
@@ -22,11 +24,12 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map(server => new Promise<void>((resolve, reject) => {
     server.close(error => error === undefined ? resolve() : reject(error))
   })))
+  await Promise.all(agentServers.splice(0).map(server => new Promise<void>(resolve => { server.close(() => { resolve() }) })))
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
   webSocketOrigins.length = 0
 })
 
-async function fixture(): Promise<{ baseUrl: string; state: RemoteStateStore; gateway: RemoteGateway; upstreamOrigin: string }> {
+async function fixture(agentSocketPath?: string): Promise<{ baseUrl: string; state: RemoteStateStore; gateway: RemoteGateway; upstreamOrigin: string }> {
   const target = createServer((request, response) => {
     const body = JSON.stringify({ path: request.url, cookie: request.headers.cookie ?? null, origin: request.headers.origin ?? null })
     response.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) })
@@ -48,7 +51,10 @@ async function fixture(): Promise<{ baseUrl: string; state: RemoteStateStore; ga
   const root = await mkdtemp(join(tmpdir(), 'dsh-remote-gateway-'))
   roots.push(root)
   const state = await RemoteStateStore.open(join(root, 'state.json'))
-  const gateway = new RemoteGateway({ targetPort: address.port, remoteOrigin: 'https://zsh.onlyservice.io', state })
+  const gateway = new RemoteGateway({
+    targetPort: address.port, remoteOrigin: 'https://zsh.onlyservice.io', state,
+    ...(agentSocketPath === undefined ? {} : { agentSocketPath }),
+  })
   await gateway.listen()
   gateways.push(gateway)
   return { baseUrl: `http://127.0.0.1:${gateway.port}`, state, gateway, upstreamOrigin: `http://127.0.0.1:${address.port}` }
@@ -127,6 +133,51 @@ describe('RemoteGateway', () => {
     })).status).toBe(403)
     const replacement = await issueSession(baseUrl, state.accessToken())
     expect((await fetch(`${baseUrl}/after-rotation`, { headers: { cookie: replacement } })).status).toBe(200)
+  })
+
+  it('redeems a Host launch once through Agent IPC and keeps its session independent from private-link rotation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-remote-agent-ipc-'))
+    roots.push(root)
+    const socketPath = join(root, 'agent.sock')
+    let redemptions = 0
+    const agent = createNetServer(socket => {
+      socket.setEncoding('utf8')
+      socket.once('data', source => {
+		const request = JSON.parse(source.toString()) as { version?: unknown; operation?: unknown; payload?: { ticket?: unknown } }
+        redemptions++
+        if (redemptions === 1 && request.version === '1.0' && request.operation === 'launch.redeem' && request.payload?.ticket === 't'.repeat(43)) {
+          socket.end(`${JSON.stringify({ version: '1.0', ok: true, payload: { session_grant: 'g'.repeat(43), roles: ['owner'] } })}\n`)
+        } else {
+          socket.end(`${JSON.stringify({ version: '1.0', ok: false, error: 'unauthorized' })}\n`)
+        }
+      })
+    })
+    agentServers.push(agent)
+    await new Promise<void>((resolve, reject) => { agent.once('error', reject); agent.listen(socketPath, resolve) })
+    const { baseUrl, state } = await fixture(socketPath)
+
+    const bootstrap = await fetch(`${baseUrl}/`)
+    expect(await bootstrap.text()).toContain('dsh-host-launch')
+    const launched = await fetch(`${baseUrl}/__dsh_remote/session`, {
+      method: 'POST',
+      headers: { origin: 'https://zsh.onlyservice.io', 'content-type': 'application/json' },
+      body: JSON.stringify({ launchTicket: 't'.repeat(43) }),
+    })
+    expect(launched.status).toBe(204)
+    const cookie = launched.headers.getSetCookie()[0]?.split(';', 1)[0]
+    expect(cookie).toBe(`__Host-dsh_remote_host=${'g'.repeat(43)}`)
+    const privateState = await state.rotate()
+    expect(privateState.sessionVersion).toBe(2)
+    const proxied = await fetch(`${baseUrl}/host-session`, { headers: { cookie: `${cookie}; dsh=preserved` } })
+    expect(proxied.status).toBe(200)
+    expect((await proxied.json()).cookie).toBe('dsh=preserved')
+
+    const replay = await fetch(`${baseUrl}/__dsh_remote/session`, {
+      method: 'POST',
+      headers: { origin: 'https://zsh.onlyservice.io', 'content-type': 'application/json' },
+      body: JSON.stringify({ launchTicket: 't'.repeat(43) }),
+    })
+    expect(replay.status).toBe(403)
   })
 })
 

@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/dsh-remote",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "description": "Private remote-access gateway for DeepSeek Harness",
   "license": "MIT",
   "repository": {
