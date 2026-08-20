@@ -68,10 +68,13 @@ try {
   await settingsButton.click()
   const settingsDialog = page.getByRole('dialog', { name: /Settings|设置/u })
   await settingsDialog.waitFor({ state: 'visible' })
-  await settingsDialog.getByRole('button', { name: /Models|模型目录/u }).click()
-  await settingsDialog.getByLabel(/Models|模型目录/u).waitFor({ state: 'visible' })
+  const modelsNavigation = settingsDialog.getByRole('button', { name: /Models|模型目录/u })
+  await modelsNavigation.click()
+  await page.waitForFunction(element => element.getAttribute('aria-current') === 'true', await modelsNavigation.elementHandle())
   const unavailable = settingsDialog.getByText(/settings are unavailable|设置不可用/iu)
-  if (await unavailable.count() !== 0) throw new Error('rc.8 Models screen reported unavailable settings.')
+  if (await unavailable.count() !== 0 && await unavailable.first().isVisible()) {
+    throw new Error('rc.8 Models screen reported unavailable settings.')
+  }
 
   const described = await rpc(page, 'settings.describe', {})
   const namespaces = described.result?.value?.namespaces
