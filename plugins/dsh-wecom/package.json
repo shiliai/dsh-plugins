@@ -1,0 +1,73 @@
+{
+  "name": "@dsh-plugins/dsh-wecom",
+  "version": "0.1.0",
+  "description": "WeCom smart-robot long-connection bridge into DeepSeek Harness: resident WebSocket bot on a DSH agent session with conversation memory",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shiliai/dsh-plugins.git",
+    "directory": "plugins/dsh-wecom"
+  },
+  "homepage": "https://github.com/shiliai/dsh-plugins/tree/main/plugins/dsh-wecom#readme",
+  "bugs": "https://github.com/shiliai/dsh-plugins/issues",
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsdown && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "pnpm run typecheck && pnpm run test && pnpm run build",
+    "pack:check": "pnpm run build && node scripts/verify-pack.mjs",
+    "release:check": "pnpm run check && pnpm run pack:check",
+    "prepare": "pnpm run build",
+    "prepack": "pnpm run build"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0",
+    "@deepseek-ai/dsh-agent": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-agent-presets": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-session": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.6"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": { "optional": true },
+    "@deepseek-ai/dsh-agent": { "optional": true },
+    "@deepseek-ai/dsh-agent-presets": { "optional": true },
+    "@deepseek-ai/dsh-llm": { "optional": true },
+    "@deepseek-ai/dsh-session": { "optional": true },
+    "@deepseek-ai/dsh-tools": { "optional": true }
+  },
+  "dependencies": {
+    "@wecom/aibot-node-sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh": "0.1.0-rc.6",
+    "@types/node": "^24.0.0",
+    "tsdown": "^0.15.6",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

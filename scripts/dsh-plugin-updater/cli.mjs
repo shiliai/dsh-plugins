@@ -7,6 +7,7 @@ import { join } from 'node:path'
 const plugins = [
   { name: '@dsh-plugins/dsh-obsidian', directory: 'plugins/dsh-obsidian' },
   { name: '@dsh-plugins/dsh-remote', directory: 'plugins/dsh-remote' },
+  { name: '@dsh-plugins/dsh-wecom', directory: 'plugins/dsh-wecom' },
 ]
 const manifestBase = process.env.DSH_PLUGIN_UPDATE_MANIFEST_BASE
   ?? 'https://api.github.com/repos/shiliai/dsh-plugins/contents'

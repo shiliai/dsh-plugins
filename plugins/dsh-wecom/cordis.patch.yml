@@ -1,0 +1,12 @@
+# dsh-wecom: credentials and allowlists are intentionally configured by users.
+- insert:
+    - id: dsh-wecom
+      name: '@dsh-plugins/dsh-wecom'
+      inject: [tools, agents, agentDefaultModel, agentPresets, sessions]
+      config:
+        botId: !!js process.env.WECOM_BOT_ID ?? ''
+        botSecret: !!js process.env.WECOM_BOT_SECRET ?? ''
+        # Empty allowlists deny access. See README for explicit identities.
+        allowChats: []
+        allowGroupSenders: []
+        outboundAllowChats: []

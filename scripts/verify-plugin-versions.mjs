@@ -11,6 +11,10 @@ const plugins = [
     directory: 'plugins/dsh-remote',
     packageName: '@dsh-plugins/dsh-remote',
   },
+  {
+    directory: 'plugins/dsh-wecom',
+    packageName: '@dsh-plugins/dsh-wecom',
+  },
 ]
 
 const semver = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
