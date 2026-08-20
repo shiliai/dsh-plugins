@@ -9,7 +9,29 @@ import { REMOTE_COOKIE, RemoteStateStore } from './state-store.ts'
 const SESSION_PATH = '/__dsh_remote/session'
 const LAUNCH_PATH = '/__dsh_remote/launch'
 const HOST_COOKIE = '__Host-dsh_remote_host'
+const HOST_UI_COOKIE = '__Host-dsh_remote_owner_ui'
 const KEEP_ALIVE_TIMEOUT_MS = 60_000
+const HOST_SESSION_TTL_MS = 8 * 60 * 60 * 1000
+const OWNER_CONFIGURATION_METHODS = new Set([
+  'settings.describe',
+  'settings.openDocument',
+  'settings.update',
+  'settings.replace',
+  'settings.mutate',
+  'credentials.describe',
+  'credentials.set',
+  'credentials.unset',
+  'llm.discoverModels',
+])
+const LOOPBACK_ONLY_METHODS = new Set([
+  ...OWNER_CONFIGURATION_METHODS,
+  'agentPreset.read',
+  'agentPreset.copy',
+  'agentPreset.openDocument',
+  'agentPreset.remove',
+  'host.pickDirectory',
+  'host.openPath',
+])
 const SECURITY_HEADERS: OutgoingHttpHeaders = {
   'Cache-Control': 'no-store',
   'Referrer-Policy': 'no-referrer',
@@ -24,14 +46,20 @@ export interface RemoteGatewayOptions {
   host?: '127.0.0.1'
   port?: number
   agentSocketPath?: string
+  now?: () => number
+  hostSessionTtlMs?: number
 }
+
+type AuthenticatedSession =
+  | { kind: 'private'; socketKey: string }
+  | { kind: 'owner'; socketKey: string }
 
 export class RemoteGateway {
   private readonly server: Server
   private readonly proxy = httpProxy.createProxyServer({ changeOrigin: true, ws: true, xfwd: false })
-  private readonly upgradedSockets = new Map<number, Set<Duplex>>()
+  private readonly upgradedSockets = new Map<string, Set<Duplex>>()
   private readonly connections = new Set<Socket>()
-  private readonly hostSessions = new Map<string, number>()
+  private hostSession: { key: string; expiresAt: number } | undefined
   private boundPort: number | undefined
 
   constructor(private readonly options: RemoteGatewayOptions) {
@@ -93,14 +121,15 @@ export class RemoteGateway {
   }
 
   closeSessionsBefore(version: number): void {
-    for (const [socketVersion, sockets] of this.upgradedSockets) {
-      if (socketVersion >= version) continue
-      this.upgradedSockets.delete(socketVersion)
+    for (const [socketKey, sockets] of this.upgradedSockets) {
+      if (!socketKey.startsWith('private:') || Number(socketKey.slice(8)) >= version) continue
+      this.upgradedSockets.delete(socketKey)
       for (const socket of sockets) socket.destroy()
     }
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    stripCallerMarkers(request.headers)
     const path = new URL(request.url ?? '/', 'http://gateway.local').pathname
     if (path === SESSION_PATH) {
       await this.handleSession(request, response)
@@ -111,12 +140,12 @@ export class RemoteGateway {
       else send(response, 405, 'Method not allowed.', { Allow: 'GET' })
       return
     }
-    const sessionVersion = this.authenticate(request.headers.cookie)
-    if (path === '/' && request.method === 'GET' && sessionVersion === null) {
+    const session = this.authenticate(request.headers.cookie)
+    if (path === '/' && request.method === 'GET' && session === null) {
       sendBootstrap(response)
       return
     }
-    if (sessionVersion === null) {
+    if (session === null) {
       send(response, 401, 'Access denied.')
       return
     }
@@ -124,9 +153,15 @@ export class RemoteGateway {
       send(response, 403, 'Access denied.')
       return
     }
+    const loopbackOnly = rpcMethod(path, LOOPBACK_ONLY_METHODS)
+    const ownerConfiguration = rpcMethod(path, OWNER_CONFIGURATION_METHODS) && session.kind === 'owner'
+    if (loopbackOnly && !ownerConfiguration) {
+      send(response, 403, 'Access denied.')
+      return
+    }
     this.proxy.web(request, response, {
       target: this.target(),
-      headers: upstreamHeaders(request.headers, this.target()),
+      headers: upstreamHeaders(request.headers, this.target(), ownerConfiguration),
     })
   }
 
@@ -144,17 +179,26 @@ export class RemoteGateway {
       return
     }
     const body = await readJson(request, 1024)
-    let cookie: string
-    let maxAge: number
+    let cookies: string[]
     if (isTokenRequest(body) && this.options.state.verifyBearer(body.token)) {
-      cookie = `${REMOTE_COOKIE}=${this.options.state.sessionCookie()}`
-      maxAge = 31_536_000
+      cookies = [
+        cookieHeader(REMOTE_COOKIE, this.options.state.sessionCookie(), 31_536_000),
+        clearCookie(HOST_COOKIE),
+        clearCookie(HOST_UI_COOKIE, false),
+      ]
     } else if (isLaunchRequest(body) && this.options.agentSocketPath !== undefined) {
       try {
         const result = await redeemLaunch(this.options.agentSocketPath, body.launchTicket)
-        this.hostSessions.set(digest(result.sessionGrant), Date.now() + 8 * 60 * 60 * 1000)
-        cookie = `${HOST_COOKIE}=${result.sessionGrant}`
-        maxAge = 28_800
+        this.revokeHostSession()
+        this.hostSession = {
+          key: digest(result.sessionGrant),
+          expiresAt: this.now() + (this.options.hostSessionTtlMs ?? HOST_SESSION_TTL_MS),
+        }
+        cookies = [
+          cookieHeader(HOST_COOKIE, result.sessionGrant, 28_800),
+          cookieHeader(HOST_UI_COOKIE, '1', 28_800, false),
+          clearCookie(REMOTE_COOKIE),
+        ]
       } catch {
         send(response, 403, 'Access denied.')
         return
@@ -165,29 +209,30 @@ export class RemoteGateway {
     }
     response.writeHead(204, {
       ...SECURITY_HEADERS,
-      'Set-Cookie': `${cookie}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${maxAge}`,
+      'Set-Cookie': cookies,
     })
     response.end()
   }
 
   private handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
-    const version = this.authenticate(request.headers.cookie)
-    if (version === null || request.headers.origin !== this.options.remoteOrigin) {
-      rejectUpgrade(socket, version === null ? 401 : 403)
+    stripCallerMarkers(request.headers)
+    const session = this.authenticate(request.headers.cookie)
+    if (session === null || request.headers.origin !== this.options.remoteOrigin) {
+      rejectUpgrade(socket, session === null ? 401 : 403)
       return
     }
-    const sockets = this.upgradedSockets.get(version) ?? new Set<Duplex>()
+    const sockets = this.upgradedSockets.get(session.socketKey) ?? new Set<Duplex>()
     sockets.add(socket)
-    this.upgradedSockets.set(version, sockets)
+    this.upgradedSockets.set(session.socketKey, sockets)
     const release = (): void => {
       sockets.delete(socket)
-      if (sockets.size === 0) this.upgradedSockets.delete(version)
+      if (sockets.size === 0) this.upgradedSockets.delete(session.socketKey)
     }
     socket.once('close', release)
     try {
       this.proxy.ws(request, socket, head, {
         target: this.target(),
-        headers: upstreamHeaders(request.headers, this.target()),
+        headers: upstreamHeaders(request.headers, this.target(), false),
       })
     } catch {
       release()
@@ -195,18 +240,31 @@ export class RemoteGateway {
     }
   }
 
-  private authenticate(header: string | undefined): number | null {
-    const privateVersion = this.options.state.authenticateCookie(header)
-    if (privateVersion !== null) return privateVersion
+  private authenticate(header: string | undefined): AuthenticatedSession | null {
     const grant = cookieValue(header, HOST_COOKIE)
-    if (grant === undefined || !/^[A-Za-z0-9_-]{43}$/u.test(grant)) return null
-    const key = digest(grant)
-    const expiry = this.hostSessions.get(key)
-    if (expiry === undefined || expiry <= Date.now()) {
-      this.hostSessions.delete(key)
-      return null
+    if (grant !== undefined && /^[A-Za-z0-9_-]{43}$/u.test(grant)) {
+      const key = digest(grant)
+      if (this.hostSession?.key === key && this.hostSession.expiresAt > this.now()) {
+        return { kind: 'owner', socketKey: `owner:${key}` }
+      }
+      if (this.hostSession?.key === key) this.revokeHostSession(key)
     }
-    return Number.MAX_SAFE_INTEGER
+    const privateVersion = this.options.state.authenticateCookie(header)
+    if (privateVersion !== null) return { kind: 'private', socketKey: `private:${privateVersion}` }
+    return null
+  }
+
+  private revokeHostSession(key = this.hostSession?.key): void {
+    if (key === undefined) return
+    if (this.hostSession?.key === key) this.hostSession = undefined
+    const socketKey = `owner:${key}`
+    const sockets = this.upgradedSockets.get(socketKey)
+    this.upgradedSockets.delete(socketKey)
+    for (const socket of sockets ?? []) socket.destroy()
+  }
+
+  private now(): number {
+    return this.options.now?.() ?? Date.now()
   }
 
   private target(): string {
@@ -242,20 +300,45 @@ function rejectUpgrade(socket: Duplex, status: number): void {
 
 function withoutRemoteCookie(headers: IncomingMessage['headers']): Record<string, string> {
   const normalized = Object.fromEntries(Object.entries(headers)
+    .filter(([key]) => !key.startsWith('x-dsh-remote-'))
     .filter((entry): entry is [string, string | string[]] => entry[1] !== undefined)
     .map(([key, value]) => [key, Array.isArray(value) ? value.join(', ') : value]))
   const cookie = normalized.cookie
   if (cookie === undefined) return normalized
-  const kept = cookie.split(';').filter(part => !part.trim().startsWith(`${REMOTE_COOKIE}=`) && !part.trim().startsWith(`${HOST_COOKIE}=`)).join(';').trim()
+  const kept = cookie.split(';').filter(part => {
+    const value = part.trim()
+    return !value.startsWith(`${REMOTE_COOKIE}=`)
+      && !value.startsWith(`${HOST_COOKIE}=`)
+      && !value.startsWith(`${HOST_UI_COOKIE}=`)
+  }).join(';').trim()
   if (kept === '') delete normalized.cookie
   else normalized.cookie = kept
   return normalized
 }
 
-function upstreamHeaders(headers: IncomingMessage['headers'], target: string): Record<string, string> {
+function stripCallerMarkers(headers: IncomingMessage['headers']): void {
+  for (const key of Object.keys(headers)) {
+    if (key.startsWith('x-dsh-remote-')) delete headers[key]
+  }
+}
+
+function upstreamHeaders(headers: IncomingMessage['headers'], target: string, owner: boolean): Record<string, string> {
   const normalized = withoutRemoteCookie(headers)
   if (normalized.origin !== undefined) normalized.origin = target
+  if (owner) normalized.host = new URL(target).host
   return normalized
+}
+
+function rpcMethod(path: string, methods: ReadonlySet<string>): boolean {
+  return path.startsWith('/api/') && methods.has(path.slice(5))
+}
+
+function cookieHeader(name: string, value: string, maxAge: number, httpOnly = true): string {
+  return `${name}=${value}; Path=/; Secure; ${httpOnly ? 'HttpOnly; ' : ''}SameSite=Strict; Max-Age=${maxAge}`
+}
+
+function clearCookie(name: string, httpOnly = true): string {
+  return cookieHeader(name, '', 0, httpOnly)
 }
 
 async function readJson(request: IncomingMessage, limit: number): Promise<unknown> {

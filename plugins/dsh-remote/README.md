@@ -55,6 +55,22 @@ failure before rename preserves the old link; a failure after rename reports the
 already committed replacement. Successful rotation closes earlier authenticated
 WebSockets before reporting success.
 
+## Remote Host Owner Launch
+
+A Remote Host owner launch exchanges its one-time ticket through Agent IPC for
+one expiring, HTTP-only owner grant. A fresh launch revokes the previous grant
+and closes its upgraded connections. The grant expires after eight hours and is
+validated on every HTTP request and WebSocket reconnect.
+
+Only a live owner grant can proxy the remote configuration methods
+`settings.*`, `credentials.*`, and `llm.discoverModels` with loopback authority.
+Ordinary private-link sessions remain denied for those methods and every other
+loopback-only RPC. Caller-supplied `x-dsh-remote-*` headers are removed before
+proxying. A separate readable owner UI cookie lets the DSH rc.8 Settings mirror
+request its redacted configuration view; it is only a display hint and is never
+accepted as authorization by the gateway. No grant or credential value is
+written to a URL, browser-readable storage, response body, or log.
+
 ## Edge Operations
 
 The packaged `dsh-remote-edge` command ships the setup assets and invokes only
