@@ -7,8 +7,12 @@ proxied HTTP request and WebSocket upgrade.
 
 ## Install
 
-The package targets DSH `0.1.0-rc.6` exactly. Add the packed archive or published
-package to the DSH Web profile, then use the supplied `cordis.patch.yml` entry.
+The package supports DSH prereleases from `0.1.0-rc.6` through the remaining
+`0.1.0` prerelease line. Release checks use rc.6 as the minimum compatibility
+fixture; Remote Host owner launches additionally use the shared Settings mirror
+introduced in rc.8 when that service is available. Add the packed archive or
+published package to the DSH Web profile, then use the supplied
+`cordis.patch.yml` entry.
 The patch reads these nonsecret test and deployment overrides at runtime:
 
 ```sh

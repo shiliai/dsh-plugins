@@ -137,12 +137,15 @@ describe('RemoteGateway', () => {
   it('authenticates each WebSocket upgrade and closes every old upgraded socket before rotation returns', async () => {
     const { baseUrl, state, gateway, upstreamOrigin } = await fixture()
     const cookie = await issueSession(baseUrl, state.accessToken())
-    await expectRejectedUpgrade(new WebSocket(baseUrl.replace('http:', 'ws:'), {
+    await expectRejectedUpgrade(new WebSocket(`${baseUrl.replace('http:', 'ws:')}/api/events.mux`, {
       headers: { cookie }, origin: 'https://evil.onlyservice.io',
     }), 403)
-    await expectRejectedUpgrade(new WebSocket(baseUrl.replace('http:', 'ws:'), { headers: { cookie } }), 403)
+    await expectRejectedUpgrade(new WebSocket(`${baseUrl.replace('http:', 'ws:')}/api/events.mux`, { headers: { cookie } }), 403)
     expect(webSocketRequests).toHaveLength(0)
-    const socket = new WebSocket(baseUrl.replace('http:', 'ws:'), { headers: { cookie }, origin: 'https://zsh.onlyservice.io' })
+    await expectRejectedUpgrade(new WebSocket(`${baseUrl.replace('http:', 'ws:')}/api/settings.describe`, {
+      headers: { cookie }, origin: 'https://zsh.onlyservice.io',
+    }), 403)
+    const socket = new WebSocket(`${baseUrl.replace('http:', 'ws:')}/api/events.mux`, { headers: { cookie }, origin: 'https://zsh.onlyservice.io' })
     await once(socket, 'open')
     expect(webSocketRequests.at(-1)).toEqual({ origin: upstreamOrigin, host: new URL(upstreamOrigin).host })
     socket.send('realtime')
@@ -217,11 +220,14 @@ describe('RemoteGateway', () => {
     }
     expect((await fetch(`${baseUrl}/reload`, { headers: { cookie } })).status).toBe(200)
     expect((await fetch(`${baseUrl}/reload`, { headers: { cookie } })).status).toBe(200)
-    const firstSocket = new WebSocket(baseUrl.replace('http:', 'ws:'), { headers: { cookie }, origin: 'https://zsh.onlyservice.io' })
+    await expectRejectedUpgrade(new WebSocket(`${baseUrl.replace('http:', 'ws:')}/api/agentPreset.read`, {
+      headers: { cookie }, origin: 'https://zsh.onlyservice.io',
+    }), 403)
+    const firstSocket = new WebSocket(`${baseUrl.replace('http:', 'ws:')}/api/events.host`, { headers: { cookie }, origin: 'https://zsh.onlyservice.io' })
     await once(firstSocket, 'open')
     firstSocket.close()
     await once(firstSocket, 'close')
-    const reconnect = new WebSocket(baseUrl.replace('http:', 'ws:'), { headers: { cookie }, origin: 'https://zsh.onlyservice.io' })
+    const reconnect = new WebSocket(`${baseUrl.replace('http:', 'ws:')}/api/events.host`, { headers: { cookie }, origin: 'https://zsh.onlyservice.io' })
     await once(reconnect, 'open')
     reconnect.close()
     await once(reconnect, 'close')

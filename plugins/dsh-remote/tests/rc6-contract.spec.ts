@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { inject, name } from '../src/index.ts'
 
 describe('DSH rc.6 package contract', () => {
-  it('pins the supported host and client peer surface to exactly rc.6', async () => {
+  it('supports the rc.6 minimum through later 0.1.0 prereleases', async () => {
     const source = await readFile(resolve(import.meta.dirname, '../package.json'), 'utf8')
     const patch = await readFile(resolve(import.meta.dirname, '../cordis.patch.yml'), 'utf8')
     const manifest = JSON.parse(source) as { peerDependencies: Record<string, string>; peerDependenciesMeta: Record<string, { optional?: boolean }>; devDependencies: Record<string, string>; files: string[]; bin: Record<string, string>; scripts: Record<string, string> }
@@ -17,7 +17,7 @@ describe('DSH rc.6 package contract', () => {
       '@deepseek-ai/dsh-host-webserver',
       '@deepseek-ai/dsh-host-directory-picker-browse',
     ]) {
-      expect(manifest.peerDependencies[dependency]).toBe('0.1.0-rc.6')
+      expect(manifest.peerDependencies[dependency]).toBe('>=0.1.0-rc.6 <0.1.0')
     }
     expect(manifest.peerDependenciesMeta['@deepseek-ai/dsh-host-directory-picker-browse']?.optional).toBe(true)
     expect(manifest.peerDependenciesMeta['@deepseek-ai/dsh-client-ui-directory-picker-browse']?.optional).toBe(true)

@@ -12,6 +12,7 @@ const HOST_COOKIE = '__Host-dsh_remote_host'
 const HOST_UI_COOKIE = '__Host-dsh_remote_owner_ui'
 const KEEP_ALIVE_TIMEOUT_MS = 60_000
 const HOST_SESSION_TTL_MS = 8 * 60 * 60 * 1000
+const ALLOWED_UPGRADE_PATHS = new Set(['/api/events.mux', '/api/events.host'])
 const OWNER_CONFIGURATION_METHODS = new Set([
   'settings.describe',
   'settings.openDocument',
@@ -219,6 +220,11 @@ export class RemoteGateway {
     const session = this.authenticate(request.headers.cookie)
     if (session === null || request.headers.origin !== this.options.remoteOrigin) {
       rejectUpgrade(socket, session === null ? 401 : 403)
+      return
+    }
+    const path = new URL(request.url ?? '/', 'http://gateway.local').pathname
+    if (!ALLOWED_UPGRADE_PATHS.has(path)) {
+      rejectUpgrade(socket, 403)
       return
     }
     const sockets = this.upgradedSockets.get(session.socketKey) ?? new Set<Duplex>()
