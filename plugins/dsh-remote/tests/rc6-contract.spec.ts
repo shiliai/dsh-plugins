@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { inject, name } from '../src/index.ts'
 
 describe('DSH rc.6 package contract', () => {
-  it('pins the supported host and client peer surface to exactly rc.6', async () => {
+  it('supports the audited rc.6 through rc.8 range', async () => {
     const source = await readFile(resolve(import.meta.dirname, '../package.json'), 'utf8')
     const patch = await readFile(resolve(import.meta.dirname, '../cordis.patch.yml'), 'utf8')
     const manifest = JSON.parse(source) as { peerDependencies: Record<string, string>; peerDependenciesMeta: Record<string, { optional?: boolean }>; devDependencies: Record<string, string>; files: string[]; bin: Record<string, string>; scripts: Record<string, string> }
@@ -17,7 +17,7 @@ describe('DSH rc.6 package contract', () => {
       '@deepseek-ai/dsh-host-webserver',
       '@deepseek-ai/dsh-host-directory-picker-browse',
     ]) {
-      expect(manifest.peerDependencies[dependency]).toBe('0.1.0-rc.6')
+      expect(manifest.peerDependencies[dependency]).toBe('>=0.1.0-rc.6 <0.1.0-rc.9')
     }
     expect(manifest.peerDependenciesMeta['@deepseek-ai/dsh-host-directory-picker-browse']?.optional).toBe(true)
     expect(manifest.peerDependenciesMeta['@deepseek-ai/dsh-client-ui-directory-picker-browse']?.optional).toBe(true)
@@ -26,6 +26,8 @@ describe('DSH rc.6 package contract', () => {
     expect(manifest.bin['dsh-remote-install-node']).toBe('./scripts/install-dsh-remote-instance.sh')
     expect(manifest.files).toEqual(expect.arrayContaining(['scripts/', 'templates/', 'docs/operations/vps-edge.md']))
     expect(manifest.scripts['e2e:rc6']).toBe('node tests/e2e/run-rc6-fixture-e2e.mjs')
+    expect(manifest.scripts['e2e:rc8']).toBe('node tests/e2e/run-rc8-owner-e2e.mjs')
+    expect(manifest.scripts['release:check']).toContain('pnpm run e2e:rc8')
     expect(patch).toContain("remoteSocketPath: '/home/chriswang/.local/share/dsh-remote/tunnel.sock'")
     expect(patch).toContain('DSH_REMOTE_INSTANCE_ID')
     expect(patch).toContain('DSH_REMOTE_BASE_DOMAIN')
