@@ -185,7 +185,7 @@ describe('RemoteGateway', () => {
     agentServers.push(agent)
     await new Promise<void>((resolve, reject) => { agent.once('error', reject); agent.listen(socketPath, resolve) })
     let now = 1_000
-    const { baseUrl, state, upstreamOrigin } = await fixture(socketPath, { now: () => now, hostSessionTtlMs: 100 })
+    const { baseUrl, state, upstreamOrigin } = await fixture(socketPath, { now: () => now, hostSessionTtlMs: 60_000 })
 
     const bootstrap = await fetch(`${baseUrl}/`)
     expect(await bootstrap.text()).toContain('dsh-host-launch')
@@ -243,7 +243,7 @@ describe('RemoteGateway', () => {
     })
     expect(replay.status).toBe(403)
     expect((await fetch(`${baseUrl}/malformed`, { headers: { cookie: '__Host-dsh_remote_host=not-a-grant' } })).status).toBe(401)
-    now += 101
+    now += 60_001
     expect((await fetch(`${baseUrl}/expired`, { headers: { cookie } })).status).toBe(401)
   })
 
