@@ -7,10 +7,9 @@ proxied HTTP request and WebSocket upgrade.
 
 ## Install
 
-The package supports DSH prereleases from `0.1.0-rc.6` through the remaining
-`0.1.0` prerelease line. Release checks use rc.6 as the minimum compatibility
-fixture; Remote Host owner launches additionally use the shared Settings mirror
-introduced in rc.8 when that service is available. Add the packed archive or
+The package supports DSH prereleases from `0.1.0-rc.6` through `0.1.0-rc.8`.
+Release checks use rc.6 as the minimum compatibility fixture and rc.8 for the
+Remote Host owner Settings mirror. Add the packed archive or
 published package to the DSH Web profile, then use the supplied
 `cordis.patch.yml` entry.
 The patch reads these nonsecret test and deployment overrides at runtime:
@@ -63,8 +62,9 @@ WebSockets before reporting success.
 
 A Remote Host owner launch exchanges its one-time ticket through Agent IPC for
 one expiring, HTTP-only owner grant. A fresh launch revokes the previous grant
-and closes its upgraded connections. The grant expires after eight hours and is
-validated on every HTTP request and WebSocket reconnect.
+and closes its upgraded connections. The grant expires after eight hours,
+closes its active WebSockets at the expiry deadline, and is validated on every
+HTTP request and WebSocket reconnect.
 
 Only a live owner grant can proxy the remote configuration methods
 `settings.*`, `credentials.*`, and `llm.discoverModels` with loopback authority.
@@ -173,6 +173,21 @@ dsh plugin --profile web --config.dlx-cache-max-age=0 dlx \
 Restart the Web profile after updating. This replaces only the profile plugin
 package; it does not deploy or modify a VPS edge.
 
+For a multi-node release, update one node at a time in the order Mac, x570, then
+shilidev. Before each update, retain the currently installed package archive and
+record the plugin version and service state. After restarting only that node's
+DSH service, require all of the following before continuing: version `0.2.1`,
+healthy public HTTP, a fresh owner launch that loads Settings -> Models through
+reload and reconnect, ordinary private-link configuration denial, and unchanged
+health on nodes not yet updated.
+
+If a node fails a gate, stop the rollout. Restore its retained `0.2.0` archive
+through `dsh plugin` (never by editing the profile manifest or lockfile), restart
+only that node's DSH service, and verify the prior version, public HTTP health,
+owner launch, and private-link denial before leaving the other nodes untouched.
+The retained archive must be an immutable local path recorded before rollout;
+do not rely on a GitHub downgrade, because the updater rejects a lower version.
+
 `preflight` is read-only. `apply` is backup-first and stops before activation on a
 failed validation. Nginx streams request and response bodies without proxy
 buffering. Hub `status` verifies one registry/routes generation and reports each
@@ -196,7 +211,8 @@ registered instance IDs and `online`, `offline`, `insecure`, or `missing`.
 
 ## Recovery
 
-For a local failure, remove the plugin from the DSH Web profile and restart DSH;
-the state file can remain in place to preserve the current private link. For an
-edge failure, use the matching rollback receipt. No operation changes unrelated
+For a local release failure, use the retained prior archive procedure above so
+remote access remains installed; the state file can remain in place to preserve
+the current private link. For an edge failure, use the matching rollback receipt.
+No operation changes unrelated
 sites, containers, certificates, DNS records, firewall rules, or DSH data.

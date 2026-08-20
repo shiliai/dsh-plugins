@@ -61,6 +61,7 @@ export class RemoteGateway {
   private readonly upgradedSockets = new Map<string, Set<Duplex>>()
   private readonly connections = new Set<Socket>()
   private hostSession: { key: string; expiresAt: number } | undefined
+  private hostSessionExpiryTimer: NodeJS.Timeout | undefined
   private boundPort: number | undefined
 
   constructor(private readonly options: RemoteGatewayOptions) {
@@ -109,6 +110,8 @@ export class RemoteGateway {
   }
 
   async close(): Promise<void> {
+    if (this.hostSessionExpiryTimer !== undefined) clearTimeout(this.hostSessionExpiryTimer)
+    this.hostSessionExpiryTimer = undefined
     for (const sockets of this.upgradedSockets.values()) {
       for (const socket of sockets) socket.destroy()
     }
@@ -191,10 +194,12 @@ export class RemoteGateway {
       try {
         const result = await redeemLaunch(this.options.agentSocketPath, body.launchTicket)
         this.revokeHostSession()
-        this.hostSession = {
+        const hostSession = {
           key: digest(result.sessionGrant),
           expiresAt: this.now() + (this.options.hostSessionTtlMs ?? HOST_SESSION_TTL_MS),
         }
+        this.hostSession = hostSession
+        this.scheduleHostSessionExpiry(hostSession)
         cookies = [
           cookieHeader(HOST_COOKIE, result.sessionGrant, 28_800),
           cookieHeader(HOST_UI_COOKIE, '1', 28_800, false),
@@ -262,11 +267,26 @@ export class RemoteGateway {
 
   private revokeHostSession(key = this.hostSession?.key): void {
     if (key === undefined) return
-    if (this.hostSession?.key === key) this.hostSession = undefined
+    if (this.hostSession?.key === key) {
+      this.hostSession = undefined
+      if (this.hostSessionExpiryTimer !== undefined) clearTimeout(this.hostSessionExpiryTimer)
+      this.hostSessionExpiryTimer = undefined
+    }
     const socketKey = `owner:${key}`
     const sockets = this.upgradedSockets.get(socketKey)
     this.upgradedSockets.delete(socketKey)
     for (const socket of sockets ?? []) socket.destroy()
+  }
+
+  private scheduleHostSessionExpiry(session: { key: string; expiresAt: number }): void {
+    if (this.hostSessionExpiryTimer !== undefined) clearTimeout(this.hostSessionExpiryTimer)
+    const timer = setTimeout(() => {
+      if (this.hostSession?.key === session.key && this.hostSession.expiresAt === session.expiresAt) {
+        this.revokeHostSession(session.key)
+      }
+    }, Math.max(0, session.expiresAt - this.now()))
+    timer.unref()
+    this.hostSessionExpiryTimer = timer
   }
 
   private now(): number {
@@ -317,8 +337,7 @@ function withoutRemoteCookie(headers: IncomingMessage['headers']): Record<string
       && !value.startsWith(`${HOST_COOKIE}=`)
       && !value.startsWith(`${HOST_UI_COOKIE}=`)
   }).join(';').trim()
-  if (kept === '') delete normalized.cookie
-  else normalized.cookie = kept
+  normalized.cookie = kept
   return normalized
 }
 

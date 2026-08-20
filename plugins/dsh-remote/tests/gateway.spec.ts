@@ -12,7 +12,7 @@ const roots: string[] = []
 const servers: Server[] = []
 const gateways: RemoteGateway[] = []
 const webSocketServers: WebSocketServer[] = []
-const webSocketRequests: Array<{ origin: string | undefined; host: string | undefined }> = []
+const webSocketRequests: Array<{ origin: string | undefined; host: string | undefined; cookie: string | null }> = []
 const agentServers: NetServer[] = []
 
 afterEach(async () => {
@@ -48,7 +48,7 @@ async function fixture(
   webSocketServers.push(webSocketServer)
   target.on('upgrade', (request, socket, head) => {
     webSocketServer.handleUpgrade(request, socket, head, connection => {
-      webSocketRequests.push({ origin: request.headers.origin, host: request.headers.host })
+      webSocketRequests.push({ origin: request.headers.origin, host: request.headers.host, cookie: request.headers.cookie ?? null })
       connection.on('message', message => { connection.send(message) })
     })
   })
@@ -147,7 +147,7 @@ describe('RemoteGateway', () => {
     }), 403)
     const socket = new WebSocket(`${baseUrl.replace('http:', 'ws:')}/api/events.mux`, { headers: { cookie }, origin: 'https://zsh.onlyservice.io' })
     await once(socket, 'open')
-    expect(webSocketRequests.at(-1)).toEqual({ origin: upstreamOrigin, host: new URL(upstreamOrigin).host })
+    expect(webSocketRequests.at(-1)).toEqual({ origin: upstreamOrigin, host: new URL(upstreamOrigin).host, cookie: '' })
     socket.send('realtime')
     await expectMessage(socket, 'realtime')
 
@@ -211,7 +211,7 @@ describe('RemoteGateway', () => {
         method: 'POST', headers: { cookie, origin: 'https://zsh.onlyservice.io', 'x-dsh-remote-owner': 'ignored' },
       })
       expect(allowed.status, method).toBe(200)
-      expect(await allowed.json()).toMatchObject({ host: new URL(upstreamOrigin).host, origin: upstreamOrigin, ownerMarker: null })
+      expect(await allowed.json()).toMatchObject({ cookie: '', host: new URL(upstreamOrigin).host, origin: upstreamOrigin, ownerMarker: null })
     }
     for (const method of NON_CONFIGURATION_LOOPBACK_METHODS) {
       expect((await fetch(`${baseUrl}/api/${method}`, {
@@ -269,6 +269,30 @@ describe('RemoteGateway', () => {
     const second = await issueHostSession(baseUrl, 'b'.repeat(43))
     expect((await fetch(`${baseUrl}/revoked`, { headers: { cookie: first } })).status).toBe(401)
     expect((await fetch(`${baseUrl}/current`, { headers: { cookie: second } })).status).toBe(200)
+  })
+
+  it('revokes an active owner WebSocket at the grant deadline without another request', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-remote-agent-ipc-'))
+    roots.push(root)
+    const socketPath = join(root, 'agent.sock')
+    const agent = createNetServer(socket => {
+      socket.once('data', () => {
+        socket.end(`${JSON.stringify({ version: '1.0', ok: true, payload: { session_grant: 'g'.repeat(43), roles: ['owner'] } })}\n`)
+      })
+    })
+    agentServers.push(agent)
+    await new Promise<void>((resolve, reject) => { agent.once('error', reject); agent.listen(socketPath, resolve) })
+    const { baseUrl } = await fixture(socketPath, { hostSessionTtlMs: 40 })
+    const cookie = await issueHostSession(baseUrl, 't'.repeat(43))
+    const socket = new WebSocket(`${baseUrl.replace('http:', 'ws:')}/api/events.host`, {
+      headers: { cookie }, origin: 'https://zsh.onlyservice.io',
+    })
+    await once(socket, 'open')
+    await once(socket, 'close')
+    expect((await fetch(`${baseUrl}/expired`, { headers: { cookie } })).status).toBe(401)
+    await expectRejectedUpgrade(new WebSocket(`${baseUrl.replace('http:', 'ws:')}/api/events.host`, {
+      headers: { cookie }, origin: 'https://zsh.onlyservice.io',
+    }), 401)
   })
 })
 
