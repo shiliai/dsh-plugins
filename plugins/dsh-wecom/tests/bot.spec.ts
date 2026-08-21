@@ -110,4 +110,15 @@ describe('WecomBot inbound boundary', () => {
     expect(bot.isReady()).toBe(false)
     expect(events).toEqual(['authenticated', 'reconnecting', 'disconnected'])
   })
+
+  it('uses a fixed log category for adversarial SDK error names', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const bot = new WecomBot({ botId: 'bot-1', botSecret: 'secret' })
+    await bot.start(() => undefined)
+    const hostile = new Error('message body')
+    hostile.name = 'token-value'
+    bot.client.emit('error', hostile)
+    expect(errorLog).toHaveBeenCalledWith('[dsh-wecom] sdk error (OperationError)')
+    errorLog.mockRestore()
+  })
 })

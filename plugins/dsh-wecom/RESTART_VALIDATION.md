@@ -24,8 +24,9 @@ secret in this repository, a shell history, or a test report.
    redacted identity and one of `unconfigured`, `connecting`, `online`,
    `reconnecting`, `offline`, or `error` without reloading DSH.
 2. For `unconfigured`, correct the environment through the deployment's normal
-   configuration process, then restart the plugin after the DSH process has
-   received that environment. Do not edit a profile manifest or lockfile.
+   configuration process, then restart the DSH profile so its process receives
+   that environment. A plugin-only restart cannot reload it. Do not edit a
+   profile manifest or lockfile.
 3. When the panel shows `online`, click Restart and accept the warning that
    process-local conversations reset. Do not restart the DSH service for this
    check.
@@ -62,7 +63,8 @@ Use test identities that appear in the configured allowlists.
    message bodies, tokens, or raw frames in the validation result.
 
 The automated suite uses fakes and does not replace this credentialed network
-test. Record the profile, plugin Git revision, test identities, and pass/fail
+test. Validate `@dsh-plugins/dsh-wecom@0.2.0`, then record the profile, plugin
+Git revision, test identities, and pass/fail
 result without recording message bodies or credentials.
 
 ## Rollback

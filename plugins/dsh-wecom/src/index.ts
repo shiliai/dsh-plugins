@@ -15,7 +15,7 @@ import { WecomLifecycleController } from './lifecycle.ts'
 import { PLUGIN_VERSION } from './version.ts'
 
 export const name = 'dsh-wecom'
-export const inject = ['agents', 'agentDefaultModel', 'agentPresets', 'sessions', 'tools', 'webServer']
+export const inject = ['tools', 'agents', 'agentDefaultModel', 'agentPresets', 'sessions', 'webServer']
 
 export interface Config {
   botId: string
@@ -34,11 +34,27 @@ export interface Config {
   idleChatMs?: number
   /** Diagnostic verbosity: error | warn | info (default) | debug. */
   logLevel?: LogLevel
+  /** Trusted DSH browser origin for plugin restart requests. Defaults to local DSH. */
+  managementOrigin?: string
 }
 
 /** Keep runtime-loaded configuration compatible with the former apply() default. */
 export function normalizeConfig(config: Config): Config {
-  return { ...config, logLevel: isLogLevel(config.logLevel) ? config.logLevel : 'info' }
+  return {
+    ...config,
+    logLevel: isLogLevel(config.logLevel) ? config.logLevel : 'info',
+    managementOrigin: normalizeManagementOrigin(config.managementOrigin),
+  }
+}
+
+export function normalizeManagementOrigin(value: string | undefined): string {
+  const candidate = value ?? 'http://127.0.0.1:3180'
+  let url: URL
+  try { url = new URL(candidate) } catch { throw new Error('dsh-wecom: managementOrigin must be an HTTP(S) origin without a path.') }
+  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username !== '' || url.password !== '' || url.pathname !== '/' || url.search !== '' || url.hash !== '') {
+    throw new Error('dsh-wecom: managementOrigin must be an HTTP(S) origin without a path.')
+  }
+  return url.origin
 }
 
 interface LiveHandle {
@@ -373,10 +389,18 @@ export class WecomAgentBridge {
     clearInterval(this.idleSweep)
     await Promise.allSettled([...this.queues.values()])
     await Promise.allSettled([...this.evictions.values()])
-    await Promise.allSettled([...this.states.values()].map(async (state) => state.handle?.dispose()))
-    this.states.clear()
+    const failures: unknown[] = []
+    await Promise.all([...this.states.entries()].map(async ([key, state]) => {
+      try {
+        await state.handle?.dispose()
+        if (this.states.get(key) === state) this.states.delete(key)
+      } catch (error) {
+        failures.push(error)
+      }
+    }))
     this.queues.clear()
     this.evictions.clear()
+    if (failures.length > 0) throw new AggregateError(failures, 'dsh-wecom bridge disposal failed')
   }
 }
 
@@ -394,7 +418,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     logLevel: normalized.logLevel,
   })
   const controller = new WecomLifecycleController(ctx, normalized, PLUGIN_VERSION)
-  ctx.effect(() => registerWecomApi(ctx.webServer, controller), 'dsh-wecom.status-api')
+  ctx.effect(() => registerWecomApi(ctx.webServer, controller, normalized.managementOrigin!), 'dsh-wecom.status-api')
   registerWecomTools(ctx, controller, normalized.outboundAllowChats)
   const initial = await controller.start()
   if (initial.state === 'unconfigured') log.warn('missing bot credentials; status remains available in the plugin UI')

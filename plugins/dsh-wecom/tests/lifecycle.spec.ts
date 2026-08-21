@@ -7,10 +7,11 @@ class FakeBot {
   readonly listeners = new Set<(event: WecomLifecycleEvent) => void>()
   starts = 0
   disconnects = 0
+  disconnectError: Error | undefined
   constructor(private readonly fails = false) {}
   onLifecycle(listener: (event: WecomLifecycleEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener) }
   async start(_handler: unknown) { this.starts += 1; if (this.fails) throw new Error('credential secret must not leak') }
-  disconnect() { this.disconnects += 1 }
+  disconnect() { this.disconnects += 1; if (this.disconnectError) throw this.disconnectError }
   async sendText() {}
   emit(event: WecomLifecycleEvent) { for (const listener of this.listeners) listener(event) }
 }
@@ -19,67 +20,103 @@ function config(overrides: Partial<Config> = {}): Config {
   return { botId: 'bot-123456', botSecret: 'secret-value', ...overrides }
 }
 
+function deferred() {
+  let resolve!: () => void
+  return { promise: new Promise<void>(next => { resolve = next }), resolve }
+}
+
 describe('WecomLifecycleController', () => {
-  it('normalizes an invalid runtime log level to the former info default', () => {
+  it('normalizes invalid runtime configuration and preserves local trusted origin', () => {
     const normalized = normalizeConfig({ ...config(), logLevel: 'verbose' as never })
-    expect(normalized.logLevel).toBe('info')
+    expect(normalized).toMatchObject({ logLevel: 'info', managementOrigin: 'http://127.0.0.1:3180' })
   })
 
-  it('keeps missing credentials observable without exposing a secret', async () => {
-    const controller = new WecomLifecycleController({} as never, config({ botSecret: '' }), '0.1.1')
+  it('keeps missing credentials observable with profile-restart remediation', async () => {
+    const createBot = vi.fn(() => new FakeBot() as never)
+    const controller = new WecomLifecycleController({} as never, config({ botSecret: '' }), '0.2.0', createBot)
     const status = await controller.start()
-    expect(status).toMatchObject({ state: 'unconfigured', version: '0.1.1' })
-    expect(status.error).toContain('WECOM_BOT_SECRET')
-    expect(JSON.stringify(status)).not.toContain('secret-value')
+    expect(status).toMatchObject({ state: 'unconfigured', version: '0.2.0' })
+    expect(status.error).toContain('restart the DSH profile')
+    expect(createBot).not.toHaveBeenCalled()
   })
 
-  it('maps connection lifecycle events and timestamps without leaking runtime errors', async () => {
+  it('maps lifecycle events with fixed diagnostic categories despite hostile error names', async () => {
     const bot = new FakeBot()
-    const bridge = { dispose: vi.fn(async () => {}) }
-    const controller = new WecomLifecycleController({} as never, config(), '0.1.1', () => bot as never, () => bridge as never)
-    expect((await controller.start()).state).toBe('connecting')
+    const controller = new WecomLifecycleController({} as never, config(), '0.2.0', () => bot as never, () => ({ dispose: async () => {} }) as never)
+    await controller.start()
     bot.emit({ type: 'authenticated' })
-    expect(controller.getStatus()).toMatchObject({ state: 'online', authenticatedAt: expect.any(Number), botIdentity: 'bot-...' })
-    bot.emit({ type: 'reconnecting' })
-    expect(controller.getStatus().state).toBe('reconnecting')
-    bot.emit({ type: 'disconnected' })
-    expect(controller.getStatus()).toMatchObject({ state: 'offline', disconnectedAt: expect.any(Number) })
-    bot.emit({ type: 'error', error: new Error('secret-value and message body') })
-    expect(controller.getStatus().state).toBe('error')
-    expect(JSON.stringify(controller.getStatus())).not.toContain('secret-value')
+    expect(controller.getStatus()).toMatchObject({ state: 'online', authenticatedAt: expect.any(Number) })
+    const hostile = new Error('secret-value and message body')
+    hostile.name = 'token-value'
+    bot.emit({ type: 'error', error: hostile })
+    expect(controller.getStatus()).toMatchObject({ state: 'error', error: 'Connection failure. Check credentials and network, then restart.' })
+    expect(JSON.stringify(controller.getStatus())).not.toContain('token-value')
   })
 
-  it('serializes repeated restarts and disposes the old pair before one replacement', async () => {
+  it('serializes repeated restarts and returns completed snapshots with restarting false', async () => {
     const bots: FakeBot[] = []
     const bridges: Array<{ dispose: ReturnType<typeof vi.fn> }> = []
     const controller = new WecomLifecycleController(
-      {} as never, config(), '0.1.1',
+      {} as never, config(), '0.2.0',
       () => { const bot = new FakeBot(); bots.push(bot); return bot as never },
       () => { const bridge = { dispose: vi.fn(async () => {}) }; bridges.push(bridge); return bridge as never },
     )
     await controller.start()
-    await Promise.all([controller.restart(), controller.restart(), controller.restart()])
+    const results = await Promise.all([controller.restart(), controller.restart(), controller.restart()])
     expect(bots).toHaveLength(2)
     expect(bots[0]!.disconnects).toBe(1)
     expect(bridges[0]!.dispose).toHaveBeenCalledOnce()
-    expect(bots[1]!.starts).toBe(1)
+    expect(results.every(status => status.restarting === false)).toBe(true)
   })
 
-  it('recovers from a failed replacement on a later restart without retaining the failed connection', async () => {
-    const bots = [new FakeBot(true), new FakeBot()]
-    const controller = new WecomLifecycleController({} as never, config(), '0.1.1', () => bots.shift()! as never, () => ({ dispose: async () => {} }) as never)
-    expect((await controller.start()).state).toBe('error')
-    expect((await controller.restart()).state).toBe('connecting')
-    expect(bots).toHaveLength(0)
-  })
-
-  it('reports a safe error when disposal prevents replacement', async () => {
+  it('reports restarting only while the serialized restart is in flight', async () => {
     const bot = new FakeBot()
-    const controller = new WecomLifecycleController({} as never, config(), '0.1.1', () => bot as never, () => ({ dispose: async () => { throw new Error('secret-value') } }) as never)
+    const stopping = deferred()
+    const controller = new WecomLifecycleController({} as never, config(), '0.2.0', () => bot as never, () => ({ dispose: () => stopping.promise }) as never)
     await controller.start()
-    const status = await controller.restart()
-    expect(status.state).toBe('error')
-    expect(status.error).toContain('Previous connection could not stop')
-    expect(JSON.stringify(status)).not.toContain('secret-value')
+    const restart = controller.restart()
+    expect(controller.getStatus().restarting).toBe(true)
+    stopping.resolve()
+    expect((await restart).restarting).toBe(false)
+    expect(controller.getStatus().restarting).toBe(false)
+  })
+
+  it('attempts disconnect and agent disposal independently, retains failures, and retries before replacement', async () => {
+    const first = new FakeBot()
+    first.disconnectError = new Error('secret-value')
+    const firstBridge = { dispose: vi.fn(async () => { throw new Error('message body') }) }
+    const second = new FakeBot()
+    const botQueue = [first, second]
+    const bridgeQueue = [firstBridge, { dispose: async () => {} }]
+    const createBot = vi.fn(() => botQueue.shift()! as never)
+    const createBridge = vi.fn(() => bridgeQueue.shift()! as never)
+    const controller = new WecomLifecycleController({} as never, config(), '0.2.0', createBot, createBridge)
+    await controller.start()
+    const failed = await controller.restart()
+    expect(failed).toMatchObject({ state: 'error', error: 'Cleanup failure. Check plugin status and restart once more.', restarting: false })
+    expect(first.disconnects).toBe(1)
+    expect(firstBridge.dispose).toHaveBeenCalledOnce()
+    expect(createBot).toHaveBeenCalledTimes(1)
+    first.disconnectError = undefined
+    firstBridge.dispose = vi.fn(async () => {})
+    await controller.restart()
+    expect(createBot).toHaveBeenCalledTimes(2)
+  })
+
+  it('prevents a replacement when terminal disposal races restart', async () => {
+    const bots: FakeBot[] = []
+    const stopping = deferred()
+    const controller = new WecomLifecycleController(
+      {} as never, config(), '0.2.0',
+      () => { const bot = new FakeBot(); bots.push(bot); return bot as never },
+      () => ({ dispose: () => stopping.promise }) as never,
+    )
+    await controller.start()
+    const dispose = controller.dispose()
+    const restart = controller.restart()
+    stopping.resolve()
+    await Promise.all([dispose, restart])
+    expect(bots).toHaveLength(1)
+    expect(controller.getStatus()).toMatchObject({ state: 'offline', restarting: false })
   })
 })

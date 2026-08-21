@@ -44,7 +44,7 @@ Add a user patch with explicit identities and roots appropriate for the host:
 - insert:
     - id: dsh-wecom
       name: '@dsh-plugins/dsh-wecom'
-      inject: [tools, agents, agentDefaultModel, agentPresets, sessions]
+      inject: [tools, agents, agentDefaultModel, agentPresets, sessions, webServer]
       config:
         botId: !!js process.env.WECOM_BOT_ID ?? ''
         botSecret: !!js process.env.WECOM_BOT_SECRET ?? ''
@@ -56,6 +56,8 @@ Add a user patch with explicit identities and roots appropriate for the host:
         outboundAllowChats: ['userid-a']
         # Diagnostic verbosity: error | warn | info (default) | debug.
         logLevel: 'info'
+        # Trusted browser origin for the restart action. Local DSH defaults to this value.
+        managementOrigin: 'http://127.0.0.1:3180'
         defaultCwd: '/srv/dsh-workspace'
         allowedCwdRoots: ['/srv/dsh-workspace']
         # Optional. Without this, agentPresets.defaultId is used.
@@ -103,9 +105,15 @@ created, and then report either the new connection state or a safe instruction
 to check credentials and network. It does not restart DSH or edit profile
 configuration.
 
+For an `unconfigured` status, update the DSH profile environment with both
+credential variables and restart the DSH profile. A plugin-only restart cannot
+read a changed parent-process environment. Configure `managementOrigin` for a
+non-local DSH browser origin; its exact scheme, host, and port authorize the
+restart action. The local default is `http://127.0.0.1:3180`.
+
 The status API deliberately never returns `botSecret`, tokens, message bodies,
-or WebSocket frames. Its restart endpoint accepts same-origin browser requests
-only.
+or WebSocket frames. Its restart endpoint accepts only the configured trusted
+origin and rejects cross-site browser fetches.
 
 ## Commands
 
@@ -145,6 +153,8 @@ pnpm --filter @dsh-plugins/dsh-wecom check
 pnpm --filter @dsh-plugins/dsh-wecom pack:check
 pnpm --filter @dsh-plugins/dsh-wecom release:check
 ```
+
+The validation target for this feature release is `@dsh-plugins/dsh-wecom@0.2.0`.
 
 The test suite uses fakes for DSH and the WeCom SDK. It does not perform a live
 WeCom credential, network, or production-profile end-to-end test.

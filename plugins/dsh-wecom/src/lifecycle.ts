@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { WecomAgentBridge, type Config } from './index.ts'
 import { WecomBot } from './bot.ts'
-import { isAllowed, safeErrorKind } from './safety.ts'
+import { isAllowed } from './safety.ts'
 import type { InboundMessage } from './bot.ts'
 
 export type WecomConnectionState = 'unconfigured' | 'connecting' | 'online' | 'reconnecting' | 'offline' | 'error'
@@ -18,12 +18,23 @@ export interface WecomStatus {
   version: string
 }
 
-type RunningPair = { bot: WecomBot; bridge: WecomAgentBridge }
+type Snapshot = Omit<WecomStatus, 'restarting'>
+type RunningPair = { bot: WecomBot; bridge?: WecomAgentBridge | undefined }
+
+const DIAGNOSTIC = {
+  unconfigured: 'Configure WECOM_BOT_ID and WECOM_BOT_SECRET in the DSH profile environment, then restart the DSH profile.',
+  disconnected: 'Connection closed. Use Restart if it does not reconnect.',
+  startup: 'Startup failure. Check credentials and network, then restart.',
+  connection: 'Connection failure. Check credentials and network, then restart.',
+  cleanup: 'Cleanup failure. Check plugin status and restart once more.',
+} as const
 
 export class WecomLifecycleController {
   private current: RunningPair | undefined
+  private lifecycleOperation: Promise<void> = Promise.resolve()
   private restartTask: Promise<WecomStatus> | undefined
-  private snapshot: WecomStatus
+  private terminalDispose = false
+  private snapshot: Snapshot
 
   constructor(
     private readonly ctx: Context,
@@ -35,16 +46,22 @@ export class WecomLifecycleController {
     this.snapshot = this.unconfigured() ?? this.status('offline')
   }
 
-  private unconfigured(): WecomStatus | undefined {
+  private enqueue(operation: () => Promise<void>): Promise<void> {
+    const next = this.lifecycleOperation.then(operation, operation)
+    this.lifecycleOperation = next.catch(() => undefined)
+    return next
+  }
+
+  private unconfigured(): Snapshot | undefined {
     if (this.config.botId && this.config.botSecret) return undefined
-    return this.status('unconfigured', { error: 'Set both WECOM_BOT_ID and WECOM_BOT_SECRET, then restart the plugin.' })
+    return this.status('unconfigured', { error: DIAGNOSTIC.unconfigured })
   }
 
-  private status(state: WecomConnectionState, details: Partial<WecomStatus> = {}): WecomStatus {
-    return { state, changedAt: Date.now(), restarting: this.restartTask !== undefined, version: this.version, ...details }
+  private status(state: WecomConnectionState, details: Partial<Snapshot> = {}): Snapshot {
+    return { state, changedAt: Date.now(), version: this.version, ...details }
   }
 
-  private update(state: WecomConnectionState, details: Partial<WecomStatus> = {}): void {
+  private update(state: WecomConnectionState, details: Partial<Snapshot> = {}): void {
     this.snapshot = this.status(state, {
       authenticatedAt: this.snapshot.authenticatedAt,
       disconnectedAt: this.snapshot.disconnectedAt,
@@ -54,23 +71,23 @@ export class WecomLifecycleController {
   }
 
   getStatus(): WecomStatus {
-    return { ...this.snapshot, restarting: this.restartTask !== undefined }
+    return { ...this.snapshot, restarting: !this.terminalDispose && this.restartTask !== undefined }
   }
 
   async start(): Promise<WecomStatus> {
-    if (this.current !== undefined) return this.getStatus()
-    const unavailable = this.unconfigured()
-    if (unavailable !== undefined) {
-      this.snapshot = unavailable
-      return this.getStatus()
-    }
-    return this.startReplacement()
+    await this.enqueue(async () => {
+      if (this.terminalDispose || this.current !== undefined) return
+      const unavailable = this.unconfigured()
+      if (unavailable !== undefined) this.snapshot = unavailable
+      else await this.startReplacement()
+    })
+    return this.getStatus()
   }
 
-  private async startReplacement(): Promise<WecomStatus> {
+  private async startReplacement(): Promise<void> {
+    if (this.terminalDispose) return
     this.update('connecting', { error: undefined, botIdentity: this.redactedIdentity() })
     let bot: WecomBot | undefined
-    let bridge: WecomAgentBridge | undefined
     try {
       bot = this.createBot(this.config)
       bot.onLifecycle(event => {
@@ -78,23 +95,37 @@ export class WecomLifecycleController {
         if (event.type === 'connected') this.update('connecting', { error: undefined })
         if (event.type === 'authenticated') this.update('online', { authenticatedAt: Date.now(), error: undefined })
         if (event.type === 'reconnecting') this.update('reconnecting', { error: undefined })
-        if (event.type === 'disconnected') this.update('offline', { disconnectedAt: Date.now(), error: 'Connection closed. Use Restart if it does not reconnect.' })
-        if (event.type === 'error') this.update('error', { error: `Connection error (${safeErrorKind(event.error)}). Check credentials and network, then restart.` })
+        if (event.type === 'disconnected') this.update('offline', { disconnectedAt: Date.now(), error: DIAGNOSTIC.disconnected })
+        if (event.type === 'error') this.update('error', { error: DIAGNOSTIC.connection })
       })
-      bridge = this.createBridge(this.ctx, bot, this.config)
-      this.current = { bot, bridge }
+      this.current = { bot }
+      const bridge = this.createBridge(this.ctx, bot, this.config)
+      this.current.bridge = bridge
       await bot.start(async message => {
         if (!this.isInboundAuthorized(message)) return
-        await bridge!.enqueue(message)
+        await bridge.enqueue(message)
       })
-      return this.getStatus()
-    } catch (error) {
-      this.current = undefined
-      bot?.disconnect()
-      await bridge?.dispose()
-      this.update('error', { error: `Connection could not start (${safeErrorKind(error)}). Check credentials and network, then restart.` })
-      return this.getStatus()
+      if (this.terminalDispose) await this.teardownCurrent()
+    } catch {
+      await this.teardownCurrent()
+      this.update('error', { error: DIAGNOSTIC.startup })
     }
+  }
+
+  /** Attempt every cleanup action; leave failed resources attached for a later retry. */
+  private async teardownCurrent(): Promise<AggregateError | undefined> {
+    const current = this.current
+    if (current === undefined) return undefined
+    const operations: Array<Promise<unknown>> = [Promise.resolve().then(() => current.bot.disconnect())]
+    if (current.bridge !== undefined) operations.push(Promise.resolve().then(() => current.bridge!.dispose()))
+    const settled = await Promise.allSettled(operations)
+    const failures = settled.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+    if (failures.length > 0) {
+      this.update('error', { error: DIAGNOSTIC.cleanup })
+      return new AggregateError(failures, 'dsh-wecom cleanup failed')
+    }
+    if (this.current === current) this.current = undefined
+    return undefined
   }
 
   private redactedIdentity(): string | undefined {
@@ -108,34 +139,28 @@ export class WecomLifecycleController {
   }
 
   async restart(): Promise<WecomStatus> {
+    if (this.terminalDispose) return this.getStatus()
     if (this.restartTask !== undefined) return this.restartTask
-    this.restartTask = this.doRestart()
-    try {
-      return await this.restartTask
-    } finally {
-      this.restartTask = undefined
-    }
-  }
-
-  private async doRestart(): Promise<WecomStatus> {
-    const unavailable = this.unconfigured()
-    if (unavailable !== undefined) {
-      this.snapshot = unavailable
-      return this.getStatus()
-    }
-    this.update('connecting', { error: undefined, botIdentity: this.redactedIdentity() })
-    const previous = this.current
-    this.current = undefined
-    if (previous !== undefined) {
-      try {
-        previous.bot.disconnect()
-        await previous.bridge.dispose()
-      } catch (error) {
-        this.update('error', { error: `Previous connection could not stop (${safeErrorKind(error)}). Check the plugin status and restart once more.` })
-        return this.getStatus()
+    const run = this.enqueue(async () => {
+      if (this.terminalDispose) return
+      const unavailable = this.unconfigured()
+      if (unavailable !== undefined) {
+        this.snapshot = unavailable
+        return
       }
-    }
-    return this.startReplacement()
+      if ((await this.teardownCurrent()) !== undefined || this.terminalDispose) return
+      await this.startReplacement()
+    })
+    const result = run.then(() => {
+      if (this.restartTask === result) this.restartTask = undefined
+      return this.getStatus()
+    }, () => {
+      this.update('error', { error: DIAGNOSTIC.cleanup })
+      if (this.restartTask === result) this.restartTask = undefined
+      return this.getStatus()
+    })
+    this.restartTask = result
+    return result
   }
 
   async sendText(chatId: string, content: string): Promise<void> {
@@ -144,12 +169,10 @@ export class WecomLifecycleController {
   }
 
   async dispose(): Promise<void> {
-    const current = this.current
-    this.current = undefined
-    if (current !== undefined) {
-      current.bot.disconnect()
-      await current.bridge.dispose()
-    }
-    this.update('offline', { disconnectedAt: Date.now(), error: undefined })
+    this.terminalDispose = true
+    await this.enqueue(async () => {
+      const cleanupFailure = await this.teardownCurrent()
+      if (cleanupFailure === undefined) this.update('offline', { disconnectedAt: Date.now(), error: undefined })
+    })
   }
 }

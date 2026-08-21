@@ -4,7 +4,7 @@ import type { WecomLifecycleController, WecomStatus } from './lifecycle.ts'
 
 const API_PREFIX = '/dsh-wecom/api'
 
-export function registerWecomApi(webServer: WebServer, controller: WecomLifecycleController): () => void {
+export function registerWecomApi(webServer: WebServer, controller: WecomLifecycleController, trustedOrigin = 'http://127.0.0.1:3180'): () => void {
   return webServer.register({
     kind: 'prefix', path: API_PREFIX,
     handler: async (request, response) => {
@@ -12,7 +12,7 @@ export function registerWecomApi(webServer: WebServer, controller: WecomLifecycl
         const endpoint = new URL(request.url ?? '/', 'http://dsh.local').pathname.slice(API_PREFIX.length) || '/status'
         if (request.method === 'GET' && endpoint === '/status') return sendJson(response, 200, controller.getStatus())
         if (request.method === 'POST' && endpoint === '/restart') {
-          if (!isSameOrigin(request)) return sendError(response, 403, 'ORIGIN_DENIED')
+          if (!isTrustedRestartRequest(request, trustedOrigin)) return sendError(response, 403, 'ORIGIN_DENIED')
           return sendJson(response, 200, await controller.restart())
         }
         return sendError(response, 404, 'NOT_FOUND')
@@ -24,14 +24,20 @@ export function registerWecomApi(webServer: WebServer, controller: WecomLifecycl
   })
 }
 
-function isSameOrigin(request: IncomingMessage): boolean {
+function isTrustedRestartRequest(request: IncomingMessage, trustedOrigin: string): boolean {
+  const fetchSite = request.headers['sec-fetch-site']
+  if (fetchSite !== undefined && fetchSite !== 'same-origin') return false
   const origin = request.headers.origin
-  const host = request.headers.host
-  if (origin === undefined || host === undefined) return false
+  if (origin === undefined) return false
   try {
-    const url = new URL(origin)
-    return (url.protocol === 'http:' || url.protocol === 'https:') && url.host === host
+    return normalizeOrigin(origin) === normalizeOrigin(trustedOrigin)
   } catch { return false }
+}
+
+function normalizeOrigin(value: string): string {
+  const url = new URL(value)
+  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username !== '' || url.password !== '' || url.pathname !== '/' || url.search !== '' || url.hash !== '') throw new Error('invalid origin')
+  return url.origin
 }
 
 function sendJson(response: ServerResponse, status: number, value: WecomStatus): void {

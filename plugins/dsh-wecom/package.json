@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/dsh-wecom",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "WeCom smart-robot long-connection bridge into DeepSeek Harness: resident WebSocket bot on a DSH agent session with conversation memory",
   "license": "MIT",
   "repository": {
@@ -91,11 +91,13 @@
   },
   "devDependencies": {
     "@deepseek-ai/dsh": "0.1.0-rc.6",
+    "@deepseek-ai/cordis-plugin-loader": "1.0.2",
     "@types/node": "^24.0.0",
     "@types/react": "~18.3.1",
     "react": "^18.3.1",
     "tsdown": "^0.15.6",
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "yaml": "^2.9.0"
   }
 }
