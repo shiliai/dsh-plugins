@@ -18,16 +18,23 @@ secret in this repository, a shell history, or a test report.
 5. Record the currently installed Git revision and preserve the previous
    service configuration for rollback.
 
-## Restart
+## Plugin-only restart
 
-1. Stop the DSH process using the deployment's service manager.
-2. Start the same profile with its configured environment.
-3. Confirm that the process remains healthy and that the `dsh-wecom` bundle is
-   present in the effective configuration. Missing credentials intentionally
-   disable the plugin and produce a warning.
+1. Open the WeCom connection panel from the DSH sidebar. Confirm it shows a
+   redacted identity and one of `unconfigured`, `connecting`, `online`,
+   `reconnecting`, `offline`, or `error` without reloading DSH.
+2. For `unconfigured`, correct the environment through the deployment's normal
+   configuration process, then restart the plugin after the DSH process has
+   received that environment. Do not edit a profile manifest or lockfile.
+3. When the panel shows `online`, click Restart and accept the warning that
+   process-local conversations reset. Do not restart the DSH service for this
+   check.
+4. Wait for the same panel to show `online`, or record its safe diagnostic and
+   stop for credential/network investigation. Verify other DSH functions remain
+   available throughout.
 
-Conversation memory is process-local. A restart starts a new process epoch and
-does not resume prior WeCom sessions.
+Conversation memory is process-local. A plugin-only restart starts a new bridge
+epoch and does not resume prior WeCom sessions.
 
 ## Live validation
 
@@ -50,8 +57,9 @@ Use test identities that appear in the configured allowlists.
    absent from `allowGroupSenders` receives no response.
 8. Invoke `wecom_send_message` for one allowed and one denied destination. Only
    the explicitly allowed destination should receive a message.
-9. Restart once more and verify that the service reconnects and old process
-   memory is not restored.
+9. Use the panel Restart once more and verify that the plugin reconnects and
+   old process-local memory is not restored. Do not record bot credentials,
+   message bodies, tokens, or raw frames in the validation result.
 
 The automated suite uses fakes and does not replace this credentialed network
 test. Record the profile, plugin Git revision, test identities, and pass/fail

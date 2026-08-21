@@ -1,0 +1,14 @@
+.panel { position: absolute; right: 16px; bottom: 16px; display: grid; gap: 10px; width: min(340px, calc(100vw - 32px)); box-sizing: border-box; padding: 14px; border: 1px solid var(--dsh-border, #d1d5db); border-radius: 6px; background: var(--dsh-bg, #fff); box-shadow: 0 8px 24px rgb(0 0 0 / 14%); color: var(--dsh-fg, #1f2937); font: 13px/1.4 system-ui, sans-serif; }
+.header, .statusRow, .actions, .confirmation, .confirmation > div { display: flex; align-items: center; }
+.header, .confirmation { justify-content: space-between; gap: 10px; }
+.statusRow, .actions { gap: 7px; }
+.phase { text-transform: capitalize; }
+.iconButton, .restartButton { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; min-height: 30px; border: 1px solid var(--dsh-border, #d1d5db); border-radius: 5px; background: transparent; color: inherit; cursor: pointer; }
+.restartButton { gap: 5px; padding: 0 9px; }
+.iconButton:hover, .restartButton:hover { background: var(--dsh-hover, #f3f4f6); }
+.iconButton:disabled, .restartButton:disabled { cursor: not-allowed; opacity: .55; }
+.indicator { width: 8px; height: 8px; border-radius: 50%; background: #6b7280; }
+.online { background: #0f9d58; }.connecting, .reconnecting { background: #d97706; }.error { background: #dc2626; }.unconfigured, .offline { background: #6b7280; }
+.details { display: grid; gap: 4px; margin: 0; }.details > div { display: flex; justify-content: space-between; gap: 12px; }.details dt { color: var(--dsh-fg-muted, #6b7280); }.details dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+.diagnostic, .error { color: #b91c1c; }.confirmation { padding-top: 8px; border-top: 1px solid var(--dsh-border, #d1d5db); }.confirmation > div { gap: 6px; }
+@media (max-width: 640px) { .panel { position: fixed; inset: auto 8px max(8px, env(safe-area-inset-bottom)); width: auto; } }

@@ -10,9 +10,12 @@ import { summarizeTurn, type TurnResult } from './frame.ts'
 import { makeLogger, isLogLevel, type Logger, type LogLevel } from './log.ts'
 import { isAllowed, resolveAllowedDirectory, safeErrorKind, truncateUtf8 } from './safety.ts'
 import { registerWecomTools } from './tools.ts'
+import { registerWecomApi } from './http-api.ts'
+import { WecomLifecycleController } from './lifecycle.ts'
+import { PLUGIN_VERSION } from './version.ts'
 
 export const name = 'dsh-wecom'
-export const inject = ['agents', 'agentDefaultModel', 'agentPresets', 'sessions', 'tools']
+export const inject = ['agents', 'agentDefaultModel', 'agentPresets', 'sessions', 'tools', 'webServer']
 
 export interface Config {
   botId: string
@@ -31,6 +34,11 @@ export interface Config {
   idleChatMs?: number
   /** Diagnostic verbosity: error | warn | info (default) | debug. */
   logLevel?: LogLevel
+}
+
+/** Keep runtime-loaded configuration compatible with the former apply() default. */
+export function normalizeConfig(config: Config): Config {
+  return { ...config, logLevel: isLogLevel(config.logLevel) ? config.logLevel : 'info' }
 }
 
 interface LiveHandle {
@@ -373,39 +381,32 @@ export class WecomAgentBridge {
 }
 
 export async function apply(ctx: Context, config: Config): Promise<void> {
-  const log = makeLogger(isLogLevel(config.logLevel) ? config.logLevel : 'info')
-  if (!config.botId || !config.botSecret) {
-    log.warn('missing bot credentials; plugin disabled')
-    return
-  }
+  const normalized = normalizeConfig(config)
+  const log = makeLogger(normalized.logLevel ?? 'info')
   log.info('apply boot', {
-    botId: config.botId ? `${config.botId.slice(0, 6)}…` : '',
-    allowChats: config.allowChats ?? [],
-    allowGroupSenders: config.allowGroupSenders ?? [],
-    outboundAllowChats: config.outboundAllowChats ?? [],
-    defaultCwd: config.defaultCwd ?? process.cwd(),
-    defaultPreset: config.defaultPreset,
-    allowedCwdRoots: config.allowedCwdRoots ?? [],
-    logLevel: isLogLevel(config.logLevel) ? config.logLevel : 'info',
+    configured: Boolean(normalized.botId && normalized.botSecret),
+    allowChats: normalized.allowChats ?? [],
+    allowGroupSenders: normalized.allowGroupSenders ?? [],
+    outboundAllowChats: normalized.outboundAllowChats ?? [],
+    defaultCwd: normalized.defaultCwd ?? process.cwd(),
+    defaultPreset: normalized.defaultPreset,
+    allowedCwdRoots: normalized.allowedCwdRoots ?? [],
+    logLevel: normalized.logLevel,
   })
-  const bot = new WecomBot({ botId: config.botId, botSecret: config.botSecret, logLevel: isLogLevel(config.logLevel) ? config.logLevel : 'info' })
-  const bridge = new WecomAgentBridge(ctx, bot, config)
-  registerWecomTools(ctx, bot, config.outboundAllowChats)
-  await bot.start(async (message) => {
-    if (!isInboundAuthorized(message, config)) {
-      log.warn('inbound denied', { chatId: message.chatId, chatType: message.chatType })
-      return
-    }
-    await bridge.enqueue(message)
-  })
+  const controller = new WecomLifecycleController(ctx, normalized, PLUGIN_VERSION)
+  ctx.effect(() => registerWecomApi(ctx.webServer, controller), 'dsh-wecom.status-api')
+  registerWecomTools(ctx, controller, normalized.outboundAllowChats)
+  const initial = await controller.start()
+  if (initial.state === 'unconfigured') log.warn('missing bot credentials; status remains available in the plugin UI')
   ctx.effect(() => async () => {
     log.info('shutdown')
-    bot.disconnect()
-    await bridge.dispose()
+    await controller.dispose()
   }, 'dsh-wecom.dispose')
 }
 
 export { WecomBot } from './bot.ts'
-export type { InboundMessage } from './bot.ts'
+export type { InboundMessage, WecomLifecycleEvent } from './bot.ts'
+export { WecomLifecycleController } from './lifecycle.ts'
+export type { WecomStatus, WecomConnectionState } from './lifecycle.ts'
 export { parseCommand, resolveWorkingDir, renderHelp, COMMANDS } from './commands.ts'
 export { truncateUtf8, WECOM_MAX_MESSAGE_BYTES } from './safety.ts'

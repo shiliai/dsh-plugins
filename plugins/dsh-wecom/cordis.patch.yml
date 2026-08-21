@@ -2,7 +2,7 @@
 - insert:
     - id: dsh-wecom
       name: '@dsh-plugins/dsh-wecom'
-      inject: [tools, agents, agentDefaultModel, agentPresets, sessions]
+      inject: [tools, agents, agentDefaultModel, agentPresets, sessions, webServer]
       config:
         botId: !!js process.env.WECOM_BOT_ID ?? ''
         botSecret: !!js process.env.WECOM_BOT_SECRET ?? ''

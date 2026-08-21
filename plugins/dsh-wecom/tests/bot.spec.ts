@@ -96,4 +96,18 @@ describe('WecomBot inbound boundary', () => {
     expect(content.endsWith('😀')).toBe(false)
     expect(calls[0]![1]).toBe('stream-sdk-id')
   })
+
+  it('clears readiness after disconnect and reports reconnect lifecycle changes', async () => {
+    const bot = new WecomBot({ botId: 'bot-1', botSecret: 'secret' })
+    const events: string[] = []
+    bot.onLifecycle(event => events.push(event.type))
+    await bot.start(() => undefined)
+    bot.client.emit('authenticated')
+    expect(bot.isReady()).toBe(true)
+    bot.client.emit('reconnecting', 1)
+    expect(bot.isReady()).toBe(false)
+    bot.client.emit('disconnected', 'network')
+    expect(bot.isReady()).toBe(false)
+    expect(events).toEqual(['authenticated', 'reconnecting', 'disconnected'])
+  })
 })

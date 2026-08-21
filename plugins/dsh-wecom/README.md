@@ -87,6 +87,26 @@ always dropped, even at `debug`. Only identity and metadata are emitted.
 no roots configured, only `defaultCwd` (or `process.cwd()`) and its descendants
 are available.
 
+## Connection status and plugin restart
+
+Use the WeCom connection button in the DSH sidebar to open the plugin panel.
+It updates automatically and shows `unconfigured`, `connecting`, `online`,
+`reconnecting`, `offline`, or `error`, together with safe timestamps,
+diagnostics, a redacted bot identity, and the plugin version. `online` is shown
+only after WeCom authentication succeeds.
+
+The panel's Restart action rebuilds only the `dsh-wecom` bridge and long
+connection. It first asks for confirmation because process-local WeCom
+conversations are reset. The action is serialized: repeated clicks reuse the
+same restart, disconnect and dispose the old pair before one replacement is
+created, and then report either the new connection state or a safe instruction
+to check credentials and network. It does not restart DSH or edit profile
+configuration.
+
+The status API deliberately never returns `botSecret`, tokens, message bodies,
+or WebSocket frames. Its restart endpoint accepts same-origin browser requests
+only.
+
 ## Commands
 
 | Command | Effect |
@@ -113,7 +133,7 @@ recorded consistently in the session metadata and command/status output.
   WeCom documents a ten-minute limit after streaming has begun.
 - Session ids include bot namespace, chat type, chat identity, process epoch,
   and generation. The bridge never resumes persistent sessions, so `/new` and a
-  plugin reload cannot revive an old generation.
+  plugin-only restart cannot revive an old generation.
 - Queue entries are removed after settlement. Live chat states are bounded by
   `maxLiveChats` and idle eviction. In-flight queues are drained before plugin
   unload disposes their agents. Configure values for the expected traffic.
