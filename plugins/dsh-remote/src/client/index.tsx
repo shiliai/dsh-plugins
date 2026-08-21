@@ -4,9 +4,10 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import { PanelLeftOpen, Radio } from 'lucide-react'
 import { RemotePanel } from './RemotePanel.tsx'
 import { installMobileCompatibility } from './mobile-compat.ts'
+import { installWorkspaceSessionReadiness } from './workspace-session-readiness.ts'
 import css from './styles.module.css?dsh-inline'
 
-export const inject = ['settingsScope', 'slots']
+export const inject = ['settingsScope', 'slots', 'sessions', 'workspaces', 'modelDirectories']
 const ACCESS_FRAGMENT = /^#\/access\/[A-Za-z0-9_-]{43}$/u
 const OWNER_UI_COOKIE = '__Host-dsh_remote_owner_ui'
 
@@ -93,6 +94,7 @@ export function apply(ctx: ClientContext): void {
     window.document.cookie,
     ctx.get('settingsScope') as unknown as SettingsScopeCompatibility,
   )
+  const disposeWorkspaceSessionReadiness = installWorkspaceSessionReadiness(ctx)
   const disposeMobileCompatibility = installMobileCompatibility()
   const disposeMobileSidebarButton = ctx.slots.register({
     name: 'shell.overlay',
@@ -124,5 +126,6 @@ export function apply(ctx: ClientContext): void {
     close()
     disposeMobileSidebarButton()
     disposeMobileCompatibility()
+    disposeWorkspaceSessionReadiness()
   }, 'dsh-remote: client surfaces')
 }

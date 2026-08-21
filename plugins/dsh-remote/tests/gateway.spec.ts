@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:http'
-import { createServer as createNetServer, type Server as NetServer } from 'node:net'
+import { createConnection, createServer as createNetServer, type Server as NetServer, type Socket } from 'node:net'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -71,6 +71,25 @@ async function fixture(
 }
 
 describe('RemoteGateway', () => {
+  it('keeps serving after an accepted gateway socket emits a late reset error', async () => {
+    const { baseUrl, gateway } = await fixture()
+    const target = new URL(baseUrl)
+    const server = (gateway as unknown as { server: Server }).server
+    const accepted = new Promise<Socket>(resolve => { server.once('connection', resolve) })
+    const client = createConnection({ host: target.hostname, port: Number(target.port) })
+    await new Promise<void>((resolve, reject) => {
+      client.once('connect', resolve)
+      client.once('error', reject)
+    })
+    const socket = await accepted
+    const closed = new Promise<void>(resolve => { socket.once('close', () => { resolve() }) })
+    client.destroy()
+    await closed
+    const reset = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' })
+    expect(() => { socket.emit('error', reset) }).not.toThrow()
+    expect((await fetch(`${baseUrl}/`)).status).toBe(200)
+  })
+
   it('exchanges a fragment bearer for a hardened cookie then proxies authenticated HTTP without forwarding it', async () => {
     const { baseUrl, state, upstreamOrigin } = await fixture()
     const bootstrap = await fetch(`${baseUrl}/`)
