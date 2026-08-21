@@ -44,7 +44,7 @@ Add a user patch with explicit identities and roots appropriate for the host:
 - insert:
     - id: dsh-wecom
       name: '@dsh-plugins/dsh-wecom'
-      inject: [tools, agents, agentDefaultModel, agentPresets, sessions]
+      inject: [tools, agents, agentDefaultModel, agentPresets, sessions, webServer]
       config:
         botId: !!js process.env.WECOM_BOT_ID ?? ''
         botSecret: !!js process.env.WECOM_BOT_SECRET ?? ''
@@ -56,6 +56,8 @@ Add a user patch with explicit identities and roots appropriate for the host:
         outboundAllowChats: ['userid-a']
         # Diagnostic verbosity: error | warn | info (default) | debug.
         logLevel: 'info'
+        # Trusted browser origin for the restart action. Local DSH defaults to this value.
+        managementOrigin: 'http://127.0.0.1:3180'
         defaultCwd: '/srv/dsh-workspace'
         allowedCwdRoots: ['/srv/dsh-workspace']
         # Optional. Without this, agentPresets.defaultId is used.
@@ -87,6 +89,32 @@ always dropped, even at `debug`. Only identity and metadata are emitted.
 no roots configured, only `defaultCwd` (or `process.cwd()`) and its descendants
 are available.
 
+## Connection status and plugin restart
+
+Use the WeCom connection button in the DSH sidebar to open the plugin panel.
+It updates automatically and shows `unconfigured`, `connecting`, `online`,
+`reconnecting`, `offline`, or `error`, together with safe timestamps,
+diagnostics, a redacted bot identity, and the plugin version. `online` is shown
+only after WeCom authentication succeeds.
+
+The panel's Restart action rebuilds only the `dsh-wecom` bridge and long
+connection. It first asks for confirmation because process-local WeCom
+conversations are reset. The action is serialized: repeated clicks reuse the
+same restart, disconnect and dispose the old pair before one replacement is
+created, and then report either the new connection state or a safe instruction
+to check credentials and network. It does not restart DSH or edit profile
+configuration.
+
+For an `unconfigured` status, update the DSH profile environment with both
+credential variables and restart the DSH profile. A plugin-only restart cannot
+read a changed parent-process environment. Configure `managementOrigin` for a
+non-local DSH browser origin; its exact scheme, host, and port authorize the
+restart action. The local default is `http://127.0.0.1:3180`.
+
+The status API deliberately never returns `botSecret`, tokens, message bodies,
+or WebSocket frames. Its restart endpoint accepts only the configured trusted
+origin and rejects cross-site browser fetches.
+
 ## Commands
 
 | Command | Effect |
@@ -113,7 +141,7 @@ recorded consistently in the session metadata and command/status output.
   WeCom documents a ten-minute limit after streaming has begun.
 - Session ids include bot namespace, chat type, chat identity, process epoch,
   and generation. The bridge never resumes persistent sessions, so `/new` and a
-  plugin reload cannot revive an old generation.
+  plugin-only restart cannot revive an old generation.
 - Queue entries are removed after settlement. Live chat states are bounded by
   `maxLiveChats` and idle eviction. In-flight queues are drained before plugin
   unload disposes their agents. Configure values for the expected traffic.
@@ -125,6 +153,8 @@ pnpm --filter @dsh-plugins/dsh-wecom check
 pnpm --filter @dsh-plugins/dsh-wecom pack:check
 pnpm --filter @dsh-plugins/dsh-wecom release:check
 ```
+
+The validation target for this feature release is `@dsh-plugins/dsh-wecom@0.2.0`.
 
 The test suite uses fakes for DSH and the WeCom SDK. It does not perform a live
 WeCom credential, network, or production-profile end-to-end test.

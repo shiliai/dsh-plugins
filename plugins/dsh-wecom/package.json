@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/dsh-wecom",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "WeCom smart-robot long-connection bridge into DeepSeek Harness: resident WebSocket bot on a DSH agent session with conversation memory",
   "license": "MIT",
   "repository": {
@@ -18,6 +18,10 @@
     ".": {
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
@@ -42,32 +46,58 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
     }
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
+    "@deepseek-ai/dsh-client-runtime": ">=0.1.0-rc.6 <0.1.0-rc.9",
+    "@deepseek-ai/dsh-client-ui-layout": ">=0.1.0-rc.6 <0.1.0-rc.9",
+    "@deepseek-ai/dsh-client-ui-sidebar": ">=0.1.0-rc.6 <0.1.0-rc.9",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.1.0-rc.6 <0.1.0-rc.9",
+    "@deepseek-ai/dsh-host-webserver": ">=0.1.0-rc.6 <0.1.0-rc.9",
     "@deepseek-ai/dsh-agent": "0.1.0-rc.6",
     "@deepseek-ai/dsh-agent-presets": "0.1.0-rc.6",
     "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
     "@deepseek-ai/dsh-session": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-tools": "0.1.0-rc.6"
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
+    "react": ">=18.2.0"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": { "optional": true },
+    "@deepseek-ai/dsh-client-runtime": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-layout": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-sidebar": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-slots": { "optional": true },
+    "@deepseek-ai/dsh-host-webserver": { "optional": true },
     "@deepseek-ai/dsh-agent": { "optional": true },
     "@deepseek-ai/dsh-agent-presets": { "optional": true },
     "@deepseek-ai/dsh-llm": { "optional": true },
     "@deepseek-ai/dsh-session": { "optional": true },
-    "@deepseek-ai/dsh-tools": { "optional": true }
+    "@deepseek-ai/dsh-tools": { "optional": true },
+    "react": { "optional": true }
   },
   "dependencies": {
-    "@wecom/aibot-node-sdk": "^1.0.0"
+    "@wecom/aibot-node-sdk": "^1.0.0",
+    "lucide-react": "^0.468.0"
   },
   "devDependencies": {
     "@deepseek-ai/dsh": "0.1.0-rc.6",
+    "@deepseek-ai/cordis-plugin-loader": "1.0.2",
     "@types/node": "^24.0.0",
+    "@types/react": "~18.3.1",
+    "react": "^18.3.1",
     "tsdown": "^0.15.6",
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "yaml": "^2.9.0"
   }
 }

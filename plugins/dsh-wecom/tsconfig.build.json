@@ -6,6 +6,6 @@
     "emitDeclarationOnly": true,
     "outDir": "lib/types"
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
   "exclude": ["tests"]
 }

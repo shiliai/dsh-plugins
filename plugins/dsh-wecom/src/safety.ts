@@ -22,7 +22,7 @@ export function isAllowed(value: string | undefined, allowlist: readonly string[
 }
 
 export function safeErrorKind(error: unknown): string {
-  return error instanceof Error && error.name ? error.name : 'UnknownError'
+  return error instanceof Error ? 'OperationError' : 'UnknownError'
 }
 
 /** Resolve paths before comparison so `..` and symlinks cannot leave a root. */

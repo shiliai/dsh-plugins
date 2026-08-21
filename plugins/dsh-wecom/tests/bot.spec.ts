@@ -96,4 +96,29 @@ describe('WecomBot inbound boundary', () => {
     expect(content.endsWith('😀')).toBe(false)
     expect(calls[0]![1]).toBe('stream-sdk-id')
   })
+
+  it('clears readiness after disconnect and reports reconnect lifecycle changes', async () => {
+    const bot = new WecomBot({ botId: 'bot-1', botSecret: 'secret' })
+    const events: string[] = []
+    bot.onLifecycle(event => events.push(event.type))
+    await bot.start(() => undefined)
+    bot.client.emit('authenticated')
+    expect(bot.isReady()).toBe(true)
+    bot.client.emit('reconnecting', 1)
+    expect(bot.isReady()).toBe(false)
+    bot.client.emit('disconnected', 'network')
+    expect(bot.isReady()).toBe(false)
+    expect(events).toEqual(['authenticated', 'reconnecting', 'disconnected'])
+  })
+
+  it('uses a fixed log category for adversarial SDK error names', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const bot = new WecomBot({ botId: 'bot-1', botSecret: 'secret' })
+    await bot.start(() => undefined)
+    const hostile = new Error('message body')
+    hostile.name = 'token-value'
+    bot.client.emit('error', hostile)
+    expect(errorLog).toHaveBeenCalledWith('[dsh-wecom] sdk error (OperationError)')
+    errorLog.mockRestore()
+  })
 })

@@ -145,6 +145,23 @@ describe('WecomAgentBridge', () => {
     await expect(p1).resolves.toBeDefined()
     await expect(p2).resolves.toBeDefined()
   })
+
+  it('retains failed live handles for a later dispose retry while removing successful handles', async () => {
+    let failFirst = true
+    const { mockCtx } = baseContext({
+      dispose: async index => {
+        if (index === 0 && failFirst) throw new Error('fixture disposal failure')
+      },
+    })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's' })
+    await bridge.enqueue(msg('u1', 'first'))
+    await bridge.enqueue(msg('u2', 'second'))
+    await expect(bridge.dispose()).rejects.toBeInstanceOf(AggregateError)
+    expect(bridge.resourceSnapshot()).toEqual({ states: 1, queues: 0, liveAgents: 1 })
+    failFirst = false
+    await expect(bridge.dispose()).resolves.toBeUndefined()
+    expect(bridge.resourceSnapshot()).toEqual({ states: 0, queues: 0, liveAgents: 0 })
+  })
 })
 
 describe('slash commands', () => {
@@ -333,8 +350,9 @@ describe('slash commands', () => {
 
   it('does not let one failed idle disposal abort another chat', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let failFirst = true
     const { mockCtx } = baseContext({
-      dispose: async (index) => { if (index === 0) throw new Error('dispose failed') },
+      dispose: async (index) => { if (index === 0 && failFirst) throw new Error('dispose failed') },
     })
     const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, {
       botId: 'b', botSecret: 's', maxLiveChats: 1, idleChatMs: 0,
@@ -343,6 +361,7 @@ describe('slash commands', () => {
       await bridge.enqueue(msg('u1', 'one'))
       await expect(bridge.enqueue(msg('u2', 'two'))).resolves.toMatchObject({ ok: true })
     } finally {
+      failFirst = false
       await bridge.dispose()
       error.mockRestore()
     }

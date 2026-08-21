@@ -1,10 +1,13 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { WecomBot } from './bot.ts'
 import { makeLogger } from './log.ts'
 import { isAllowed, truncateUtf8 } from './safety.ts'
 
-export function registerWecomTools(ctx: Context, bot: WecomBot, outboundAllowChats: readonly string[] = []): void {
+interface OutboundConnection {
+  sendText(chatId: string, content: string): Promise<void>
+}
+
+export function registerWecomTools(ctx: Context, bot: OutboundConnection, outboundAllowChats: readonly string[] = []): void {
   const log = makeLogger('info')
   ctx.tools.register(defineTool({
     name: 'wecom_send_message',
@@ -39,7 +42,7 @@ export function registerWecomTools(ctx: Context, bot: WecomBot, outboundAllowCha
         return { ok: true, message: 'sent' }
       } catch (err) {
         log.error('wecom_send_message failed', { chatId: args.chatId, kind: err instanceof Error ? err.name : 'UnknownError' })
-        return { ok: false, message: err instanceof Error ? err.message : String(err) }
+        return { ok: false, message: 'send failed; check the WeCom connection status' }
       }
     },
     presentCall: (args: { chatId: string; content: string }) => ({

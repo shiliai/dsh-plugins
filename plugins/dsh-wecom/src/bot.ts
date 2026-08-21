@@ -33,6 +33,13 @@ export interface WecomBotEvents {
   error: (err: unknown) => void
 }
 
+export type WecomLifecycleEvent =
+  | { type: 'connected' }
+  | { type: 'authenticated' }
+  | { type: 'disconnected' }
+  | { type: 'reconnecting' }
+  | { type: 'error'; error: unknown }
+
 /**
  * Thin wrapper over the WeCom smart-robot Node SDK (WebSocket long connection).
  * Owns connect/auth/heartbeat/reconnect and normalizes inbound text messages.
@@ -46,6 +53,7 @@ export class WecomBot {
   private readonly dedupTtlMs = 10 * 60_000
   private readonly maxDedupEntries = 10_000
   private readonly log: Logger
+  private readonly lifecycleListeners = new Set<(event: WecomLifecycleEvent) => void>()
 
   constructor(options: WecomBotOptions) {
     this.options = options
@@ -64,6 +72,15 @@ export class WecomBot {
 
   get identity(): string {
     return this.options.botId
+  }
+
+  onLifecycle(listener: (event: WecomLifecycleEvent) => void): () => void {
+    this.lifecycleListeners.add(listener)
+    return () => this.lifecycleListeners.delete(listener)
+  }
+
+  private emitLifecycle(event: WecomLifecycleEvent): void {
+    for (const listener of this.lifecycleListeners) listener(event)
   }
 
   private isDuplicate(msgId: string): boolean {
@@ -95,10 +112,23 @@ export class WecomBot {
     }
     this.client.on('authenticated', () => {
       this.readyFired = true
+      this.emitLifecycle({ type: 'authenticated' })
+    })
+    this.client.on('connected', () => {
+      this.emitLifecycle({ type: 'connected' })
+    })
+    this.client.on('disconnected', () => {
+      this.readyFired = false
+      this.emitLifecycle({ type: 'disconnected' })
+    })
+    this.client.on('reconnecting', () => {
+      this.readyFired = false
+      this.emitLifecycle({ type: 'reconnecting' })
     })
     this.client.on('error', (err) => {
       // eslint-disable-next-line no-console
       console.error(`[dsh-wecom] sdk error (${safeErrorKind(err)})`)
+      this.emitLifecycle({ type: 'error', error: err })
     })
     this.client.on('message.text', (frame: WsFrame) => {
       const body = frame?.body ?? {}
