@@ -11,6 +11,7 @@ const LAUNCH_PATH = '/__dsh_remote/launch'
 const HOST_COOKIE = '__Host-dsh_remote_host'
 const HOST_UI_COOKIE = '__Host-dsh_remote_owner_ui'
 const KEEP_ALIVE_TIMEOUT_MS = 60_000
+const absorbLateSocketError = (): void => {}
 const HOST_SESSION_TTL_MS = 8 * 60 * 60 * 1000
 const ALLOWED_UPGRADE_PATHS = new Set(['/api/events.mux', '/api/events.host'])
 const OWNER_CONFIGURATION_METHODS = new Set([
@@ -75,6 +76,10 @@ export class RemoteGateway {
     this.server.headersTimeout = KEEP_ALIVE_TIMEOUT_MS + 5_000
     this.server.on('connection', socket => {
       this.connections.add(socket)
+      // FRP or a remote browser can reset a connection after Node's HTTP
+      // lifecycle listeners have been removed. Keep this listener for the
+      // socket lifetime so a late transport error cannot terminate DSH.
+      socket.on('error', absorbLateSocketError)
       socket.once('close', () => { this.connections.delete(socket) })
     })
     this.server.on('upgrade', (request, socket, head) => { this.handleUpgrade(request, socket, head) })
