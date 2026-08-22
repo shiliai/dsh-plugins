@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/dsh-remote",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Private remote-access gateway for DeepSeek Harness",
   "license": "MIT",
   "repository": {
@@ -45,7 +45,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "pnpm run typecheck && pnpm run test && pnpm run build",
-    "pack:check": "pnpm run build && pnpm pack --dry-run",
+    "pack:check": "pnpm run build && node scripts/verify-self-contained-package.mjs && pnpm pack --dry-run",
     "test:hub-admin": "node tests/e2e/run-hub-admin-browser.mjs",
     "e2e:rc6": "node tests/e2e/run-rc6-fixture-e2e.mjs",
     "release:check": "pnpm run check && pnpm run pack:check && pnpm run e2e:rc6",
@@ -88,10 +88,6 @@
     "@deepseek-ai/dsh-host-directory-picker-browse": { "optional": true },
     "react": { "optional": true }
   },
-  "dependencies": {
-    "http-proxy": "^1.18.1",
-    "lucide-react": "^0.468.0"
-  },
   "devDependencies": {
     "@deepseek-ai/dsh": "0.1.0-rc.6",
     "@playwright/test": "^1.55.0",
@@ -100,6 +96,8 @@
     "@types/react": "18.3.1",
     "@types/react-dom": "18.3.1",
     "@types/ws": "^8.5.14",
+    "http-proxy": "^1.18.1",
+    "lucide-react": "^0.468.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "tsdown": "^0.15.6",
