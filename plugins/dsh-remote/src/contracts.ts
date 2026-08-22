@@ -1,11 +1,17 @@
 export type TunnelPhase = 'starting' | 'online' | 'reconnecting' | 'failed' | 'stopped'
 
 export interface RemoteState {
-  schema: 1
+  schema: 2
   token: string
   sessionVersion: number
   createdAt: string
   rotatedAt: string
+  hostSessions: HostSessionDigest[]
+}
+
+export interface HostSessionDigest {
+  digest: string
+  expiresAt: number
 }
 
 export interface TunnelStatus {

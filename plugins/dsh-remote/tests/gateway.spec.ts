@@ -217,7 +217,7 @@ describe('RemoteGateway', () => {
     const cookie = launched.headers.getSetCookie()[0]?.split(';', 1)[0]
     expect(cookie).toBe(`__Host-dsh_remote_host=${'g'.repeat(43)}`)
     expect(launched.headers.getSetCookie()).toEqual(expect.arrayContaining([
-      expect.stringMatching(/^__Host-dsh_remote_owner_ui=1; Path=\/; Secure; SameSite=Strict; Max-Age=28800$/u),
+      expect.stringMatching(/^__Host-dsh_remote_owner_ui=1; Path=\/; Secure; SameSite=Strict; Max-Age=60$/u),
     ]))
     if (cookie === undefined) throw new Error('Expected Host session cookie.')
     const privateState = await state.rotate()
@@ -266,7 +266,7 @@ describe('RemoteGateway', () => {
     expect((await fetch(`${baseUrl}/expired`, { headers: { cookie } })).status).toBe(401)
   })
 
-  it('revokes the previous owner grant when a fresh Host launch succeeds', async () => {
+  it('keeps multiple bounded owner grants independent when fresh Host launches succeed', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-remote-agent-ipc-'))
     roots.push(root)
     const socketPath = join(root, 'agent.sock')
@@ -286,8 +286,39 @@ describe('RemoteGateway', () => {
     const { baseUrl } = await fixture(socketPath)
     const first = await issueHostSession(baseUrl, 'a'.repeat(43))
     const second = await issueHostSession(baseUrl, 'b'.repeat(43))
-    expect((await fetch(`${baseUrl}/revoked`, { headers: { cookie: first } })).status).toBe(401)
+    expect((await fetch(`${baseUrl}/first`, { headers: { cookie: first } })).status).toBe(200)
     expect((await fetch(`${baseUrl}/current`, { headers: { cookie: second } })).status).toBe(200)
+  })
+
+  it('accepts an unexpired Host grant after Gateway restart and private-link rotation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-remote-agent-ipc-'))
+    roots.push(root)
+    const socketPath = join(root, 'agent.sock')
+    const grant = 'r'.repeat(43)
+    const agent = createNetServer(socket => {
+      socket.once('data', () => {
+        socket.end(`${JSON.stringify({ version: '1.0', ok: true, payload: { session_grant: grant, roles: ['owner'] } })}\n`)
+      })
+    })
+    agentServers.push(agent)
+    await new Promise<void>((resolve, reject) => { agent.once('error', reject); agent.listen(socketPath, resolve) })
+    const initial = await fixture(socketPath)
+    const cookie = await issueHostSession(initial.baseUrl, 't'.repeat(43))
+    await initial.gateway.close()
+    gateways.splice(gateways.indexOf(initial.gateway), 1)
+
+    const state = await RemoteStateStore.open(initial.state.filePath)
+    await state.rotate()
+    const restarted = new RemoteGateway({
+      targetPort: Number(new URL(initial.upstreamOrigin).port),
+      remoteOrigin: 'https://zsh.onlyservice.io',
+      state,
+      agentSocketPath: socketPath,
+    })
+    await restarted.listen()
+    gateways.push(restarted)
+    const baseUrl = `http://127.0.0.1:${restarted.port}`
+    expect((await fetch(`${baseUrl}/after-restart-and-rotation`, { headers: { cookie } })).status).toBe(200)
   })
 
   it('revokes an active owner WebSocket at the grant deadline without another request', async () => {
@@ -301,7 +332,7 @@ describe('RemoteGateway', () => {
     })
     agentServers.push(agent)
     await new Promise<void>((resolve, reject) => { agent.once('error', reject); agent.listen(socketPath, resolve) })
-    const { baseUrl } = await fixture(socketPath, { hostSessionTtlMs: 40 })
+    const { baseUrl } = await fixture(socketPath, { hostSessionTtlMs: 1_000 })
     const cookie = await issueHostSession(baseUrl, 't'.repeat(43))
     const socket = new WebSocket(`${baseUrl.replace('http:', 'ws:')}/api/events.host`, {
       headers: { cookie }, origin: 'https://zsh.onlyservice.io',

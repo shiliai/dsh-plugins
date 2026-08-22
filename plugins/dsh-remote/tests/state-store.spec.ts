@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { RemoteStateStore } from '../src/state-store.ts'
+import { MAX_HOST_SESSIONS, RemoteStateStore } from '../src/state-store.ts'
 
 const roots: string[] = []
 
@@ -91,5 +91,59 @@ describe('RemoteStateStore', () => {
     const next = await committed.rotate()
     expect(next.sessionVersion).toBe(before.sessionVersion + 1)
     expect((await RemoteStateStore.open(path)).current()).toEqual(next)
+  })
+
+  it('persists only bounded Host grant digests across restart and private-link rotation', async () => {
+    const path = await statePath()
+    const store = await RemoteStateStore.open(path)
+    const grants = Array.from({ length: MAX_HOST_SESSIONS + 2 }, (_, index) => Buffer.alloc(32, index + 1).toString('base64url'))
+    const now = Date.now()
+    for (const [index, grant] of grants.entries()) {
+      await store.addHostSession(grant, now + 20_000 + index, now)
+    }
+    await store.rotate()
+
+    const disk = await readFile(path, 'utf8')
+    for (const grant of grants) expect(disk).not.toContain(grant)
+    expect(JSON.parse(disk).hostSessions).toHaveLength(MAX_HOST_SESSIONS)
+    expect(store.verifyHostGrant(grants[0], now + 500)).toBeNull()
+    expect(store.verifyHostGrant(grants[1], now + 500)).toBeNull()
+    expect(store.verifyHostGrant(grants.at(-1), now + 500)).not.toBeNull()
+
+    const restarted = await RemoteStateStore.open(path)
+    expect(restarted.verifyHostGrant(grants.at(-1), now + 500)).not.toBeNull()
+    expect((await stat(path)).mode & 0o777).toBe(0o600)
+  })
+
+  it('prunes expired Host grant digests from persistent state', async () => {
+    const path = await statePath()
+    const store = await RemoteStateStore.open(path)
+    const grant = Buffer.alloc(32, 42).toString('base64url')
+    await store.addHostSession(grant, 2_000, 1_000)
+    expect(store.verifyHostGrant(grant, 1_999)).not.toBeNull()
+    expect(store.verifyHostGrant(grant, 2_000)).toBeNull()
+    await store.pruneExpiredHostSessions(2_000)
+    expect(JSON.parse(await readFile(path, 'utf8')).hostSessions).toEqual([])
+  })
+
+  it('migrates schema 1 state without inventing plaintext Host sessions', async () => {
+    const path = await statePath()
+    await mkdir(join(path, '..'), { recursive: true })
+    const token = Buffer.alloc(32, 7).toString('base64url')
+    await writeFile(path, JSON.stringify({ schema: 1, token, sessionVersion: 3, createdAt: 'created', rotatedAt: 'rotated' }), { mode: 0o600 })
+    const store = await RemoteStateStore.open(path)
+    expect(store.current()).toMatchObject({ schema: 2, token, sessionVersion: 3, hostSessions: [] })
+    expect(JSON.parse(await readFile(path, 'utf8')).schema).toBe(2)
+  })
+
+  it('rejects unknown state fields that could retain a plaintext Host grant', async () => {
+    const path = await statePath()
+    await mkdir(join(path, '..'), { recursive: true })
+    const token = Buffer.alloc(32, 7).toString('base64url')
+    await writeFile(path, JSON.stringify({
+      schema: 2, token, sessionVersion: 1, createdAt: 'created', rotatedAt: 'rotated', hostSessions: [],
+      sessionGrant: Buffer.alloc(32, 8).toString('base64url'),
+    }), { mode: 0o600 })
+    await expect(RemoteStateStore.open(path)).rejects.toThrow('unknown fields')
   })
 })

@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type OutgoingHttpHeaders, type Server, type ServerResponse } from 'node:http'
 import type { Socket } from 'node:net'
 import type { Duplex } from 'node:stream'
-import { createHash, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import httpProxy from 'http-proxy'
 import { redeemLaunch } from './agent-ipc.ts'
 import { REMOTE_COOKIE, RemoteStateStore } from './state-store.ts'
@@ -61,8 +61,7 @@ export class RemoteGateway {
   private readonly proxy = httpProxy.createProxyServer({ changeOrigin: true, ws: true, xfwd: false })
   private readonly upgradedSockets = new Map<string, Set<Duplex>>()
   private readonly connections = new Set<Socket>()
-  private hostSession: { key: string; expiresAt: number } | undefined
-  private hostSessionExpiryTimer: NodeJS.Timeout | undefined
+  private readonly hostSessionExpiryTimers = new Map<string, NodeJS.Timeout>()
   private boundPort: number | undefined
 
   constructor(private readonly options: RemoteGatewayOptions) {
@@ -94,6 +93,7 @@ export class RemoteGateway {
         response.destroy()
       }
     })
+    for (const session of options.state.hostSessions()) this.scheduleHostSessionExpiry(session)
   }
 
   get port(): number {
@@ -115,8 +115,8 @@ export class RemoteGateway {
   }
 
   async close(): Promise<void> {
-    if (this.hostSessionExpiryTimer !== undefined) clearTimeout(this.hostSessionExpiryTimer)
-    this.hostSessionExpiryTimer = undefined
+    for (const timer of this.hostSessionExpiryTimers.values()) clearTimeout(timer)
+    this.hostSessionExpiryTimers.clear()
     for (const sockets of this.upgradedSockets.values()) {
       for (const socket of sockets) socket.destroy()
     }
@@ -124,6 +124,7 @@ export class RemoteGateway {
     for (const connection of this.connections) connection.destroy()
     this.connections.clear()
     this.proxy.close()
+    await this.options.state.flush()
     await new Promise<void>((resolve, reject) => {
       this.server.close(error => error === undefined ? resolve() : reject(error))
     })
@@ -198,16 +199,13 @@ export class RemoteGateway {
     } else if (isLaunchRequest(body) && this.options.agentSocketPath !== undefined) {
       try {
         const result = await redeemLaunch(this.options.agentSocketPath, body.launchTicket)
-        this.revokeHostSession()
-        const hostSession = {
-          key: digest(result.sessionGrant),
-          expiresAt: this.now() + (this.options.hostSessionTtlMs ?? HOST_SESSION_TTL_MS),
-        }
-        this.hostSession = hostSession
-        this.scheduleHostSessionExpiry(hostSession)
+        const ttl = this.options.hostSessionTtlMs ?? HOST_SESSION_TTL_MS
+        const added = await this.options.state.addHostSession(result.sessionGrant, this.now() + ttl, this.now())
+        for (const digest of added.removed) this.revokeHostSession(digest)
+        this.scheduleHostSessionExpiry(added.session)
         cookies = [
-          cookieHeader(HOST_COOKIE, result.sessionGrant, 28_800),
-          cookieHeader(HOST_UI_COOKIE, '1', 28_800, false),
+          cookieHeader(HOST_COOKIE, result.sessionGrant, Math.ceil(ttl / 1000)),
+          cookieHeader(HOST_UI_COOKIE, '1', Math.ceil(ttl / 1000), false),
           clearCookie(REMOTE_COOKIE),
         ]
       } catch {
@@ -259,39 +257,33 @@ export class RemoteGateway {
   private authenticate(header: string | undefined): AuthenticatedSession | null {
     const grant = cookieValue(header, HOST_COOKIE)
     if (grant !== undefined && /^[A-Za-z0-9_-]{43}$/u.test(grant)) {
-      const key = digest(grant)
-      if (this.hostSession?.key === key && this.hostSession.expiresAt > this.now()) {
-        return { kind: 'owner', socketKey: `owner:${key}` }
-      }
-      if (this.hostSession?.key === key) this.revokeHostSession(key)
+      const session = this.options.state.verifyHostGrant(grant, this.now())
+      if (session !== null) return { kind: 'owner', socketKey: `owner:${session.digest}` }
     }
     const privateVersion = this.options.state.authenticateCookie(header)
     if (privateVersion !== null) return { kind: 'private', socketKey: `private:${privateVersion}` }
     return null
   }
 
-  private revokeHostSession(key = this.hostSession?.key): void {
-    if (key === undefined) return
-    if (this.hostSession?.key === key) {
-      this.hostSession = undefined
-      if (this.hostSessionExpiryTimer !== undefined) clearTimeout(this.hostSessionExpiryTimer)
-      this.hostSessionExpiryTimer = undefined
-    }
+  private revokeHostSession(key: string, persist = false): void {
+    const timer = this.hostSessionExpiryTimers.get(key)
+    if (timer !== undefined) clearTimeout(timer)
+    this.hostSessionExpiryTimers.delete(key)
     const socketKey = `owner:${key}`
     const sockets = this.upgradedSockets.get(socketKey)
     this.upgradedSockets.delete(socketKey)
     for (const socket of sockets ?? []) socket.destroy()
+    if (persist) void this.options.state.removeHostSession(key)
   }
 
-  private scheduleHostSessionExpiry(session: { key: string; expiresAt: number }): void {
-    if (this.hostSessionExpiryTimer !== undefined) clearTimeout(this.hostSessionExpiryTimer)
+  private scheduleHostSessionExpiry(session: { digest: string; expiresAt: number }): void {
+    const existing = this.hostSessionExpiryTimers.get(session.digest)
+    if (existing !== undefined) clearTimeout(existing)
     const timer = setTimeout(() => {
-      if (this.hostSession?.key === session.key && this.hostSession.expiresAt === session.expiresAt) {
-        this.revokeHostSession(session.key)
-      }
+      this.revokeHostSession(session.digest, true)
     }, Math.max(0, session.expiresAt - this.now()))
     timer.unref()
-    this.hostSessionExpiryTimer = timer
+    this.hostSessionExpiryTimers.set(session.digest, timer)
   }
 
   private now(): number {
@@ -411,10 +403,6 @@ function cookieValue(header: string | undefined, name: string): string | undefin
     if (key === name) return rest.join('=')
   }
   return undefined
-}
-
-function digest(value: string): string {
-  return createHash('sha256').update(value, 'utf8').digest('base64url')
 }
 
 function isServerResponse(value: ServerResponse | Duplex): value is ServerResponse {

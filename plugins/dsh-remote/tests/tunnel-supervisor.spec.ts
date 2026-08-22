@@ -6,7 +6,7 @@ import { socketCleanupArgs, socketModeArgs, sshArgs, TunnelSupervisor } from '..
 afterEach(() => { vi.useRealTimers() })
 
 describe('TunnelSupervisor', () => {
-  it('uses argument-array SSH hardening and stops after its bounded retry count', async () => {
+  it('uses argument-array SSH hardening and retries forever with capped backoff', async () => {
     vi.useFakeTimers()
     const children: FakeChild[] = []
     const remoteCommand = vi.fn(async () => {})
@@ -39,7 +39,13 @@ describe('TunnelSupervisor', () => {
     await vi.advanceTimersByTimeAsync(80)
     expect(children).toHaveLength(2)
     children[1]?.emit('exit', 255, null)
-    expect(supervisor.status()).toMatchObject({ phase: 'failed', attempts: 2, reason: 'SSH retry limit reached.' })
+    expect(supervisor.status()).toMatchObject({ phase: 'reconnecting', attempts: 2 })
+    await vi.advanceTimersByTimeAsync(160)
+    expect(children).toHaveLength(3)
+    children[2]?.emit('exit', 255, null)
+    await vi.advanceTimersByTimeAsync(320)
+    expect(children).toHaveLength(4)
+    expect(supervisor.status()).toMatchObject({ phase: 'reconnecting', attempts: 4 })
   })
 
   it('reports online only after the configured stability interval survives', async () => {

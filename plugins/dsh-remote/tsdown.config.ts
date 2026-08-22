@@ -57,6 +57,7 @@ export default defineConfig([
     dts: false,
     clean: true,
     external: [/^@deepseek-ai\//],
+    noExternal: id => id === 'http-proxy' || id.startsWith('http-proxy/') ? true : undefined,
   },
   {
     name: `${PACKAGE_ID}/client`,
