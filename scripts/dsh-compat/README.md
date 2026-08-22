@@ -11,10 +11,11 @@ Run the default latest-version check with:
 ~/.local/bin/dsh-compat-check
 ```
 
-The runner uses only `127.0.0.1:3380` and `127.0.0.1:30321`, refuses to overlap
-the production ports, and enforces the plugin peer contract before runtime
-tests. It records immutable version, commit, package hash, HTTP, WebSocket,
-late-reset, and production-isolation evidence under
+The runner uses only `127.0.0.1:3380` and `127.0.0.1:30321` and refuses to
+overlap the production ports. Declared peer ranges are recorded as diagnostic
+evidence but never block installation or runtime tests. Compatibility is based
+on the observed install, startup, HTTP, WebSocket, late-reset, and
+production-isolation results under
 `~/.local/state/dsh-compat/runs/`.
 
 Set `DSH_COMPAT_DSH_SPEC=<version>` only to reproduce a historical result. The

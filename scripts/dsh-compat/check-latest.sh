@@ -141,7 +141,7 @@ archive=$(find "$work_dir/artifacts" -maxdepth 1 -type f -name '*.tgz' -print | 
 [ -n "$archive" ] && [ -f "$archive" ] || { echo "dsh-remote package was not created" >>"$log"; exit 1; }
 sha256sum "$archive" >"$run_dir/dsh-remote-package.sha256"
 
-step peer-contract
+step peer-observation
 node "$probe" peers "$runtime" "$remote_manifest" "$run_dir/peer-compatibility.json" >>"$log" 2>&1
 
 step install-plugin
