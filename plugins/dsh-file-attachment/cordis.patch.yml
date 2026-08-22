@@ -1,0 +1,10 @@
+- insert:
+  - id: dsh-file-attachment
+    name: '@dsh-plugins/dsh-file-attachment'
+    inject: [webServer]
+    config:
+      maxFileBytes: 26214400
+      maxFilesPerMessage: 10
+      maxMessageBytes: 104857600
+      ttlMs: 86400000
+      cleanupIntervalMs: 3600000
