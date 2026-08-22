@@ -127,17 +127,14 @@ async function checkPeers(runtime, manifestPath, output) {
       range,
       versions,
       optional,
-      compatible: versions.length === 0
+      declaredCompatible: versions.length === 0
         ? optional
         : versions.length === 1 && semver.satisfies(versions[0], range, { includePrerelease: true }),
     })
   }
-  const value = { compatible: checks.every(item => item.compatible), checks }
+  const value = { declaredCompatible: checks.every(item => item.declaredCompatible), checks }
   await writeJson(output, value)
-  if (!value.compatible) {
-    const failed = checks.filter(item => !item.compatible).map(item => `${item.name}@${item.versions.join(',') || 'missing'} requires ${item.range}`)
-    throw new Error(`dsh-remote peer contract rejected latest DSH: ${failed.join('; ')}`)
-  }
+  return value
 }
 
 async function installedVersions(runtime, name) {
@@ -304,4 +301,4 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-export { assertIsolated, validateCommit, validateVersion }
+export { assertIsolated, checkPeers, validateCommit, validateVersion }
