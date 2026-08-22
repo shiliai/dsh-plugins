@@ -6,6 +6,7 @@ Monorepo for independently versioned DeepSeek Harness plugins.
 
 ```text
 plugins/
+  dsh-file-attachment/
   dsh-obsidian/
   dsh-remote/
   dsh-wecom/
@@ -30,6 +31,7 @@ Run one plugin command with a workspace filter:
 
 ```sh
 pnpm --filter @dsh-plugins/dsh-remote check
+pnpm --filter @dsh-plugins/dsh-file-attachment check
 pnpm --filter @dsh-plugins/dsh-obsidian pack:check
 pnpm --filter @dsh-plugins/dsh-wecom check
 ```
@@ -47,7 +49,9 @@ the JSON instead of replacing them.
 
 ```sh
 dsh plugin --profile web config set --location=project --json allowBuilds \
-  '{"@dsh-plugins/dsh-obsidian@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-obsidian@git+ssh://git@github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-remote@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-remote@git+ssh://git@github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-wecom@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-wecom@git+ssh://git@github.com/shiliai/dsh-plugins.git":true}'
+  '{"@dsh-plugins/dsh-file-attachment@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-file-attachment@git+ssh://git@github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-obsidian@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-obsidian@git+ssh://git@github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-remote@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-remote@git+ssh://git@github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-wecom@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-wecom@git+ssh://git@github.com/shiliai/dsh-plugins.git":true}'
+dsh plugin --profile web add \
+  'github:shiliai/dsh-plugins#path:/plugins/dsh-file-attachment'
 dsh plugin --profile web add \
   'github:shiliai/dsh-plugins#path:/plugins/dsh-obsidian'
 dsh plugin --profile web add \
