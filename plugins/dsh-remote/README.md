@@ -43,7 +43,8 @@ The default reverse-forward target is
 directory. The supervisor permits only a safe SSH alias or `user@host` target,
 uses strict host-key checks, removes the dedicated stale socket before binding,
 and keeps a new child in `starting` until a fixed remote `chmod 0660` succeeds.
-If permission preparation fails, it terminates that tunnel before bounded retry.
+If permission preparation fails, it terminates that tunnel before retrying
+forever with jittered exponential delay capped at the configured maximum.
 
 ## Private Link
 
@@ -61,10 +62,11 @@ WebSockets before reporting success.
 ## Remote Host Owner Launch
 
 A Remote Host owner launch exchanges its one-time ticket through Agent IPC for
-one expiring, HTTP-only owner grant. A fresh launch revokes the previous grant
-and closes its upgraded connections. The grant expires after eight hours,
-closes its active WebSockets at the expiry deadline, and is validated on every
-HTTP request and WebSocket reconnect.
+one expiring, HTTP-only owner grant. Only the grant digest and expiry are stored
+in the existing mode-0600 state file. Up to 16 unexpired grants remain valid
+across DSH/Gateway restart and private-link rotation. Each grant expires after
+eight hours, closes its active WebSockets at the expiry deadline, and is
+validated on every HTTP request and WebSocket reconnect.
 
 Only a live owner grant can proxy the remote configuration methods
 `settings.*`, `credentials.*`, and `llm.discoverModels` with loopback authority.
@@ -72,8 +74,9 @@ Ordinary private-link sessions remain denied for those methods and every other
 loopback-only RPC. Caller-supplied `x-dsh-remote-*` headers are removed before
 proxying. A separate readable owner UI cookie lets the DSH rc.8 Settings mirror
 request its redacted configuration view; it is only a display hint and is never
-accepted as authorization by the gateway. No grant or credential value is
-written to a URL, browser-readable storage, response body, or log.
+accepted as authorization by the gateway. No plaintext grant or credential
+value is written to persistent state, a URL, browser-readable storage, response
+body, or log.
 
 ## Edge Operations
 
