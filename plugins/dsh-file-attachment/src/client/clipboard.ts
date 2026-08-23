@@ -23,3 +23,11 @@ export function clipboardFiles(data: DataTransfer | null): File[] {
     return true
   })
 }
+
+export function claimClipboardFiles(event: Pick<ClipboardEvent, 'clipboardData' | 'preventDefault' | 'stopImmediatePropagation'>): File[] {
+  const files = clipboardFiles(event.clipboardData)
+  if (files.length === 0) return files
+  event.preventDefault()
+  event.stopImmediatePropagation()
+  return files
+}

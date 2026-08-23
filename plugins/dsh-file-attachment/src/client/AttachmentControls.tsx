@@ -7,7 +7,7 @@ import X from 'lucide-react/dist/esm/icons/x'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { AttachmentLimits, UploadedFile } from '../contracts.ts'
 import { attachmentApi } from './api.ts'
-import { clipboardFiles } from './clipboard.ts'
+import { claimClipboardFiles } from './clipboard.ts'
 import { DraftAttachmentStore } from './draft-store.ts'
 import { appendClientReferences, formatClientReference, removeClientReference } from './reference.ts'
 import { css } from './styles.ts'
@@ -62,9 +62,8 @@ export function AttachmentButton(props: InputProps) {
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
       if (!isComposerTextTarget(event.target)) return
-      const files = clipboardFiles(event.clipboardData)
+      const files = claimClipboardFiles(event)
       if (files.length === 0) return
-      event.preventDefault()
       void addFiles(files)
     }
     const onDragOver = (event: DragEvent) => {
