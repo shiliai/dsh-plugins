@@ -1,0 +1,53 @@
+{
+  "profile": "web",
+  "settingsSource": "settings.yaml",
+  "dshPackage": "@deepseek-ai/dsh",
+  "dshInstallCommand": "npm install -g @deepseek-ai/dsh",
+  "updaterSource": "github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater",
+  "updaterRepositories": [
+    "git+https://github.com/shiliai/dsh-plugins.git",
+    "git+ssh://git@github.com/shiliai/dsh-plugins.git"
+  ],
+  "plugins": [
+    {
+      "id": "dsh-better-sidebar",
+      "name": "Better Sidebar",
+      "sourceType": "npm",
+      "spec": "dsh-better-sidebar@^0.15.0",
+      "package": "dsh-better-sidebar",
+      "required": true
+    },
+    {
+      "id": "dsh-obsidian",
+      "name": "Obsidian vault browser & Markdown editor",
+      "sourceType": "github",
+      "spec": "github:shiliai/dsh-plugins#path:/plugins/dsh-obsidian",
+      "package": "@dsh-plugins/dsh-obsidian",
+      "required": false
+    },
+    {
+      "id": "dsh-remote",
+      "name": "Private remote-access gateway",
+      "sourceType": "github",
+      "spec": "github:shiliai/dsh-plugins#path:/plugins/dsh-remote",
+      "package": "@dsh-plugins/dsh-remote",
+      "required": false
+    },
+    {
+      "id": "dsh-wecom",
+      "name": "WeCom smart-robot long-connection bridge",
+      "sourceType": "github",
+      "spec": "github:shiliai/dsh-plugins#path:/plugins/dsh-wecom",
+      "package": "@dsh-plugins/dsh-wecom",
+      "required": false
+    },
+    {
+      "id": "dsh-file-attachment",
+      "name": "Host-local temporary file attachments",
+      "sourceType": "github",
+      "spec": "github:shiliai/dsh-plugins#path:/plugins/dsh-file-attachment",
+      "package": "@dsh-plugins/dsh-file-attachment",
+      "required": false
+    }
+  ]
+}
