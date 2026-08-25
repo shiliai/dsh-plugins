@@ -53,25 +53,38 @@ function baseContext(opts: {
   selection?: { provider: string; model: string }
   whenIdle?: (index: number) => Promise<void>
   dispose?: (index: number) => Promise<void>
+  /** If provided, `sessionPersistence.listSnapshots` returns these session ids. */
+  persisted?: string[]
+  /** If true, `agents.resume` creates a real agent (mirrors create). */
+  resumeHandler?: boolean
+  /** Session ids reported as already live (e.g. active in the browser). */
+  liveIds?: string[]
 } = {}) {
   const agents: FakeAgent[] = []
   const creates: Array<Record<string, unknown>> = []
-  const resumes = vi.fn()
+  const resumes: Array<Record<string, unknown>> = []
   const selection = opts.selection ?? { provider: 'p', model: 'm' }
+  const makeHandle = (options: Record<string, unknown>) => {
+    const index = agents.length
+    const a = makeAgent(`agent${index + 1}`)
+    if (opts.whenIdle) a.whenIdle = () => opts.whenIdle!(index)
+    agents.push(a)
+    return { agent: a, dispose: async () => opts.dispose?.(index) }
+  }
   const mockCtx = {
     get(name: string): unknown {
       if (name === 'agents') {
         return {
-          get: (_id: unknown) => undefined,
+          get: (id: unknown) => (opts.liveIds ?? []).includes(String(id)) ? { id } : undefined,
           create: async (options: Record<string, unknown>) => {
             creates.push(options)
-            const index = agents.length
-            const a = makeAgent(`agent${index + 1}`)
-            if (opts.whenIdle) a.whenIdle = () => opts.whenIdle!(index)
-            agents.push(a)
-            return { agent: a, dispose: async () => opts.dispose?.(index) }
+            return makeHandle(options)
           },
-          resume: resumes,
+          resume: async (options: Record<string, unknown>) => {
+            resumes.push(options)
+            if (opts.resumeHandler) return makeHandle(options)
+            throw new Error('resume not expected')
+          },
         }
       }
       if (name === 'agentDefaultModel') {
@@ -79,6 +92,11 @@ function baseContext(opts: {
       }
       if (name === 'sessions') return { flush: async () => {} }
       if (name === 'agentPresets' && opts.withPresets !== false) return presetsService()
+      if (name === 'sessionPersistence') {
+        return {
+          listSnapshots: async () => (opts.persisted ?? []).map((id) => ({ header: { id } })),
+        }
+      }
       return undefined
     },
   }
@@ -190,7 +208,7 @@ describe('slash commands', () => {
     // fresh agent spawned for the new generation
     expect(agents).toHaveLength(2)
     expect(creates[0]!.sessionId).not.toEqual(creates[1]!.sessionId)
-    expect(resumes).not.toHaveBeenCalled()
+    expect(resumes).toHaveLength(0)
   })
 
   it('/pwd reports the working directory', async () => {
@@ -457,5 +475,113 @@ describe('authorization and cwd containment', () => {
       await rm(root, { recursive: true, force: true })
       await rm(outside, { recursive: true, force: true })
     }
+  })
+})
+
+describe('resumeSessions', () => {
+  it('resumes the latest persisted generation for the chat when enabled', async () => {
+    const persistedIds = [
+      'wecom:bot-a:single:u1:2',
+      'wecom:bot-a:single:u1:0',
+      'wecom:bot-a:single:other:1',
+    ]
+    const { mockCtx, creates, resumes } = baseContext({ persisted: persistedIds, resumeHandler: true })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's', resumeSessions: true })
+    await bridge.enqueue(msg('u1', '继续'))
+    expect(resumes).toHaveLength(1)
+    expect(resumes[0]!.resumeSessionId).toBe('wecom:bot-a:single:u1:2')
+    expect(creates).toHaveLength(0)
+  })
+
+  it('creates a fresh session when nothing is persisted', async () => {
+    const { mockCtx, creates, resumes } = baseContext({ resumeHandler: true })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's', resumeSessions: true })
+    await bridge.enqueue(msg('u1', '第一句'))
+    expect(resumes).toHaveLength(0)
+    expect(creates).toHaveLength(1)
+    expect(creates[0]!.sessionId).toBe('wecom:bot-a:single:u1:0')
+  })
+
+  it('is disabled by default (never resumes, keeps epoch in id)', async () => {
+    const { mockCtx, creates, resumes } = baseContext({ persisted: ['wecom:bot-a:single:u1:5'], resumeHandler: true })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's' })
+    await bridge.enqueue(msg('u1', '第一句'))
+    expect(resumes).toHaveLength(0)
+    expect(creates).toHaveLength(1)
+    expect(String(creates[0]!.sessionId)).toMatch(/^wecom:bot-a:single:u1:[0-9a-f-]+:0$/)
+  })
+
+  it('falls back to create when persistence does not list a matching session', async () => {
+    const { mockCtx, creates, resumes } = baseContext({ persisted: ['wecom:bot-a:single:other:3'], resumeHandler: true })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's', resumeSessions: true })
+    await bridge.enqueue(msg('u1', '第一句'))
+    expect(resumes).toHaveLength(0)
+    expect(creates).toHaveLength(1)
+  })
+
+  it('does not resume again after /new (fresh generation is created)', async () => {
+    const { mockCtx, creates, resumes } = baseContext({ resumeHandler: true })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's', resumeSessions: true })
+    await bridge.enqueue(msg('u1', '第一句'))
+    await bridge.enqueue(msg('u1', '/new'))
+    await bridge.enqueue(msg('u1', '新会话第一句'))
+    expect(resumes).toHaveLength(0)
+    expect(creates).toHaveLength(2)
+    expect(creates[0]!.sessionId).toBe('wecom:bot-a:single:u1:0')
+    expect(creates[1]!.sessionId).toBe('wecom:bot-a:single:u1:1')
+  })
+})
+
+describe('shared web session binding (option A)', () => {
+  it('config bindSession: resumes the bound web session on first turn', async () => {
+    const { mockCtx, creates, resumes } = baseContext({ resumeHandler: true })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, {
+      botId: 'b', botSecret: 's', bindSession: { 'single:u1': 'web-ses-123' },
+    })
+    await bridge.enqueue(msg('u1', '写入共享会话'))
+    expect(resumes).toHaveLength(1)
+    expect(resumes[0]!.resumeSessionId).toBe('web-ses-123')
+    expect(creates).toHaveLength(0)
+  })
+
+  it('refuses to attach when the target session is already live (browser active)', async () => {
+    const { mockCtx, creates, resumes } = baseContext({ resumeHandler: true, liveIds: ['web-ses-live'] })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, {
+      botId: 'b', botSecret: 's', bindSession: { 'single:u1': 'web-ses-live' },
+    })
+    await expect(bridge.enqueue(msg('u1', '尝试写入'))).rejects.toThrow(/live in the browser/)
+    expect(resumes).toHaveLength(0)
+    expect(creates).toHaveLength(0)
+  })
+
+  it('/attach binds a chat to a web session and resumes it', async () => {
+    const { mockCtx, resumes } = baseContext({ resumeHandler: true })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's' })
+    const res = await bridge.enqueue(msg('u1', '/attach web-ses-456'))
+    expect(res.ok).toBe(true)
+    expect(res.text).toContain('web-ses-456')
+    await bridge.enqueue(msg('u1', '写入共享会话'))
+    expect(resumes).toHaveLength(1)
+    expect(resumes[0]!.resumeSessionId).toBe('web-ses-456')
+  })
+
+  it('/attach with no argument reports the current binding', async () => {
+    const { mockCtx } = baseContext({ resumeHandler: true })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's', bindSession: { 'single:u1': 'web-ses-789' } })
+    const res = await bridge.enqueue(msg('u1', '/attach'))
+    expect(res.ok).toBe(true)
+    expect(res.text).toContain('web-ses-789')
+  })
+
+  it('/detach returns to an independent chat session', async () => {
+    const { mockCtx, creates, resumes } = baseContext({ resumeHandler: true })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's', bindSession: { 'single:u1': 'web-ses-789' } })
+    await bridge.enqueue(msg('u1', '共享写入'))
+    expect(resumes).toHaveLength(1)
+    const res = await bridge.enqueue(msg('u1', '/detach'))
+    expect(res.ok).toBe(true)
+    await bridge.enqueue(msg('u1', '独立会话第一句'))
+    expect(resumes).toHaveLength(1)
+    expect(creates).toHaveLength(1)
   })
 })
