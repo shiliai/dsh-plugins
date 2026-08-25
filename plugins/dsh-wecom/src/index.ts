@@ -1,6 +1,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { randomUUID } from 'node:crypto'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentHandle as DshAgentHandle } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -61,7 +63,11 @@ export interface Config {
    * DSH browser and the WeCom bot share one conversation log. The target must be
    * persisted (flushed in the browser) and idle; a session currently live in the
    * browser is refused until it settles. `/attach` and `/detach` override or
-   * clear a per-chat binding at runtime.
+   * clear a per-chat binding at runtime. Runtime bindings made with `/attach`,
+   * `/sessions <id>`, or `/new` are persisted to `.dsh-wecom-bindings.json` in
+   * the action workspace (see `defaultWorkspace`) and restored after a process
+   * restart, so a bound chat keeps pointing at its shared web session across
+   * restarts.
    */
   bindSession?: Record<string, string>
   /**
@@ -82,6 +88,14 @@ export interface Config {
   showThinking?: boolean
   /** Placeholder text to show while thinking. Defaults to "🤔 思考中…". */
   thinkingText?: string
+  /**
+   * Persist runtime `chatKey -> web session` bindings (from `/attach`,
+   * `/sessions <id>`, and `/new`) across process restarts. Defaults to true.
+   * Disable to keep bindings process-local.
+   */
+  persistBindings?: boolean
+  /** Override the file used to persist runtime bindings. Defaults to `<defaultWorkspace>/.dsh-wecom-bindings.json`. */
+  bindingsFile?: string
 }
 
 /** Keep runtime-loaded configuration compatible with the former apply() default. */
@@ -153,6 +167,8 @@ interface ChatState {
   boundSessionId: string | undefined
   /** True when boundSessionId is a freshly minted session (create on first use, not resume). */
   boundFresh: boolean
+  /** True once runtime binding persistence has been consulted for this state. */
+  bindingHydrated: boolean
   /** Resolved action-workspace directory (`/new` starts a fresh session here). */
   workspace: string
 }
@@ -204,6 +220,10 @@ export class WecomAgentBridge {
   /** Latest assembled assistant content of the web turn being mirrored. */
   private readonly relayAssistantText = new Map<string, string>()
   private readonly eventsDisposer: (() => void) | undefined
+  /** Serialized read-modify-write queue for the persisted bindings file. */
+  private bindingsQueue: Promise<void> = Promise.resolve()
+  /** Cached chatKey -> bound session id map read from the bindings file. */
+  private cachedBindings: Map<string, string> | undefined
   private accepting = true
 
   constructor(private ctx: Context, private bot: WecomBot, config: Config) {
@@ -237,6 +257,7 @@ export class WecomAgentBridge {
         aligned: false,
         boundSessionId: this.config.bindSession?.[chatKey(type, message.chatId)] ?? undefined,
         boundFresh: false,
+        bindingHydrated: false,
         workspace: this.workspaceDir(),
       }
       this.states.set(key, state)
@@ -342,6 +363,74 @@ export class WecomAgentBridge {
   }
 
   /**
+   * Location of the runtime wecom-chat -> bound web session map. Persisted inside
+   * the action workspace so bindings survive process restarts. Returns undefined
+   * when no persistent workspace is configured (bindings stay process-local).
+   */
+  private bindingsPath(): string | undefined {
+    if (this.config.persistBindings === false) return undefined
+    if (this.config.bindingsFile) return this.config.bindingsFile
+    if (!this.config.defaultWorkspace) return undefined
+    return join(this.workspaceDir(), '.dsh-wecom-bindings.json')
+  }
+
+  private async loadBindings(): Promise<Map<string, string>> {
+    if (this.cachedBindings) return this.cachedBindings
+    const map = new Map<string, string>()
+    const path = this.bindingsPath()
+    if (path) {
+      try {
+        const json = JSON.parse(await readFile(path, 'utf8')) as Record<string, string>
+        for (const [key, value] of Object.entries(json)) {
+          if (typeof value === 'string' && value) map.set(key, value)
+        }
+      } catch (error) {
+        // Missing file or corrupt content are both treated as "no bindings yet".
+        if (safeErrorKind(error) !== 'ENOENT') this.log.warn('bindings load failed', { path, error: safeErrorKind(error) })
+      }
+    }
+    this.cachedBindings = map
+    return map
+  }
+
+  /** Serialize a read-modify-write of the bindings file for one chat key. */
+  private persistBinding(chatType: string, chatId: string, sessionId: string | undefined): void {
+    const key = chatKey(chatType, chatId)
+    const run = this.bindingsQueue.then(async () => {
+      const path = this.bindingsPath()
+      if (!path) return
+      const map = await this.loadBindings()
+      if (sessionId) map.set(key, sessionId)
+      else map.delete(key)
+      try {
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(path, JSON.stringify(Object.fromEntries(map), null, 2), 'utf8')
+      } catch (error) {
+        this.log.warn('bindings persist failed', { key, error: safeErrorKind(error) })
+      }
+    }).catch(() => undefined)
+    this.bindingsQueue = run
+  }
+
+  /**
+   * Restore a runtime-persisted binding (from `/attach`, `/sessions <id>`, or
+   * `/new`) after a restart. Called once per state before the first agent turn;
+   * does nothing when the chat is already bound (config), freshly minted, or has
+   * no persisted binding.
+   */
+  private async hydrateBinding(st: ChatState): Promise<void> {
+    if (st.bindingHydrated) return
+    st.bindingHydrated = true
+    if (st.boundSessionId !== undefined) return
+    const map = await this.loadBindings()
+    const persisted = map.get(chatKey(st.chatType, st.chatId))
+    if (!persisted) return
+    st.boundSessionId = persisted
+    st.boundFresh = false
+    this.log.info('binding hydrated from disk', { chatId: st.chatId, chatType: st.chatType, session: persisted })
+  }
+
+  /**
    * Find the highest persisted generation for this chat when resumeSessions is
    * enabled. Only sessions materialized by this plugin (the `wecom:` namespace)
    * are considered, so unrelated persisted sessions are never touched. Returns
@@ -414,6 +503,8 @@ export class WecomAgentBridge {
       this.log.info('new generation: detached bound session', { chatId: st.chatId, chatType: st.chatType, boundSession: st.boundSessionId })
       st.boundSessionId = undefined
       st.aligned = false
+      // Drop any persisted binding so a later restart does not resurrect it.
+      this.persistBinding(st.chatType, st.chatId, undefined)
     }
     st.lastActiveAt = Date.now()
     this.log.info('new generation', { chatId: st.chatId, chatType: st.chatType, generation: st.generation })
@@ -421,6 +512,9 @@ export class WecomAgentBridge {
 
   private async ensureAgent(st: ChatState): Promise<LiveHandle> {
     if (st.handle) return st.handle
+    // Restore a runtime-persisted web-session binding after a restart before
+    // deciding whether to resume that shared session or a fresh wecom: session.
+    await this.hydrateBinding(st)
     const cwd = await resolveAllowedDirectory(st.cwd, this.cwdRoots())
     if (!cwd) throw new Error('dsh-wecom: configured working directory is unavailable or outside allowedCwdRoots')
     st.cwd = cwd
@@ -625,6 +719,7 @@ export class WecomAgentBridge {
     st.boundSessionId = freshId
     st.boundFresh = true
     st.aligned = true
+    this.persistBinding(st.chatType, st.chatId, freshId)
     this.log.info('new', { chatId: st.chatId, chatType: st.chatType, cwd: target, workspace: workspace, freshSession: freshId })
     const note = workspace && workspace !== target ? `工作区 \`${workspace}\` 不可用，已回退到 \`${target}\`。` : ''
     return { text: `${note}已开启新会话 \`${freshId}\`，下一条消息将在此目录创建（DSH web 中将显示）。`, ok: true }
@@ -657,6 +752,8 @@ export class WecomAgentBridge {
       }
       st.boundSessionId = target
       st.boundFresh = false
+      st.bindingHydrated = true
+      this.persistBinding(st.chatType, st.chatId, target)
       this.log.info('sessions bind', { chatId: st.chatId, chatType: st.chatType, to: target })
       return { text: `已绑定会话 \`${target}\`。下一条消息将写入该会话（与 DSH web 共享）。`, ok: true }
     }
@@ -699,6 +796,8 @@ export class WecomAgentBridge {
     }
     st.boundSessionId = target
     st.boundFresh = false
+    st.bindingHydrated = true
+    this.persistBinding(st.chatType, st.chatId, target)
     this.log.info('attach', { chatId: st.chatId, chatType: st.chatType, from: previous, to: target })
     return { text: `已绑定会话 \`${target}\`。下一条消息将写入该会话（与 DSH web 共享）。`, ok: true }
   }

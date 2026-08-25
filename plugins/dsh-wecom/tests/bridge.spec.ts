@@ -694,7 +694,7 @@ describe('shared web session binding (option A)', () => {
 
   it('/new with defaultWorkspace mints a new browser session in the workspace', async () => {
     const { mockCtx, creates } = baseContext()
-    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's', defaultWorkspace: process.cwd() })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's', defaultWorkspace: process.cwd(), persistBindings: false })
     await bridge.enqueue(msg('u1', '第一句'))
     expect(creates).toHaveLength(1)
     const res = await bridge.enqueue(msg('u1', '/new'))
@@ -708,7 +708,7 @@ describe('shared web session binding (option A)', () => {
 
   it('attaches a bound browser session to its cwd workspace for the web UI', async () => {
     const { mockCtx, creates, attaches } = baseContext({ withRegistry: true })
-    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's', defaultWorkspace: process.cwd() })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's', defaultWorkspace: process.cwd(), persistBindings: false })
     await bridge.enqueue(msg('u1', '/new'))
     await bridge.enqueue(msg('u1', '新会话第一句'))
     expect(creates).toHaveLength(1)
@@ -836,5 +836,47 @@ describe('thinking indicator', () => {
     expect(bot.openThinking).toHaveBeenCalledTimes(0)
     expect(bot.replyText).toHaveBeenCalledTimes(1)
     expect(bot.replyText.mock.calls[0]![1]).toContain('你好')
+  })
+})
+
+describe('binding persistence across restarts', () => {
+  it('restores a runtime binding after a restart (second bridge resumes the same session)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'wecom-bind-'))
+    try {
+      const { mockCtx: c1 } = baseContext()
+      const bridge1 = new WecomAgentBridge(c1 as never, fakeBot() as never, { botId: 'b', botSecret: 's', defaultWorkspace: dir })
+      await bridge1.enqueue(msg('u1', '/attach web-ses-persist'))
+      await new Promise((resolve) => setTimeout(resolve, 30)) // flush persist write
+
+      // Simulate a process restart: a brand new bridge over the same workspace.
+      const { mockCtx: c2, resumes, creates } = baseContext({ resumeHandler: true })
+      const bridge2 = new WecomAgentBridge(c2 as never, fakeBot() as never, { botId: 'b', botSecret: 's', defaultWorkspace: dir })
+      await bridge2.enqueue(msg('u1', '继续'))
+      expect(resumes).toHaveLength(1)
+      expect(String(resumes[0]!.resumeSessionId)).toBe('web-ses-persist')
+      expect(creates).toHaveLength(0)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('/detach removes the persisted binding so a restart does not resurrect it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'wecom-bind-'))
+    try {
+      const { mockCtx: c1 } = baseContext()
+      const bridge1 = new WecomAgentBridge(c1 as never, fakeBot() as never, { botId: 'b', botSecret: 's', defaultWorkspace: dir })
+      await bridge1.enqueue(msg('u1', '/attach web-ses-x'))
+      await bridge1.enqueue(msg('u1', '/detach'))
+      await new Promise((resolve) => setTimeout(resolve, 30))
+
+      const { mockCtx: c2, resumes, creates } = baseContext({ resumeHandler: true })
+      const bridge2 = new WecomAgentBridge(c2 as never, fakeBot() as never, { botId: 'b', botSecret: 's', defaultWorkspace: dir, resumeSessions: true })
+      await bridge2.enqueue(msg('u1', '继续'))
+      // no binding restored → a fresh wecom: session is created (nothing resumed)
+      expect(resumes).toHaveLength(0)
+      expect(creates).toHaveLength(1)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })

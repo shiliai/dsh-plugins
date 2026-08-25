@@ -108,6 +108,11 @@ Add a user patch with explicit identities and roots appropriate for the host:
         showThinking: true
         # Optional. Placeholder text shown while thinking. Defaults to "🤔 思考中…".
         thinkingText: '🤔 思考中…'
+        # Optional. Persist runtime chat->web-session bindings (/attach, /sessions,
+        # /new) across process restarts, so a bound chat keeps pointing at its
+        # shared web session after a restart. Stored in
+        # <defaultWorkspace>/.dsh-wecom-bindings.json. Defaults to true.
+        persistBindings: true
 ```
 
 `allowChats` authorizes direct chats by chat id or userid. For a group it
