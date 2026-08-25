@@ -24,6 +24,8 @@ export const COMMANDS: Array<{ name: string; usage: string; desc: string }> = [
   { name: 'pwd', usage: '/pwd', desc: '显示当前工作目录' },
   { name: 'agent', usage: '/agent [名称]', desc: '切换 Agent（无参数列出可用 Agent 并显示当前项，切换后开启新会话）' },
   { name: 'status', usage: '/status', desc: '显示当前会话 / 目录 / Agent / 模型状态' },
+  { name: 'attach', usage: '/attach [会话ID]', desc: '绑定到某个 DSH web 会话以共享对话（无参数显示当前绑定）' },
+  { name: 'detach', usage: '/detach', desc: '解除 web 会话绑定，回到本聊天独立会话' },
 ]
 
 /** Render the `/help` text listing every supported command. */

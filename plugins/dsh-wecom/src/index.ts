@@ -36,6 +36,27 @@ export interface Config {
   logLevel?: LogLevel
   /** Trusted DSH browser origin for plugin restart requests. Defaults to local DSH. */
   managementOrigin?: string
+  /**
+   * Opt into resuming this plugin's own persisted `wecom:` sessions across
+   * process restarts and generations. When enabled, the process-local epoch is
+   * dropped from the session id (making it stable and reproducible) and
+   * `ensureAgent` resumes the latest persisted generation for the chat instead
+   * of always creating a fresh session. Requires the `sessionPersistence`
+   * service to be present in the host (the web profile ships
+   * `dsh-session-persistence-jsonl`). Falls back to a fresh session when
+   * persistence or a matching session is unavailable. Defaults to false.
+   */
+  resumeSessions?: boolean
+  /**
+   * Bind specific chats (chat key `"type:chatId"`, e.g. `single:userid-a` or
+   * `group:group-chat-id`) to an existing persisted web session id. When bound,
+   * the chat's turns resume that session instead of a `wecom:` session, so the
+   * DSH browser and the WeCom bot share one conversation log. The target must be
+   * persisted (flushed in the browser) and idle; a session currently live in the
+   * browser is refused until it settles. `/attach` and `/detach` override or
+   * clear a per-chat binding at runtime.
+   */
+  bindSession?: Record<string, string>
 }
 
 /** Keep runtime-loaded configuration compatible with the former apply() default. */
@@ -81,6 +102,11 @@ interface PresetsLike {
   mount(agentCtx: unknown, id?: string): Promise<unknown>
 }
 
+/** Structural subset of the `sessionPersistence` service used for resume support. */
+interface SessionPersistenceLike {
+  listSnapshots?(signal?: AbortSignal): Promise<Array<{ header: { id: string } }>>
+}
+
 interface ChatState {
   chatId: string
   chatType: string
@@ -90,6 +116,10 @@ interface ChatState {
   handle: LiveHandle | undefined
   modelSelection: ModelSelection | undefined
   lastActiveAt: number
+  /** True once generation has been aligned to persistence (or confirmed absent) this state. */
+  aligned: boolean
+  /** Web session id this chat is bound to (resumed instead of a `wecom:` session). */
+  boundSessionId: string | undefined
 }
 
 function chatKey(chatType: string, chatId: string): string {
@@ -106,8 +136,14 @@ export function isInboundAuthorized(message: InboundMessage, config: Config): bo
 
 /**
  * In-process bridge. Session ids contain a stable bot namespace and chat identity,
- * plus an in-process epoch. We intentionally never resume persisted sessions: the
+ * plus an in-process epoch. By default we never resume persisted sessions: the
  * documented memory contract is process-local and `/new` must never revive gen 0.
+ * When `config.resumeSessions` is enabled, the epoch is dropped so ids are stable
+ * across restarts, and the latest persisted generation is resumed instead of a
+ * fresh session (see {@link ensureAgent}). `/new`/`/cd`/`/agent` still bump the
+ * generation so a reset never revives an older generation. A chat may also be
+ * bound to an existing web session via `bindSession` or `/attach` to share one
+ * conversation log with the DSH browser.
  */
 export class WecomAgentBridge {
   private readonly states = new Map<string, ChatState>()
@@ -143,6 +179,8 @@ export class WecomAgentBridge {
         handle: undefined,
         modelSelection: undefined,
         lastActiveAt: Date.now(),
+        aligned: false,
+        boundSessionId: this.config.bindSession?.[chatKey(type, message.chatId)] ?? undefined,
       }
       this.states.set(key, state)
     }
@@ -151,7 +189,41 @@ export class WecomAgentBridge {
   }
 
   private sessionIdOf(st: ChatState) {
-    return SessionId(`wecom:${encodeURIComponent(this.bot.identity)}:${encodeURIComponent(st.chatType)}:${encodeURIComponent(st.chatId)}:${this.epoch}:${st.generation}`)
+    const base = `wecom:${encodeURIComponent(this.bot.identity)}:${encodeURIComponent(st.chatType)}:${encodeURIComponent(st.chatId)}`
+    return SessionId(this.config.resumeSessions ? `${base}:${st.generation}` : `${base}:${this.epoch}:${st.generation}`)
+  }
+
+  private sessionIdPrefix(st: ChatState): string {
+    return `wecom:${encodeURIComponent(this.bot.identity)}:${encodeURIComponent(st.chatType)}:${encodeURIComponent(st.chatId)}`
+  }
+
+  /**
+   * Find the highest persisted generation for this chat when resumeSessions is
+   * enabled. Only sessions materialized by this plugin (the `wecom:` namespace)
+   * are considered, so unrelated persisted sessions are never touched. Returns
+   * `undefined` when persistence is unavailable or no matching session exists.
+   */
+  private async latestPersistedGeneration(st: ChatState): Promise<number | undefined> {
+    if (!this.config.resumeSessions) return undefined
+    const persistence = this.ctx.get('sessionPersistence') as SessionPersistenceLike | undefined
+    if (!persistence?.listSnapshots) return undefined
+    const prefix = this.sessionIdPrefix(st)
+    let latest: number | undefined
+    try {
+      const snapshots = await persistence.listSnapshots()
+      for (const snap of snapshots) {
+        const id = String(snap.header.id)
+        if (!id.startsWith(prefix + ':')) continue
+        const generation = Number(id.slice(prefix.length + 1))
+        if (Number.isInteger(generation) && generation >= 0 && (latest === undefined || generation > latest)) {
+          latest = generation
+        }
+      }
+    } catch (error) {
+      this.log.warn('resume: sessionPersistence.listSnapshots failed', { chatId: st.chatId, chatType: st.chatType, error: safeErrorKind(error) })
+      return undefined
+    }
+    return latest
   }
 
   private cwdRoots(): string[] {
@@ -182,6 +254,13 @@ export class WecomAgentBridge {
     st.handle = undefined
     st.modelSelection = undefined
     st.generation += 1
+    // /new detaches any web-session binding so the fresh conversation is the
+    // chat's own wecom session, never a re-attach to the previous web session.
+    if (st.boundSessionId) {
+      this.log.info('new generation: detached bound session', { chatId: st.chatId, chatType: st.chatType, boundSession: st.boundSessionId })
+      st.boundSessionId = undefined
+      st.aligned = false
+    }
     st.lastActiveAt = Date.now()
     this.log.info('new generation', { chatId: st.chatId, chatType: st.chatType, generation: st.generation })
   }
@@ -203,20 +282,94 @@ export class WecomAgentBridge {
       await presets.mount(agentCtx, resolvedPreset.id)
     }
     const meta = { cwd: st.cwd, agentPreset: resolvedPreset.id }
-    this.log.info('agent create', {
-      chatId: st.chatId,
-      chatType: st.chatType,
-      generation: st.generation,
-      cwd: st.cwd,
-      preset: resolvedPreset.id,
-      model: `${selection.provider}/${selection.model}`,
-    })
-    const created: DshAgentHandle = await agents.create({
-      sessionId: this.sessionIdOf(st),
-      meta,
-      agentOptions: { provider: selection.provider, model: selection.model },
-      setup,
-    })
+    const agentOptions = { provider: selection.provider, model: selection.model }
+
+    // Option A: a chat bound to an existing web session drives that shared
+    // conversation. The one-live-agent-per-session constraint means the target
+    // must be idle; if it is currently live in the browser we refuse with a
+    // clear message rather than silently diverge.
+    if (st.boundSessionId) {
+      const targetId = SessionId(st.boundSessionId)
+      if (agents.get?.(targetId)) {
+        throw new Error('dsh-wecom: bound session is currently live in the browser; settle it before attaching this chat')
+      }
+      this.log.info('agent resume', {
+        chatId: st.chatId,
+        chatType: st.chatType,
+        boundSession: st.boundSessionId,
+        cwd: st.cwd,
+        preset: resolvedPreset.id,
+        model: `${selection.provider}/${selection.model}`,
+      })
+      const created: DshAgentHandle = await agents.resume({
+        resumeSessionId: targetId,
+        agentOptions,
+        setup,
+      })
+      st.modelSelection = { ...selection }
+      st.handle = { agent: created.agent, dispose: () => created.dispose() }
+      return st.handle
+    }
+
+    let created: DshAgentHandle
+    // On the first acquisition of a live handle for this state, align generation
+    // to the latest persisted `wecom:` session (if any) and resume it. This lets
+    // conversations survive process restarts. Alignment happens exactly once per
+    // state: /new, /cd, and /agent bump generation after this, so a reset never
+    // revives an older persisted generation.
+    if (this.config.resumeSessions && !st.aligned) {
+      st.aligned = true
+      const latest = await this.latestPersistedGeneration(st)
+      if (latest !== undefined) {
+        if (latest !== st.generation) {
+          this.log.info('resume: align generation', { chatId: st.chatId, chatType: st.chatType, from: st.generation, to: latest })
+          st.generation = latest
+        }
+        this.log.info('agent resume', {
+          chatId: st.chatId,
+          chatType: st.chatType,
+          generation: st.generation,
+          cwd: st.cwd,
+          preset: resolvedPreset.id,
+          model: `${selection.provider}/${selection.model}`,
+        })
+        created = await agents.resume({
+          resumeSessionId: this.sessionIdOf(st),
+          agentOptions,
+          setup,
+        })
+      } else {
+        this.log.info('agent create', {
+          chatId: st.chatId,
+          chatType: st.chatType,
+          generation: st.generation,
+          cwd: st.cwd,
+          preset: resolvedPreset.id,
+          model: `${selection.provider}/${selection.model}`,
+        })
+        created = await agents.create({
+          sessionId: this.sessionIdOf(st),
+          meta,
+          agentOptions,
+          setup,
+        })
+      }
+    } else {
+      this.log.info('agent create', {
+        chatId: st.chatId,
+        chatType: st.chatType,
+        generation: st.generation,
+        cwd: st.cwd,
+        preset: resolvedPreset.id,
+        model: `${selection.provider}/${selection.model}`,
+      })
+      created = await agents.create({
+        sessionId: this.sessionIdOf(st),
+        meta,
+        agentOptions,
+        setup,
+      })
+    }
     st.modelSelection = { ...selection }
     st.handle = { agent: created.agent, dispose: () => created.dispose() }
     return st.handle
@@ -260,8 +413,39 @@ export class WecomAgentBridge {
       case 'pwd': return { text: `当前工作目录：\`${st.cwd}\``, ok: true }
       case 'agent': return this.cmdAgent(st, parsed.arg)
       case 'status': return this.cmdStatus(st)
+      case 'attach': return this.cmdAttach(st, parsed.arg)
+      case 'detach': return this.cmdDetach(st)
       default: return { text: `未知命令 /${parsed.name}。可用命令见 /help。`, ok: true }
     }
+  }
+
+  private async cmdAttach(st: ChatState, arg: string): Promise<TurnResult> {
+    if (!arg) {
+      return {
+        text: st.boundSessionId
+          ? `当前绑定会话：\`${st.boundSessionId}\`\n使用 /detach 解除绑定。`
+          : '当前未绑定。使用 `/attach <会话ID>` 绑定到某个既有的 DSH web 会话，以共享同一段对话。',
+        ok: true,
+      }
+    }
+    const target = arg.trim()
+    const previous = st.boundSessionId
+    if (st.handle) {
+      await st.handle.dispose()
+      st.handle = undefined
+      st.modelSelection = undefined
+    }
+    st.boundSessionId = target
+    this.log.info('attach', { chatId: st.chatId, chatType: st.chatType, from: previous, to: target })
+    return { text: `已绑定会话 \`${target}\`。下一条消息将写入该会话（与 DSH web 共享）。`, ok: true }
+  }
+
+  private async cmdDetach(st: ChatState): Promise<TurnResult> {
+    if (!st.boundSessionId) return { text: '当前未绑定任何 web 会话。', ok: true }
+    const detached = st.boundSessionId
+    await this.resetContext(st)
+    this.log.info('detach', { chatId: st.chatId, chatType: st.chatType, session: detached })
+    return { text: `已解除绑定 \`${detached}\`（已开启本聊天的独立新会话）。`, ok: true }
   }
 
   private async cmdCd(st: ChatState, arg: string): Promise<TurnResult> {
@@ -310,7 +494,8 @@ export class WecomAgentBridge {
     return {
       text: [
         '会话状态',
-        `会话：\`${st.handle ? String(st.handle.agent.session.id) : String(this.sessionIdOf(st))}\``,
+        `会话：\`${st.handle ? String(st.handle.agent.session.id) : st.boundSessionId ? String(st.boundSessionId) : String(this.sessionIdOf(st))}\``,
+        `绑定：${st.boundSessionId ? `\`${st.boundSessionId}\`（与 DSH web 共享）` : '无'}`,
         `工作目录：\`${st.cwd}\``,
         `Agent：${preset ? `\`${preset}\`` : '未绑定'}`,
         `模型：${selection ? `${selection.provider}/${selection.model}` : '尚未创建 live agent'}`,
@@ -415,6 +600,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     defaultCwd: normalized.defaultCwd ?? process.cwd(),
     defaultPreset: normalized.defaultPreset,
     allowedCwdRoots: normalized.allowedCwdRoots ?? [],
+    resumeSessions: normalized.resumeSessions === true,
+    bindSession: normalized.bindSession ?? {},
     logLevel: normalized.logLevel,
   })
   const controller = new WecomLifecycleController(ctx, normalized, PLUGIN_VERSION)
