@@ -584,4 +584,64 @@ describe('shared web session binding (option A)', () => {
     expect(resumes).toHaveLength(1)
     expect(creates).toHaveLength(1)
   })
+
+  it('/sessions lists persisted sessions in the current directory', async () => {
+    const persisted = [
+      'web-ses-in-cwd', 'web-ses-sibling', 'web-ses-other-dir', 'web-ses-bindme',
+    ]
+    const headers = [
+      { header: { id: 'web-ses-in-cwd', cwd: '/ws', createdAt: 2000, agentPreset: 'standard' } },
+      { header: { id: 'web-ses-bindme', cwd: '/ws', createdAt: 1000 } },
+      { header: { id: 'web-ses-sibling', cwd: '/ws/sub', createdAt: 3000 } },
+      { header: { id: 'web-ses-other-dir', cwd: '/elsewhere', createdAt: 4000 } },
+    ]
+    const mockCtx = {
+      get(name: string): unknown {
+        if (name === 'sessionPersistence') return { listSnapshots: async () => headers }
+        return undefined
+      },
+    }
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, {
+      botId: 'b', botSecret: 's', defaultWorkspace: '/ws',
+    })
+    const res = await bridge.enqueue(msg('u1', '/sessions'))
+    expect(res.ok).toBe(true)
+    expect(res.text).toContain('web-ses-in-cwd')
+    expect(res.text).toContain('web-ses-bindme')
+    // sibling (subdir) is under /ws so included; other-dir is not
+    expect(res.text).toContain('web-ses-sibling')
+    expect(res.text).not.toContain('web-ses-other-dir')
+  })
+
+  it('/sessions <id> binds to a persisted session and resumes it', async () => {
+    const { mockCtx, resumes } = baseContext({ resumeHandler: true, persisted: ['web-ses-bindme'] })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's' })
+    const res = await bridge.enqueue(msg('u1', '/sessions web-ses-bindme'))
+    expect(res.ok).toBe(true)
+    expect(res.text).toContain('web-ses-bindme')
+    await bridge.enqueue(msg('u1', '写入'))
+    expect(resumes).toHaveLength(1)
+    expect(resumes[0]!.resumeSessionId).toBe('web-ses-bindme')
+  })
+
+  it('/sessions <id> rejects an unknown session id', async () => {
+    const { mockCtx, resumes } = baseContext({ resumeHandler: true, persisted: ['web-ses-known'] })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's' })
+    const res = await bridge.enqueue(msg('u1', '/sessions nope-zzz'))
+    expect(res.ok).toBe(false)
+    expect(res.text).toContain('未找到')
+    expect(resumes).toHaveLength(0)
+  })
+
+  it('/new with defaultWorkspace switches to the workspace and starts fresh', async () => {
+    const { mockCtx, creates } = baseContext()
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's', defaultWorkspace: process.cwd() })
+    await bridge.enqueue(msg('u1', '第一句'))
+    expect(creates).toHaveLength(1)
+    const res = await bridge.enqueue(msg('u1', '/new'))
+    expect(res.ok).toBe(true)
+    expect(res.text).toContain(process.cwd())
+    await bridge.enqueue(msg('u1', '新会话第一句'))
+    expect(creates).toHaveLength(2)
+  })
 })
