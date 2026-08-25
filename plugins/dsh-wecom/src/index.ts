@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { randomUUID } from 'node:crypto'
+import { homedir } from 'node:os'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentHandle as DshAgentHandle } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -29,6 +30,12 @@ export interface Config {
   /** Root directories that `/cd` may enter; defaults to defaultCwd/process.cwd(). */
   allowedCwdRoots?: string[]
   defaultCwd?: string
+  /**
+   * The workspace directory where `/new` starts a fresh session and where chat
+   * sessions are organized by directory. Defaults to `~/project/wecom-workspace`.
+   * `~` is expanded against the home directory.
+   */
+  defaultWorkspace?: string
   defaultPreset?: string
   maxLiveChats?: number
   idleChatMs?: number
@@ -102,9 +109,9 @@ interface PresetsLike {
   mount(agentCtx: unknown, id?: string): Promise<unknown>
 }
 
-/** Structural subset of the `sessionPersistence` service used for resume support. */
+/** Structural subset of the `sessionPersistence` service used for resume/binding. */
 interface SessionPersistenceLike {
-  listSnapshots?(signal?: AbortSignal): Promise<Array<{ header: { id: string } }>>
+  listSnapshots?(signal?: AbortSignal): Promise<Array<{ header: { id: string; cwd?: string; createdAt?: number; agentPreset?: string } }>>
 }
 
 interface ChatState {
@@ -120,6 +127,8 @@ interface ChatState {
   aligned: boolean
   /** Web session id this chat is bound to (resumed instead of a `wecom:` session). */
   boundSessionId: string | undefined
+  /** Resolved action-workspace directory (`/new` starts a fresh session here). */
+  workspace: string
 }
 
 function chatKey(chatType: string, chatId: string): string {
@@ -174,13 +183,14 @@ export class WecomAgentBridge {
         chatId: message.chatId,
         chatType: type,
         generation: 0,
-        cwd: this.config.defaultCwd ?? process.cwd(),
+        cwd: this.config.defaultWorkspace ? this.workspaceDir() : (this.config.defaultCwd ?? process.cwd()),
         presetId: undefined,
         handle: undefined,
         modelSelection: undefined,
         lastActiveAt: Date.now(),
         aligned: false,
         boundSessionId: this.config.bindSession?.[chatKey(type, message.chatId)] ?? undefined,
+        workspace: this.workspaceDir(),
       }
       this.states.set(key, state)
     }
@@ -227,7 +237,17 @@ export class WecomAgentBridge {
   }
 
   private cwdRoots(): string[] {
-    return this.config.allowedCwdRoots ?? [this.config.defaultCwd ?? process.cwd()]
+    const roots = this.config.allowedCwdRoots ?? [this.config.defaultCwd ?? process.cwd()]
+    const workspace = this.config.defaultWorkspace ? this.workspaceDir() : undefined
+    return workspace && !roots.includes(workspace) ? [...roots, workspace] : roots
+  }
+
+  /** Resolve the action workspace directory, expanding `~`; defaults to `~/project/wecom-workspace` when configured. */
+  private workspaceDir(): string {
+    const raw = this.config.defaultWorkspace ?? '~/project/wecom-workspace'
+    return raw.startsWith('~/')
+      ? `${homedir()}${raw.slice(1)}`
+      : raw === '~' ? homedir() : raw
   }
 
   private async resolvePreset(presets: PresetsLike | undefined, requested: string | undefined): Promise<{ id: string; name?: string }> {
@@ -407,20 +427,88 @@ export class WecomAgentBridge {
     switch (parsed.name) {
       case 'help': return { text: renderHelp(), ok: true }
       case 'new':
-        await this.resetContext(st)
-        return { text: '已开启新的对话（进程内记忆已清空，工作目录与 Agent 保持不变）。', ok: true }
+        return this.cmdNew(st)
       case 'cd': return this.cmdCd(st, parsed.arg)
       case 'pwd': return { text: `当前工作目录：\`${st.cwd}\``, ok: true }
       case 'agent': return this.cmdAgent(st, parsed.arg)
       case 'status': return this.cmdStatus(st)
+      case 'sessions': return this.cmdSessions(st, parsed.arg)
       case 'attach': return this.cmdAttach(st, parsed.arg)
       case 'detach': return this.cmdDetach(st)
       default: return { text: `未知命令 /${parsed.name}。可用命令见 /help。`, ok: true }
     }
   }
 
-  private async cmdAttach(st: ChatState, arg: string): Promise<TurnResult> {
-    if (!arg) {
+  /** `/new` — start a fresh conversation rooted at the action workspace when configured. */
+  private async cmdNew(st: ChatState): Promise<TurnResult> {
+    const workspace = this.config.defaultWorkspace ? st.workspace : undefined
+    const resolved = workspace ? await resolveAllowedDirectory(workspace, this.cwdRoots()) : undefined
+    const target = resolved ?? st.cwd
+    const changed = target !== st.cwd
+    await this.resetContext(st)
+    if (changed) st.cwd = target
+    this.log.info('new', { chatId: st.chatId, chatType: st.chatType, cwd: target, workspace: workspace })
+    if (workspace && workspace !== target) {
+      // Workspace not reachable; fall back to current directory but note it.
+      return { text: `工作区 \`${workspace}\` 不可用，已在当前目录 \`${target}\` 开启新对话。`, ok: false }
+    }
+    return { text: changed
+      ? `已开启新的对话，工作区切到 \`${target}\`（新会话在此目录下）。`
+      : `已在 \`${target}\` 开启新的对话。`, ok: true }
+  }
+
+  /** `/sessions [session-id]` — list persisted sessions in the current directory, or bind to one. */
+  private async cmdSessions(st: ChatState, arg: string): Promise<TurnResult> {
+    const persistence = this.ctx.get('sessionPersistence') as SessionPersistenceLike | undefined
+    if (!persistence?.listSnapshots) {
+      return { text: '当前环境未启用会话持久化，无法列出/绑定会话。', ok: false }
+    }
+    let snapshots: Array<{ header: { id: string; cwd?: string; createdAt?: number; agentPreset?: string } }>
+    try {
+      snapshots = await persistence.listSnapshots()
+    } catch (error) {
+      this.log.warn('sessions: list failed', { chatId: st.chatId, error: safeErrorKind(error) })
+      return { text: '无法读取会话列表。', ok: false }
+    }
+    // Bind form: /sessions <id>
+    if (arg) {
+      const target = arg.trim()
+      const matches = snapshots.filter((s) => String(s.header.id) === target)
+      if (matches.length === 0) {
+        return { text: `未找到持久化会话 \`${target}\`（可先无参运行 /sessions 查看当前目录下的会话）。`, ok: false }
+      }
+      if (st.handle) {
+        await st.handle.dispose()
+        st.handle = undefined
+        st.modelSelection = undefined
+      }
+      st.boundSessionId = target
+      this.log.info('sessions bind', { chatId: st.chatId, chatType: st.chatType, to: target })
+      return { text: `已绑定会话 \`${target}\`。下一条消息将写入该会话（与 DSH web 共享）。`, ok: true }
+    }
+    // List form: show sessions whose persisted cwd is under the current directory.
+    const current = st.cwd.replace(/\/+$/, '')
+    const rows = snapshots
+      .filter((s) => {
+        const cwd = s.header.cwd?.replace(/\/+$/, '')
+        return cwd !== undefined && (cwd === current || cwd.startsWith(current + '/'))
+      })
+      .sort((a, b) => (b.header.createdAt ?? 0) - (a.header.createdAt ?? 0))
+    if (rows.length === 0) {
+      return { text: `当前目录 \`${st.cwd}\` 下没有发现持久化会话。\n提示：机器人会话默认独立；绑定请先 /attach <id> 或 /sessions <id>。`, ok: true }
+    }
+    const shown = rows.slice(0, 50).map((s) => {
+      const id = String(s.header.id)
+      const preset = s.header.agentPreset ? ` [${s.header.agentPreset}]` : ''
+      const mark = st.boundSessionId === id ? ' 【当前绑定】' : ''
+      const when = s.header.createdAt ? new Date(s.header.createdAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : ''
+      return `- \`${id}\`${preset}${mark} ${when}`
+    })
+    const more = rows.length > 50 ? `\n…共 ${rows.length} 条，仅显示前 50 条。` : ''
+    return { text: [`当前目录 \`${st.cwd}\` 下的会话（${rows.length}）：`, ...shown, more, '', '绑定：/sessions <会话ID>'].join('\n'), ok: true }
+  }
+
+  private async cmdAttach(st: ChatState, arg: string): Promise<TurnResult> {    if (!arg) {
       return {
         text: st.boundSessionId
           ? `当前绑定会话：\`${st.boundSessionId}\`\n使用 /detach 解除绑定。`
@@ -497,6 +585,7 @@ export class WecomAgentBridge {
         `会话：\`${st.handle ? String(st.handle.agent.session.id) : st.boundSessionId ? String(st.boundSessionId) : String(this.sessionIdOf(st))}\``,
         `绑定：${st.boundSessionId ? `\`${st.boundSessionId}\`（与 DSH web 共享）` : '无'}`,
         `工作目录：\`${st.cwd}\``,
+        `工作区：\`${st.workspace}\``,
         `Agent：${preset ? `\`${preset}\`` : '未绑定'}`,
         `模型：${selection ? `${selection.provider}/${selection.model}` : '尚未创建 live agent'}`,
       ].join('\n'),
