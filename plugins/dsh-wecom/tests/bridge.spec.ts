@@ -66,6 +66,7 @@ function baseContext(opts: {
   const creates: Array<Record<string, unknown>> = []
   const resumes: Array<Record<string, unknown>> = []
   const attaches: Array<{ path: string; session: string }> = []
+  const listeners = new Map<string, Set<Function>>()
   const selection = opts.selection ?? { provider: 'p', model: 'm' }
   const makeHandle = (options: Record<string, unknown>) => {
     const index = agents.length
@@ -75,6 +76,15 @@ function baseContext(opts: {
     return { agent: a, dispose: async () => opts.dispose?.(index) }
   }
   const mockCtx = {
+    on(event: string, listener: Function) {
+      let set = listeners.get(event)
+      if (!set) {
+        set = new Set()
+        listeners.set(event, set)
+      }
+      set.add(listener)
+      return () => void set.delete(listener)
+    },
     get(name: string): unknown {
       if (name === 'agents') {
         return {
@@ -114,16 +124,26 @@ function baseContext(opts: {
       return undefined
     },
   }
-  return { mockCtx, agents, creates, resumes, selection, attaches }
+  const emit = (event: string, ...args: unknown[]) => {
+    const set = listeners.get(event)
+    if (!set) return
+    for (const listener of [...set]) listener(...args)
+  }
+  return { mockCtx, agents, creates, resumes, selection, attaches, emit }
 }
 
 function fakeBot() {
   const replies: Array<{ frame: unknown; content: string }> = []
+  const sends: Array<{ chatId: string; content: string }> = []
   return {
     identity: 'bot-a',
     replies,
+    sends,
     replyText: vi.fn(async (frame: unknown, content: string) => {
       replies.push({ frame, content })
+    }),
+    sendText: vi.fn(async (chatId: string, content: string) => {
+      sends.push({ chatId, content })
     }),
   }
 }
@@ -686,5 +706,78 @@ describe('shared web session binding (option A)', () => {
     const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's', resumeSessions: true })
     await bridge.enqueue(msg('u1', '普通对话'))
     expect(attaches.filter((a) => a.session !== 'RESOLVE')).toHaveLength(0)
+  })
+})
+
+describe('web -> wecom mirror', () => {
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  const webUserEvent = (sessionId: string, id: string, text: string) => ({
+    type: 'user/message', seq: 10, time: 1,
+    data: { id, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] },
+  })
+  const assistantEvent = (sessionId: string, text: string) => ({
+    type: 'assistant/message', seq: 11, time: 2,
+    data: { turn: 1, step: 1, message: { content: [{ type: 'text', text }] } },
+  })
+  const turnEndEvent = (sessionId: string) => ({
+    type: 'turn/end', seq: 12, time: 3, data: { turn: 1, reason: { kind: 'completed' } },
+  })
+
+  it('mirrors a browser user message and the assistant reply to the bound WeCom chat', async () => {
+    const { mockCtx, emit } = baseContext({ resumeHandler: true })
+    const bot = fakeBot()
+    const bridge = new WecomAgentBridge(mockCtx as never, bot as never, { botId: 'b', botSecret: 's' })
+    await bridge.enqueue(msg('u1', '/attach web-ses-1'))
+    expect(bot.sendText).not.toHaveBeenCalled()
+
+    emit('session/event', { id: 'web-ses-1' }, webUserEvent('web-ses-1', 'w-1', '你好，web'))
+    await flush()
+    expect(bot.sendText).toHaveBeenCalledTimes(1)
+    expect(bot.sendText.mock.calls[0]![0]).toBe('u1')
+    expect(bot.sendText.mock.calls[0]![1]).toContain('你好，web')
+
+    emit('session/event', { id: 'web-ses-1' }, assistantEvent('web-ses-1', '这是 web 上的回复'))
+    emit('session/event', { id: 'web-ses-1' }, turnEndEvent('web-ses-1'))
+    await flush()
+    expect(bot.sendText).toHaveBeenCalledTimes(2)
+    expect(bot.sendText.mock.calls[1]![0]).toBe('u1')
+    expect(bot.sendText.mock.calls[1]![1]).toContain('这是 web 上的回复')
+  })
+
+  it('does not mirror a web message on a session that is not bound to this chat', async () => {
+    const { mockCtx, emit } = baseContext({ resumeHandler: true })
+    const bot = fakeBot()
+    const bridge = new WecomAgentBridge(mockCtx as never, bot as never, { botId: 'b', botSecret: 's' })
+    // u1 chats normally (unbound) — its wecom: session must not be mirrored
+    await bridge.enqueue(msg('u1', '普通对话'))
+    emit('session/event', { id: 'wecom:bot-a:single:u1' }, webUserEvent('wecom:bot-a:single:u1', 'w-x', 'browser text'))
+    await flush()
+    expect(bot.sendText).not.toHaveBeenCalled()
+  })
+
+  it('never mirrors a plugin-forwarded wecom->web turn back into WeCom', async () => {
+    const { mockCtx, emit } = baseContext({ resumeHandler: true })
+    const bot = fakeBot()
+    const bridge = new WecomAgentBridge(mockCtx as never, bot as never, { botId: 'b', botSecret: 's' })
+    await bridge.enqueue(msg('u1', '/attach web-ses-2'))
+    // A wecom message drives the bound session in-process; the plugin replies
+    // normally and must NOT additionally mirror it (no echo loop).
+    await bridge.enqueue(msg('u1', '来自 wecom 的消息'))
+    await flush()
+    expect(bot.sendText).not.toHaveBeenCalled()
+    expect(bot.replyText).toHaveBeenCalledTimes(2) // /attach + the wecom turn
+  })
+
+  it('mirrorWebToWecom:false disables the mirror entirely', async () => {
+    const { mockCtx, emit } = baseContext({ resumeHandler: true })
+    const bot = fakeBot()
+    const bridge = new WecomAgentBridge(mockCtx as never, bot as never, { botId: 'b', botSecret: 's', mirrorWebToWecom: false })
+    await bridge.enqueue(msg('u1', '/attach web-ses-3'))
+    emit('session/event', { id: 'web-ses-3' }, webUserEvent('web-ses-3', 'w-3', '浏览器消息'))
+    emit('session/event', { id: 'web-ses-3' }, assistantEvent('web-ses-3', '回复'))
+    emit('session/event', { id: 'web-ses-3' }, turnEndEvent('web-ses-3'))
+    await flush()
+    expect(bot.sendText).not.toHaveBeenCalled()
   })
 })

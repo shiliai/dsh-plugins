@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentHandle as DshAgentHandle } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { WecomBot, type InboundMessage } from './bot.ts'
 import { parseCommand, renderHelp, resolveWorkingDir } from './commands.ts'
 import { summarizeTurn, type TurnResult } from './frame.ts'
@@ -64,6 +64,16 @@ export interface Config {
    * clear a per-chat binding at runtime.
    */
   bindSession?: Record<string, string>
+  /**
+   * Mirror DSH web activity back to WeCom. When a chat is bound to a shared
+   * `session-<uuid>` (via `bindSession`, `/attach`, `/sessions <id>`, or
+   * `/new`), messages the user sends in the browser on that session — and the
+   * assistant's replies — are forwarded to the bound WeCom chat, so the
+   * conversation is visible in both directions. Never loops: messages that the
+   * plugin itself forwarded from WeCom are detected and skipped. Defaults to
+   * true.
+   */
+  mirrorWebToWecom?: boolean
 }
 
 /** Keep runtime-loaded configuration compatible with the former apply() default. */
@@ -143,6 +153,15 @@ function chatKey(chatType: string, chatId: string): string {
   return `${chatType}:${chatId}`
 }
 
+/** Join the visible/reasoning text of a message's content blocks. */
+function extractPlainText(blocks: Array<{ type: string; text?: string }>): string {
+  return blocks
+    .filter((block) => block.type === 'text' || block.type === 'reasoning')
+    .map((block) => block.text ?? '')
+    .join('')
+    .trim()
+}
+
 /** Public for narrow authorization tests and host integrations. */
 export function isInboundAuthorized(message: InboundMessage, config: Config): boolean {
   if (message.chatType === 'group') {
@@ -170,11 +189,22 @@ export class WecomAgentBridge {
   private readonly epoch = randomUUID()
   private readonly idleSweep: ReturnType<typeof setInterval>
   private readonly log: Logger
+  /** Message ids this plugin wrote into bound sessions (wecom->web forwards) that must NOT be mirrored back. */
+  private readonly selfUserIds = new Map<string, Set<string>>()
+  /** Mirrored web turn: a non-plugin user message has been relayed and we owe WeCom its assistant reply. */
+  private readonly relayPending = new Map<string, boolean>()
+  /** Latest assembled assistant content of the web turn being mirrored. */
+  private readonly relayAssistantText = new Map<string, string>()
+  private readonly eventsDisposer: (() => void) | undefined
   private accepting = true
 
   constructor(private ctx: Context, private bot: WecomBot, config: Config) {
     this.config = config
     this.log = makeLogger(config.logLevel ?? 'info')
+    // Observe the global session/event firehose so browser-driven writes to a
+    // bound shared session (where the browser owns the live agent) still reach
+    // us for mirroring, without us needing to own or resume that session.
+    this.eventsDisposer = typeof ctx.on === 'function' ? ctx.on('session/event', this.onSessionEvent as never) : undefined
     const interval = Math.max(1_000, Math.min(config.idleChatMs ?? 30 * 60_000, 60_000))
     this.idleSweep = setInterval(() => {
       void this.evictIdle()
@@ -234,6 +264,72 @@ export class WecomAgentBridge {
       this.log.info('attached session to workspace', { sessionId, cwd })
     } catch (error) {
       this.log.warn('workspace attach skipped', { sessionId, cwd, error: safeErrorKind(error) })
+    }
+  }
+
+  /**
+   * Mirror DSH web activity on a bound shared session back to its WeCom chat.
+   * Subscribed to the global `session/event` firehose, so browser-driven writes
+   * (where the browser owns the live agent) are observed without us owning the
+   * session. Our own wecom->web forwards are tagged by message id and skipped,
+   * so the mirror never loops.
+   */
+  private onSessionEvent = (session: { id: unknown }, event: SessionEvent): void => {
+    if (this.config.mirrorWebToWecom === false) return
+    try {
+      const sessionId = String(session.id)
+      const bound = [...this.states.values()].filter((st) => st.boundSessionId === sessionId)
+      if (bound.length === 0) {
+        // No longer a bound session — drop any stale mirror state and the self-tags.
+        this.relayPending.delete(sessionId)
+        this.relayAssistantText.delete(sessionId)
+        this.selfUserIds.delete(sessionId)
+        return
+      }
+      if (event.type === 'user/message') {
+        const msg = event.data
+        if (msg.source.kind !== 'user') return
+        if (this.selfUserIds.get(sessionId)?.has(msg.id)) return
+        const text = extractPlainText(msg.content)
+        if (!text) return
+        this.relayPending.set(sessionId, true)
+        this.relayAssistantText.delete(sessionId)
+        this.log.info('web->wecom mirror user message', { sessionId, chatId: bound[0]!.chatId })
+        void this.mirrorToWecom(bound, `📥 Web 端消息：\n${text}`)
+        return
+      }
+      if (event.type === 'assistant/message') {
+        if (!this.relayPending.get(sessionId)) return
+        const text = extractPlainText(event.data.message.content)
+        if (!text) return
+        // Keep the latest assembled content of this turn; flushed on turn/end.
+        this.relayAssistantText.set(sessionId, text)
+        return
+      }
+      if (event.type === 'turn/end' && this.relayPending.get(sessionId)) {
+        this.relayPending.delete(sessionId)
+        const reply = this.relayAssistantText.get(sessionId)
+        this.relayAssistantText.delete(sessionId)
+        if (!reply) return
+        this.log.info('web->wecom mirror assistant reply', { sessionId, chatId: bound[0]!.chatId, bytes: Buffer.byteLength(reply, 'utf8') })
+        void this.mirrorToWecom(bound, reply)
+      }
+    } catch (error) {
+      this.log.warn('web->wecom mirror skipped', { sessionId: String(session.id), error: safeErrorKind(error) })
+    }
+  }
+
+  private async mirrorToWecom(bound: ChatState[], content: string): Promise<void> {
+    const seen = new Set<string>()
+    for (const st of bound) {
+      const key = chatKey(st.chatType, st.chatId)
+      if (seen.has(key)) continue
+      seen.add(key)
+      try {
+        await this.bot.sendText(st.chatId, content)
+      } catch (error) {
+        this.log.warn('web->wecom mirror send failed', { chatId: st.chatId, error: safeErrorKind(error) })
+      }
     }
   }
 
@@ -458,10 +554,28 @@ export class WecomAgentBridge {
       seq: firstSeq,
       bytes: Buffer.byteLength(message.text, 'utf8'),
     })
-    agent.followup(createUserMessage({ content: [{ type: 'text', text: message.text }], source: { kind: 'user' } }))
+    const userMessage = createUserMessage({ content: [{ type: 'text', text: message.text }], source: { kind: 'user' } })
+    // Tag this forward BEFORE it commits so the web->wecom mirror cannot relay
+    // the plugin's own wecom->web write back into WeCom (no echo loop).
+    if (st.boundSessionId) this.tagSelfUserMessage(st, userMessage.id)
+    agent.followup(userMessage)
     await agent.whenIdle()
     if (sessions) await sessions.flush(agent.session)
     return summarizeTurn(agent.session.events, firstSeq)
+  }
+
+  /**
+   * Record a message id this plugin appended to a bound session so the
+   * {@link onSessionEvent} mirror skips it. Stored per bound session id.
+   */
+  private tagSelfUserMessage(st: ChatState, messageId: string): void {
+    if (!st.boundSessionId || !messageId) return
+    let set = this.selfUserIds.get(st.boundSessionId)
+    if (!set) {
+      set = new Set()
+      this.selfUserIds.set(st.boundSessionId, set)
+    }
+    set.add(messageId)
   }
 
   private async handleCommand(message: InboundMessage): Promise<TurnResult | null> {
@@ -714,6 +828,7 @@ export class WecomAgentBridge {
   async dispose(): Promise<void> {
     this.accepting = false
     clearInterval(this.idleSweep)
+    this.eventsDisposer?.()
     await Promise.allSettled([...this.queues.values()])
     await Promise.allSettled([...this.evictions.values()])
     const failures: unknown[] = []

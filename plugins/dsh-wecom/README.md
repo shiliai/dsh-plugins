@@ -10,7 +10,11 @@ resumes the latest persisted `wecom:` session for the chat instead of starting
 fresh, falling back to a fresh session when the persistence service is
 unavailable or nothing is persisted. A chat can also be bound to an existing
 DSH web session (`/sessions`, `/attach`, or `bindSession`) so the WeCom bot and
-the browser share one conversation log. Session bindings are organized around an
+the browser share one conversation log. When a chat is bound, the sync is
+bidirectional: the bot writes WeCom messages into that session (visible in the
+browser), and messages the user sends from the browser on that session are
+mirrored back to the WeCom chat together with the assistant's replies (see
+`mirrorWebToWecom`). Session bindings are organized around an
 action workspace (see `defaultWorkspace`): `/new` starts a fresh session there
 and `/sessions` lists or binds the persisted sessions under the current
 directory.
@@ -91,6 +95,13 @@ Add a user patch with explicit identities and roots appropriate for the host:
         # runtime binding.
         bindSession:
           'single:userid-a': 'some-web-session-id'
+        # Optional. Mirror DSH web activity back to WeCom. When a chat is bound
+        # to a shared `session-<uuid>` (bindSession, /attach, /sessions <id>, or
+        # /new), messages the user sends in the browser on that session — and the
+        # assistant's replies — are forwarded to the bound WeCom chat, so the
+        # conversation is visible in both directions. Never loops (the plugin's
+        # own wecom->web forwards are detected and skipped). Defaults to true.
+        mirrorWebToWecom: true
 ```
 
 `allowChats` authorizes direct chats by chat id or userid. For a group it
