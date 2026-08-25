@@ -519,16 +519,21 @@ describe('resumeSessions', () => {
     expect(creates).toHaveLength(1)
   })
 
-  it('does not resume again after /new (fresh generation is created)', async () => {
+  it('/new mints a fresh browser-visible session and creates it on next turn', async () => {
     const { mockCtx, creates, resumes } = baseContext({ resumeHandler: true })
     const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's', resumeSessions: true })
     await bridge.enqueue(msg('u1', '第一句'))
-    await bridge.enqueue(msg('u1', '/new'))
+    expect(creates).toHaveLength(1)
+    const res = await bridge.enqueue(msg('u1', '/new'))
+    expect(res.ok).toBe(true)
+    expect(res.text).toMatch(/session-[0-9a-f-]+/)
+    // no wecom generation created by /new
+    expect(creates).toHaveLength(1)
     await bridge.enqueue(msg('u1', '新会话第一句'))
+    // fresh bound session is created (not resumed), not a wecom generation
     expect(resumes).toHaveLength(0)
     expect(creates).toHaveLength(2)
-    expect(creates[0]!.sessionId).toBe('wecom:bot-a:single:u1:0')
-    expect(creates[1]!.sessionId).toBe('wecom:bot-a:single:u1:1')
+    expect(String(creates[1]!.sessionId)).toMatch(/^session-[0-9a-f-]+$/)
   })
 })
 
@@ -633,15 +638,17 @@ describe('shared web session binding (option A)', () => {
     expect(resumes).toHaveLength(0)
   })
 
-  it('/new with defaultWorkspace switches to the workspace and starts fresh', async () => {
+  it('/new with defaultWorkspace mints a new browser session in the workspace', async () => {
     const { mockCtx, creates } = baseContext()
     const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's', defaultWorkspace: process.cwd() })
     await bridge.enqueue(msg('u1', '第一句'))
     expect(creates).toHaveLength(1)
     const res = await bridge.enqueue(msg('u1', '/new'))
     expect(res.ok).toBe(true)
-    expect(res.text).toContain(process.cwd())
+    expect(res.text).toMatch(/session-[0-9a-f-]+/)
     await bridge.enqueue(msg('u1', '新会话第一句'))
+    // second create is a fresh browser session (session-<uuid>), not resume
     expect(creates).toHaveLength(2)
+    expect(String(creates[1]!.sessionId)).toMatch(/^session-[0-9a-f-]+$/)
   })
 })

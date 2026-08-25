@@ -127,6 +127,8 @@ interface ChatState {
   aligned: boolean
   /** Web session id this chat is bound to (resumed instead of a `wecom:` session). */
   boundSessionId: string | undefined
+  /** True when boundSessionId is a freshly minted session (create on first use, not resume). */
+  boundFresh: boolean
   /** Resolved action-workspace directory (`/new` starts a fresh session here). */
   workspace: string
 }
@@ -190,6 +192,7 @@ export class WecomAgentBridge {
         lastActiveAt: Date.now(),
         aligned: false,
         boundSessionId: this.config.bindSession?.[chatKey(type, message.chatId)] ?? undefined,
+        boundFresh: false,
         workspace: this.workspaceDir(),
       }
       this.states.set(key, state)
@@ -304,28 +307,47 @@ export class WecomAgentBridge {
     const meta = { cwd: st.cwd, agentPreset: resolvedPreset.id }
     const agentOptions = { provider: selection.provider, model: selection.model }
 
-    // Option A: a chat bound to an existing web session drives that shared
-    // conversation. The one-live-agent-per-session constraint means the target
-    // must be idle; if it is currently live in the browser we refuse with a
-    // clear message rather than silently diverge.
+    // Option A: a chat bound to a web session drives that shared conversation.
+    // The one-live-agent-per-session constraint means a target that is live in
+    // the browser is refused. A freshly minted bound session (from /new) is
+    // created on first use; a bound existing session is resumed.
     if (st.boundSessionId) {
       const targetId = SessionId(st.boundSessionId)
       if (agents.get?.(targetId)) {
         throw new Error('dsh-wecom: bound session is currently live in the browser; settle it before attaching this chat')
       }
-      this.log.info('agent resume', {
-        chatId: st.chatId,
-        chatType: st.chatType,
-        boundSession: st.boundSessionId,
-        cwd: st.cwd,
-        preset: resolvedPreset.id,
-        model: `${selection.provider}/${selection.model}`,
-      })
-      const created: DshAgentHandle = await agents.resume({
-        resumeSessionId: targetId,
-        agentOptions,
-        setup,
-      })
+      let created: DshAgentHandle
+      if (st.boundFresh) {
+        this.log.info('agent create (fresh bound session)', {
+          chatId: st.chatId,
+          chatType: st.chatType,
+          boundSession: st.boundSessionId,
+          cwd: st.cwd,
+          preset: resolvedPreset.id,
+          model: `${selection.provider}/${selection.model}`,
+        })
+        created = await agents.create({
+          sessionId: targetId,
+          meta,
+          agentOptions,
+          setup,
+        })
+        st.boundFresh = false
+      } else {
+        this.log.info('agent resume', {
+          chatId: st.chatId,
+          chatType: st.chatType,
+          boundSession: st.boundSessionId,
+          cwd: st.cwd,
+          preset: resolvedPreset.id,
+          model: `${selection.provider}/${selection.model}`,
+        })
+        created = await agents.resume({
+          resumeSessionId: targetId,
+          agentOptions,
+          setup,
+        })
+      }
       st.modelSelection = { ...selection }
       st.handle = { agent: created.agent, dispose: () => created.dispose() }
       return st.handle
@@ -444,17 +466,18 @@ export class WecomAgentBridge {
     const workspace = this.config.defaultWorkspace ? st.workspace : undefined
     const resolved = workspace ? await resolveAllowedDirectory(workspace, this.cwdRoots()) : undefined
     const target = resolved ?? st.cwd
-    const changed = target !== st.cwd
+    // Dispose any held agent and reset state, then bind a freshly minted
+    // browser-visible session id (session-<uuid>) so the next message creates a
+    // new session the DSH web app lists and the browser can see.
     await this.resetContext(st)
-    if (changed) st.cwd = target
-    this.log.info('new', { chatId: st.chatId, chatType: st.chatType, cwd: target, workspace: workspace })
-    if (workspace && workspace !== target) {
-      // Workspace not reachable; fall back to current directory but note it.
-      return { text: `工作区 \`${workspace}\` 不可用，已在当前目录 \`${target}\` 开启新对话。`, ok: false }
-    }
-    return { text: changed
-      ? `已开启新的对话，工作区切到 \`${target}\`（新会话在此目录下）。`
-      : `已在 \`${target}\` 开启新的对话。`, ok: true }
+    if (target !== st.cwd) st.cwd = target
+    const freshId = `session-${randomUUID()}`
+    st.boundSessionId = freshId
+    st.boundFresh = true
+    st.aligned = true
+    this.log.info('new', { chatId: st.chatId, chatType: st.chatType, cwd: target, workspace: workspace, freshSession: freshId })
+    const note = workspace && workspace !== target ? `工作区 \`${workspace}\` 不可用，已回退到 \`${target}\`。` : ''
+    return { text: `${note}已开启新会话 \`${freshId}\`，下一条消息将在此目录创建（DSH web 中将显示）。`, ok: true }
   }
 
   /** `/sessions [session-id]` — list persisted sessions in the current directory, or bind to one. */
@@ -483,6 +506,7 @@ export class WecomAgentBridge {
         st.modelSelection = undefined
       }
       st.boundSessionId = target
+      st.boundFresh = false
       this.log.info('sessions bind', { chatId: st.chatId, chatType: st.chatType, to: target })
       return { text: `已绑定会话 \`${target}\`。下一条消息将写入该会话（与 DSH web 共享）。`, ok: true }
     }
@@ -524,6 +548,7 @@ export class WecomAgentBridge {
       st.modelSelection = undefined
     }
     st.boundSessionId = target
+    st.boundFresh = false
     this.log.info('attach', { chatId: st.chatId, chatType: st.chatType, from: previous, to: target })
     return { text: `已绑定会话 \`${target}\`。下一条消息将写入该会话（与 DSH web 共享）。`, ok: true }
   }
