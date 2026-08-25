@@ -1,6 +1,7 @@
 declare module '@deepseek-ai/cordis' {
   export interface Context {
     get(name: string): any
+    on(event: string, listener: (session: unknown, event: unknown) => void): () => void
     tools: { register(definition: unknown): () => void }
     webServer: import('@deepseek-ai/dsh-host-webserver').WebServer
     effect(disposer: () => (() => void) | (() => Promise<void>), label: string): void
