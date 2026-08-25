@@ -167,6 +167,31 @@ export class WecomBot {
     await this.client.replyStream(frame, generateReqId('stream'), truncateUtf8(content), true)
   }
 
+  /**
+   * Open a streaming reply showing a "thinking" placeholder (finish=false) and
+   * return its stream id. Call {@link finishReply} with the same id and the real
+   * content to replace that bubble in place. Lets WeCom show progress while the
+   * bot works, so the user is not left wondering whether the message was
+   * received.
+   */
+  openThinking(frame: WsFrame, text: string): string {
+    const streamId = generateReqId('stream')
+    void this.client.replyStream(frame, streamId, truncateUtf8(text), false).catch((error: unknown) => {
+      // eslint-disable-next-line no-console
+      console.error(`[dsh-wecom] thinking opener failed (${safeErrorKind(error)})`)
+    })
+    return streamId
+  }
+
+  /** Finalize an opened thinking stream (same stream id) with the real reply content. */
+  async finishReply(frame: WsFrame, streamId: string, content: string): Promise<void> {
+    this.log.debug('reply outbound (stream finish)', {
+      chatId: (frame?.body?.chatid ?? frame?.body?.from?.userid ?? '') as string,
+      bytes: Buffer.byteLength(content, 'utf8'),
+    })
+    await this.client.replyStream(frame, streamId, truncateUtf8(content), true)
+  }
+
   async sendText(chatId: string, content: string): Promise<void> {
     this.log.debug('send outbound', {
       chatId,

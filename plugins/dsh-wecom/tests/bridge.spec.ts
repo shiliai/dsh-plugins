@@ -133,17 +133,28 @@ function baseContext(opts: {
 }
 
 function fakeBot() {
-  const replies: Array<{ frame: unknown; content: string }> = []
+  const replies: Array<{ frame: unknown; content: string; via: 'replyText' | 'finishReply' }> = []
   const sends: Array<{ chatId: string; content: string }> = []
+  let opens = 0
+  let streamCounter = 0
   return {
     identity: 'bot-a',
     replies,
     sends,
+    opens,
     replyText: vi.fn(async (frame: unknown, content: string) => {
-      replies.push({ frame, content })
+      replies.push({ frame, content, via: 'replyText' })
     }),
     sendText: vi.fn(async (chatId: string, content: string) => {
       sends.push({ chatId, content })
+    }),
+    openThinking: vi.fn((_frame: unknown, _text: string) => {
+      opens += 1
+      streamCounter += 1
+      return `stream-${streamCounter}`
+    }),
+    finishReply: vi.fn(async (frame: unknown, _streamId: string, content: string) => {
+      replies.push({ frame, content, via: 'finishReply' })
     }),
   }
 }
@@ -159,8 +170,11 @@ describe('WecomAgentBridge', () => {
     const bridge = new WecomAgentBridge(mockCtx as never, bot as never, { botId: 'b', botSecret: 's' })
     const res = await bridge.enqueue(msg('u1', '你好'))
     expect(res.text).toContain('你好')
-    expect(bot.replyText).toHaveBeenCalledTimes(1)
-    expect(bot.replyText.mock.calls[0]![1]).toContain('你好')
+    // real turn opens a thinking stream and finalizes it with the agent output
+    expect(bot.openThinking).toHaveBeenCalledTimes(1)
+    expect(bot.finishReply).toHaveBeenCalledTimes(1)
+    expect(bot.finishReply.mock.calls[0]![2]).toContain('你好')
+    expect(bot.replyText).not.toHaveBeenCalled()
   })
 
   it('keeps conversation memory per chat (followup accumulates on same agent)', async () => {
@@ -478,7 +492,10 @@ describe('slash commands', () => {
   it('refuses to create an uncomposed agent when the preset service is absent', async () => {
     const { mockCtx } = baseContext({ withPresets: false })
     const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's' })
-    await expect(bridge.enqueue(msg('u1', 'hello'))).rejects.toThrow('agentPresets service unavailable')
+    const res = await bridge.enqueue(msg('u1', 'hello'))
+    // the turn fails on the stream (thinking finalized with an error), not a reject
+    expect(res.ok).toBe(false)
+    expect(res.text).toBe('')
   })
 })
 
@@ -588,7 +605,10 @@ describe('shared web session binding (option A)', () => {
     const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, {
       botId: 'b', botSecret: 's', bindSession: { 'single:u1': 'web-ses-live' },
     })
-    await expect(bridge.enqueue(msg('u1', '尝试写入'))).rejects.toThrow(/live in the browser/)
+    const res = await bridge.enqueue(msg('u1', '尝试写入'))
+    // the refusal surfaces on the finalized thinking stream, not a rejection
+    expect(res.ok).toBe(false)
+    expect(res.text).toBe('')
     expect(resumes).toHaveLength(0)
     expect(creates).toHaveLength(0)
   })
@@ -766,7 +786,9 @@ describe('web -> wecom mirror', () => {
     await bridge.enqueue(msg('u1', '来自 wecom 的消息'))
     await flush()
     expect(bot.sendText).not.toHaveBeenCalled()
-    expect(bot.replyText).toHaveBeenCalledTimes(2) // /attach + the wecom turn
+    // /attach is a command (replyText); the wecom turn opens+finalizes thinking
+    expect(bot.replyText).toHaveBeenCalledTimes(1)
+    expect(bot.finishReply).toHaveBeenCalledTimes(1)
   })
 
   it('mirrorWebToWecom:false disables the mirror entirely', async () => {
@@ -779,5 +801,40 @@ describe('web -> wecom mirror', () => {
     emit('session/event', { id: 'web-ses-3' }, turnEndEvent('web-ses-3'))
     await flush()
     expect(bot.sendText).not.toHaveBeenCalled()
+  })
+})
+
+describe('thinking indicator', () => {
+  it('opens a thinking stream and finalizes it with the agent reply', async () => {
+    const { mockCtx } = baseContext()
+    const bot = fakeBot()
+    const bridge = new WecomAgentBridge(mockCtx as never, bot as never, { botId: 'b', botSecret: 's' })
+    await bridge.enqueue(msg('u1', '你好'))
+    // placeholder opened first, then the same-stream final reply
+    expect(bot.openThinking).toHaveBeenCalledTimes(1)
+    expect(String(bot.openThinking.mock.calls[0]![0] !== undefined)).toBe('true')
+    expect(bot.finishReply).toHaveBeenCalledTimes(1)
+    expect(bot.finishReply.mock.calls[0]![1]).toBe('stream-1') // same stream id as opened
+    expect(bot.finishReply.mock.calls[0]![2]).toContain('你好')
+    expect(bot.replyText).not.toHaveBeenCalled()
+  })
+
+  it('uses custom thinkingText when configured', async () => {
+    const { mockCtx } = baseContext()
+    const bot = fakeBot()
+    const bridge = new WecomAgentBridge(mockCtx as never, bot as never, { botId: 'b', botSecret: 's', thinkingText: '✨ 加载中…' })
+    await bridge.enqueue(msg('u1', '你好'))
+    expect(bot.openThinking).toHaveBeenCalledTimes(1)
+    expect(bot.openThinking.mock.calls[0]![1]).toBe('✨ 加载中…')
+  })
+
+  it('showThinking:false replies directly without a thinking stream', async () => {
+    const { mockCtx } = baseContext()
+    const bot = fakeBot()
+    const bridge = new WecomAgentBridge(mockCtx as never, bot as never, { botId: 'b', botSecret: 's', showThinking: false })
+    await bridge.enqueue(msg('u1', '你好'))
+    expect(bot.openThinking).toHaveBeenCalledTimes(0)
+    expect(bot.replyText).toHaveBeenCalledTimes(1)
+    expect(bot.replyText.mock.calls[0]![1]).toContain('你好')
   })
 })
