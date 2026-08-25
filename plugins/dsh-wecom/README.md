@@ -102,6 +102,12 @@ Add a user patch with explicit identities and roots appropriate for the host:
         # conversation is visible in both directions. Never loops (the plugin's
         # own wecom->web forwards are detected and skipped). Defaults to true.
         mirrorWebToWecom: true
+        # Optional. Show a "thinking" placeholder on WeCom while an agent turn
+        # runs, then replace it with the reply via a streaming reply, so the user
+        # knows the bot received the message and is working. Defaults to true.
+        showThinking: true
+        # Optional. Placeholder text shown while thinking. Defaults to "🤔 思考中…".
+        thinkingText: '🤔 思考中…'
 ```
 
 `allowChats` authorizes direct chats by chat id or userid. For a group it

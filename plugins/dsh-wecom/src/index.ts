@@ -74,6 +74,14 @@ export interface Config {
    * true.
    */
   mirrorWebToWecom?: boolean
+  /**
+   * Show a "thinking" placeholder on WeCom while an agent turn runs, then
+   * replace it with the reply (via a WeCom streaming reply) so the user knows
+   * the bot received the message and is working. Defaults to true.
+   */
+  showThinking?: boolean
+  /** Placeholder text to show while thinking. Defaults to "🤔 思考中…". */
+  thinkingText?: string
 }
 
 /** Keep runtime-loaded configuration compatible with the former apply() default. */
@@ -793,6 +801,23 @@ export class WecomAgentBridge {
     return eviction
   }
 
+  private thinkEnabled(): boolean {
+    return this.config.showThinking !== false
+  }
+
+  private thinkText(): string {
+    return this.config.thinkingText ?? '🤔 思考中…'
+  }
+
+  private async finishReply(message: InboundMessage, streamId: string | undefined, text: string | undefined): Promise<void> {
+    const final = truncateUtf8((text ?? '').trim())
+    if (streamId) {
+      await this.bot.finishReply(message.frame, streamId, final || '✅ 完成。')
+      return
+    }
+    if (final) await this.bot.replyText(message.frame, final)
+  }
+
   enqueue(message: InboundMessage): Promise<TurnResult> {
     if (!this.accepting) return Promise.reject(new Error('dsh-wecom: bridge is shutting down'))
     const key = chatKey(message.chatType || 'unknown', message.chatId)
@@ -800,9 +825,30 @@ export class WecomAgentBridge {
     const task = async (): Promise<TurnResult> => {
       await this.evictIdle(key)
       const command = await this.handleCommand(message)
-      const result = command ?? await this.runTurn(message)
-      if (result.text) await this.bot.replyText(message.frame, truncateUtf8(result.text))
-      return result
+      if (command) {
+        if (command.text) await this.bot.replyText(message.frame, truncateUtf8(command.text))
+        return command
+      }
+      // Real agent turn — open a "thinking" stream immediately, then finalize the
+      // same stream with the reply so WeCom shows the bot is working.
+      const streamId = this.thinkEnabled() ? this.bot.openThinking(message.frame, this.thinkText()) : undefined
+      try {
+        const result = await this.runTurn(message)
+        await this.finishReply(message, streamId, result.text)
+        return result
+      } catch (error) {
+        // If a thinking stream was opened, finalize it with a failure note (no
+        // duplicate reply); otherwise rethrow to the caller's normal failure path.
+        if (streamId) {
+          try {
+            await this.bot.finishReply(message.frame, streamId, '抱歉，处理这条消息时发生错误。请稍后重试。')
+          } catch {
+            // best-effort; the failure was already surfaced through the stream
+          }
+          return { text: '', ok: false }
+        }
+        throw error
+      }
     }
     const next = previous.then(task, task)
     let settled: Promise<void>
