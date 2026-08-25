@@ -59,10 +59,13 @@ function baseContext(opts: {
   resumeHandler?: boolean
   /** Session ids reported as already live (e.g. active in the browser). */
   liveIds?: string[]
+  /** If true, mock `workspaceRegistry` and capture attach calls. */
+  withRegistry?: boolean
 } = {}) {
   const agents: FakeAgent[] = []
   const creates: Array<Record<string, unknown>> = []
   const resumes: Array<Record<string, unknown>> = []
+  const attaches: Array<{ path: string; session: string }> = []
   const selection = opts.selection ?? { provider: 'p', model: 'm' }
   const makeHandle = (options: Record<string, unknown>) => {
     const index = agents.length
@@ -97,10 +100,21 @@ function baseContext(opts: {
           listSnapshots: async () => (opts.persisted ?? []).map((id) => ({ header: { id } })),
         }
       }
+      if (name === 'workspaceRegistry' && opts.withRegistry) {
+        return {
+          resolveByPath: async (path: string) => {
+            attaches.push({ path, session: 'RESOLVE' })
+            return undefined
+          },
+          create: async (path: string) => ({
+            attachSession: async (id: unknown) => { attaches.push({ path, session: String(id) }) },
+          }),
+        }
+      }
       return undefined
     },
   }
-  return { mockCtx, agents, creates, resumes, selection }
+  return { mockCtx, agents, creates, resumes, selection, attaches }
 }
 
 function fakeBot() {
@@ -650,5 +664,27 @@ describe('shared web session binding (option A)', () => {
     // second create is a fresh browser session (session-<uuid>), not resume
     expect(creates).toHaveLength(2)
     expect(String(creates[1]!.sessionId)).toMatch(/^session-[0-9a-f-]+$/)
+  })
+
+  it('attaches a bound browser session to its cwd workspace for the web UI', async () => {
+    const { mockCtx, creates, attaches } = baseContext({ withRegistry: true })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's', defaultWorkspace: process.cwd() })
+    await bridge.enqueue(msg('u1', '/new'))
+    await bridge.enqueue(msg('u1', '新会话第一句'))
+    expect(creates).toHaveLength(1)
+    const createdId = String(creates[0]!.sessionId)
+    expect(createdId).toMatch(/^session-[0-9a-f-]+$/)
+    // workspace create was called, and attachSession received the created session id
+    const attached = attaches.filter((a) => a.session !== 'RESOLVE')
+    expect(attached).toHaveLength(1)
+    expect(attached[0]!.session).toBe(createdId)
+    expect(attached[0]!.path).toBe(process.cwd())
+  })
+
+  it('does not attach wecom: private sessions to a workspace', async () => {
+    const { mockCtx, attaches } = baseContext({ withRegistry: true, resumeHandler: true })
+    const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's', resumeSessions: true })
+    await bridge.enqueue(msg('u1', '普通对话'))
+    expect(attaches.filter((a) => a.session !== 'RESOLVE')).toHaveLength(0)
   })
 })

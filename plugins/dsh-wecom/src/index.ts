@@ -114,6 +114,12 @@ interface SessionPersistenceLike {
   listSnapshots?(signal?: AbortSignal): Promise<Array<{ header: { id: string; cwd?: string; createdAt?: number; agentPreset?: string } }>>
 }
 
+/** Structural subset of the `workspaceRegistry` service used to surface bound sessions in the DSH web UI. */
+interface WorkspaceRegistryLike {
+  resolveByPath?(path: string): Promise<{ attachSession(id: unknown): Promise<void> } | undefined>
+  create?(path: string, title?: string): Promise<{ attachSession(id: unknown): Promise<void> }>
+}
+
 interface ChatState {
   chatId: string
   chatType: string
@@ -208,6 +214,27 @@ export class WecomAgentBridge {
 
   private sessionIdPrefix(st: ChatState): string {
     return `wecom:${encodeURIComponent(this.bot.identity)}:${encodeURIComponent(st.chatType)}:${encodeURIComponent(st.chatId)}`
+  }
+
+  /**
+   * Attach a bound `session-<uuid>` to the workspace for its working directory so
+   * it appears in the DSH web UI's named workspace group (not "Ungrouped").
+   * Best-effort: when the workspaceRegistry service is unavailable (non-web host)
+   * or resolution fails, this is a no-op. Only browser-namespaced session ids are
+   * surfaced; `wecom:` sessions stay private to the bot.
+   */
+  private async attachToWorkspace(sessionId: string, cwd: string): Promise<void> {
+    if (!/^session-[0-9a-f-]+$/i.test(sessionId)) return
+    const registry = this.ctx.get('workspaceRegistry') as WorkspaceRegistryLike | undefined
+    if (!registry?.resolveByPath || !registry.create) return
+    try {
+      let workspace = await registry.resolveByPath(cwd)
+      if (!workspace) workspace = await registry.create(cwd)
+      await workspace.attachSession(SessionId(sessionId))
+      this.log.info('attached session to workspace', { sessionId, cwd })
+    } catch (error) {
+      this.log.warn('workspace attach skipped', { sessionId, cwd, error: safeErrorKind(error) })
+    }
   }
 
   /**
@@ -350,6 +377,7 @@ export class WecomAgentBridge {
       }
       st.modelSelection = { ...selection }
       st.handle = { agent: created.agent, dispose: () => created.dispose() }
+      await this.attachToWorkspace(st.boundSessionId, st.cwd)
       return st.handle
     }
 
