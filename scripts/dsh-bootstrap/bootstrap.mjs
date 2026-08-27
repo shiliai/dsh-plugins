@@ -530,7 +530,16 @@ async function ensurePlugins(opts) {
       log('plugins', `  would run: dsh plugin --profile ${opts.profile} add ${p.spec}`)
       continue
     }
-    runDshPlugin(opts, ['add', p.spec])
+    try {
+      runDshPlugin(opts, ['add', p.spec])
+    } catch (err) {
+      // An optional plugin that fails to install (e.g. its path is not in the
+      // repo yet, or a transient resolver error) must not abort the whole
+      // setup. Required plugins are mandatory, so those still abort loudly.
+      if (p.required) throw err
+      warn(`${p.id} failed to install and was skipped: ${String(err.message).split('\n')[0]}`)
+      continue
+    }
     console.log(`  ✓ ${p.id} installed`)
   }
   console.log('  Restart the DSH profile to pick up newly installed plugins.')

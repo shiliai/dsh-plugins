@@ -36,7 +36,9 @@ It is safe to run repeatedly — every step detects what is already done and ski
    `$DSH_HOME/.credentials.yaml` with mode `600`. This file is **never committed**.
 4. **plugins** — shows required plugins (auto-installed, e.g. `dsh-better-sidebar`) and lets
    you multi-select optional ones (Obsidian, remote, WeCom, file-attachment), installing via
-   `dsh plugin` with the needed GitHub build-trust.
+   `dsh plugin` with the needed GitHub build-trust. A plugin whose install fails (e.g. its
+   path is not yet in the repo) is **skipped with a warning for optional plugins**; a required
+   plugin failure still aborts so you know the base setup is incomplete.
 5. **update** (`sync` offers it; `update` runs it directly) — updates DSH itself, the
    repo-sourced plugins (via the repository updater) and npm-sourced plugins.
 
