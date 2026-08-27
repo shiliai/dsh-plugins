@@ -8,6 +8,7 @@ import { createRequire } from 'node:module'
 import { promisify } from 'node:util'
 
 const fixturePlugins = [
+  { name: '@dsh-plugins/dsh-file-attachment', directory: 'plugins/dsh-file-attachment', bundleId: 'dsh-file-attachment' },
   { name: '@dsh-plugins/dsh-obsidian', directory: 'plugins/dsh-obsidian', bundleId: 'dsh-obsidian' },
   { name: '@dsh-plugins/dsh-wecom', directory: 'plugins/dsh-wecom', bundleId: 'dsh-wecom' },
 ]
@@ -96,6 +97,7 @@ try {
   const check = await run(process.execPath, [
     dshBin, 'plugin', '--profile', 'web', 'dlx', updaterSpec, 'check',
   ])
+  assert.match(check, /@dsh-plugins\/dsh-file-attachment: 0\.1\.0 -> 0\.1\.1 \(outdated\)/)
   assert.match(check, /@dsh-plugins\/dsh-obsidian: 0\.1\.0 -> 0\.1\.1 \(outdated\)/)
   assert.match(check, /@dsh-plugins\/dsh-wecom: 0\.1\.0 -> 0\.1\.1 \(outdated\)/)
 
