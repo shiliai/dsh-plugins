@@ -33,6 +33,13 @@ export interface WecomBotEvents {
   error: (err: unknown) => void
 }
 
+export type WecomLifecycleEvent =
+  | { type: 'connected' }
+  | { type: 'authenticated' }
+  | { type: 'disconnected' }
+  | { type: 'reconnecting' }
+  | { type: 'error'; error: unknown }
+
 /**
  * Thin wrapper over the WeCom smart-robot Node SDK (WebSocket long connection).
  * Owns connect/auth/heartbeat/reconnect and normalizes inbound text messages.
@@ -46,6 +53,7 @@ export class WecomBot {
   private readonly dedupTtlMs = 10 * 60_000
   private readonly maxDedupEntries = 10_000
   private readonly log: Logger
+  private readonly lifecycleListeners = new Set<(event: WecomLifecycleEvent) => void>()
 
   constructor(options: WecomBotOptions) {
     this.options = options
@@ -64,6 +72,15 @@ export class WecomBot {
 
   get identity(): string {
     return this.options.botId
+  }
+
+  onLifecycle(listener: (event: WecomLifecycleEvent) => void): () => void {
+    this.lifecycleListeners.add(listener)
+    return () => this.lifecycleListeners.delete(listener)
+  }
+
+  private emitLifecycle(event: WecomLifecycleEvent): void {
+    for (const listener of this.lifecycleListeners) listener(event)
   }
 
   private isDuplicate(msgId: string): boolean {
@@ -95,10 +112,23 @@ export class WecomBot {
     }
     this.client.on('authenticated', () => {
       this.readyFired = true
+      this.emitLifecycle({ type: 'authenticated' })
+    })
+    this.client.on('connected', () => {
+      this.emitLifecycle({ type: 'connected' })
+    })
+    this.client.on('disconnected', () => {
+      this.readyFired = false
+      this.emitLifecycle({ type: 'disconnected' })
+    })
+    this.client.on('reconnecting', () => {
+      this.readyFired = false
+      this.emitLifecycle({ type: 'reconnecting' })
     })
     this.client.on('error', (err) => {
       // eslint-disable-next-line no-console
       console.error(`[dsh-wecom] sdk error (${safeErrorKind(err)})`)
+      this.emitLifecycle({ type: 'error', error: err })
     })
     this.client.on('message.text', (frame: WsFrame) => {
       const body = frame?.body ?? {}
@@ -135,6 +165,31 @@ export class WecomBot {
       bytes: Buffer.byteLength(content, 'utf8'),
     })
     await this.client.replyStream(frame, generateReqId('stream'), truncateUtf8(content), true)
+  }
+
+  /**
+   * Open a streaming reply showing a "thinking" placeholder (finish=false) and
+   * return its stream id. Call {@link finishReply} with the same id and the real
+   * content to replace that bubble in place. Lets WeCom show progress while the
+   * bot works, so the user is not left wondering whether the message was
+   * received.
+   */
+  openThinking(frame: WsFrame, text: string): string {
+    const streamId = generateReqId('stream')
+    void this.client.replyStream(frame, streamId, truncateUtf8(text), false).catch((error: unknown) => {
+      // eslint-disable-next-line no-console
+      console.error(`[dsh-wecom] thinking opener failed (${safeErrorKind(error)})`)
+    })
+    return streamId
+  }
+
+  /** Finalize an opened thinking stream (same stream id) with the real reply content. */
+  async finishReply(frame: WsFrame, streamId: string, content: string): Promise<void> {
+    this.log.debug('reply outbound (stream finish)', {
+      chatId: (frame?.body?.chatid ?? frame?.body?.from?.userid ?? '') as string,
+      bytes: Buffer.byteLength(content, 'utf8'),
+    })
+    await this.client.replyStream(frame, streamId, truncateUtf8(content), true)
   }
 
   async sendText(chatId: string, content: string): Promise<void> {

@@ -4,10 +4,21 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import { PanelLeftOpen, Radio } from 'lucide-react'
 import { RemotePanel } from './RemotePanel.tsx'
 import { installMobileCompatibility } from './mobile-compat.ts'
+import { installWorkspaceSessionReadiness } from './workspace-session-readiness.ts'
 import css from './styles.module.css?dsh-inline'
 
-export const inject = ['slots']
+export const inject = ['settingsScope', 'slots', 'sessions', 'workspaces', 'modelDirectories']
 const ACCESS_FRAGMENT = /^#\/access\/[A-Za-z0-9_-]{43}$/u
+const OWNER_UI_COOKIE = '__Host-dsh_remote_owner_ui'
+
+interface SettingsMirrorCompatibility {
+  persistence?: unknown
+  load?: () => Promise<void>
+}
+
+interface SettingsScopeCompatibility {
+  describe?: () => SettingsMirrorCompatibility
+}
 
 export interface BrowserLocation {
   hash: string
@@ -22,6 +33,21 @@ export interface BrowserHistory {
 export function clearAccessFragment(location: BrowserLocation, history: BrowserHistory): boolean {
   if (!ACCESS_FRAGMENT.test(location.hash)) return false
   history.replaceState(null, '', `${location.pathname}${location.search}`)
+  return true
+}
+
+export function enableOwnerConfigurationPlane(
+  cookieHeader: string,
+  settingsScope: SettingsScopeCompatibility,
+): boolean {
+  const enabled = cookieHeader.split(';').some(part => part.trim() === `${OWNER_UI_COOKIE}=1`)
+  if (!enabled) return false
+
+  const mirror = settingsScope.describe?.()
+  if (mirror !== undefined && mirror.persistence === 'memory') {
+    mirror.persistence = 'host'
+    void mirror.load?.()
+  }
   return true
 }
 
@@ -64,6 +90,11 @@ function FooterButton({ wide, open }: FooterProps) {
 
 export function apply(ctx: ClientContext): void {
   clearAccessFragment(window.location, window.history)
+  enableOwnerConfigurationPlane(
+    window.document.cookie,
+    ctx.get('settingsScope') as unknown as SettingsScopeCompatibility,
+  )
+  const disposeWorkspaceSessionReadiness = installWorkspaceSessionReadiness(ctx)
   const disposeMobileCompatibility = installMobileCompatibility()
   const disposeMobileSidebarButton = ctx.slots.register({
     name: 'shell.overlay',
@@ -95,5 +126,6 @@ export function apply(ctx: ClientContext): void {
     close()
     disposeMobileSidebarButton()
     disposeMobileCompatibility()
+    disposeWorkspaceSessionReadiness()
   }, 'dsh-remote: client surfaces')
 }

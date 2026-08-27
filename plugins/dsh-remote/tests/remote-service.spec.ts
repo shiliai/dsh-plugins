@@ -65,4 +65,14 @@ describe('resolveRuntimeConfig', () => {
       expect(() => resolveRuntimeConfig({ host: '127.0.0.1', port: 3080 }, config)).toThrow('instanceId')
     }
   })
+
+  it('uses a fixed Gateway and mode-restricted Agent socket in Host mode', () => {
+    vi.stubEnv('DSH_REMOTE_MODE', 'host')
+		vi.stubEnv('DSH_REMOTE_SSH_COMPATIBILITY', 'true')
+    vi.stubEnv('DSH_REMOTE_AGENT_SOCKET_PATH', '/tmp/dsh-agent.sock')
+    expect(resolveRuntimeConfig({ host: '127.0.0.1', port: 3080 }, config)).toMatchObject({
+			mode: 'host', sshCompatibility: true, gatewayPort: 29321, agentSocketPath: '/tmp/dsh-agent.sock',
+    })
+    expect(() => resolveRuntimeConfig({ host: '127.0.0.1', port: 3080 }, { ...config, gatewayPort: 0 })).toThrow('fixed gatewayPort')
+  })
 })

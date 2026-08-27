@@ -111,12 +111,8 @@ export class TunnelSupervisor {
 
   private retry(reason: string, generation: number): void {
     if (!this.isCurrent(generation)) return
-    if (this.attempts > this.options.reconnectMaxRetries) {
-      this.setStatus('failed', 'SSH retry limit reached.')
-      return
-    }
     this.setStatus('reconnecting', reason)
-    const exponential = Math.min(this.options.reconnectMaxMs, this.options.reconnectBaseMs * 2 ** (this.attempts - 1))
+    const exponential = Math.min(this.options.reconnectMaxMs, this.options.reconnectBaseMs * 2 ** Math.min(this.attempts - 1, 30))
     const jitter = 0.8 + this.random() * 0.4
     this.timer = setTimeout(() => {
       this.timer = undefined

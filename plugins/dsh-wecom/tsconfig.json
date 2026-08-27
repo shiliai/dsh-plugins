@@ -10,8 +10,9 @@
     "skipLibCheck": true,
     "declaration": true,
     "declarationMap": true,
+    "jsx": "react-jsx",
     "allowImportingTsExtensions": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "tsdown.config.ts", "vitest.config.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", "tsdown.config.ts", "vitest.config.ts"]
 }

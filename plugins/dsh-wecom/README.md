@@ -4,6 +4,21 @@
 Harness. It keeps conversation memory only for the lifetime of the DSH process;
 restarting the process deliberately starts new conversations.
 
+To let each chat's conversation survive process restarts and plugin reloads,
+set `resumeSessions: true` (see [Configuration](#configuration)); the bridge then
+resumes the latest persisted `wecom:` session for the chat instead of starting
+fresh, falling back to a fresh session when the persistence service is
+unavailable or nothing is persisted. A chat can also be bound to an existing
+DSH web session (`/sessions`, `/attach`, or `bindSession`) so the WeCom bot and
+the browser share one conversation log. When a chat is bound, the sync is
+bidirectional: the bot writes WeCom messages into that session (visible in the
+browser), and messages the user sends from the browser on that session are
+mirrored back to the WeCom chat together with the assistant's replies (see
+`mirrorWebToWecom`). Session bindings are organized around an
+action workspace (see `defaultWorkspace`): `/new` starts a fresh session there
+and `/sessions` lists or binds the persisted sessions under the current
+directory.
+
 ## Install
 
 Install the public GitHub subdirectory package through DSH. Do not use a local
@@ -44,7 +59,7 @@ Add a user patch with explicit identities and roots appropriate for the host:
 - insert:
     - id: dsh-wecom
       name: '@dsh-plugins/dsh-wecom'
-      inject: [tools, agents, agentDefaultModel, agentPresets, sessions]
+      inject: [tools, agents, agentDefaultModel, agentPresets, sessions, webServer]
       config:
         botId: !!js process.env.WECOM_BOT_ID ?? ''
         botSecret: !!js process.env.WECOM_BOT_SECRET ?? ''
@@ -56,12 +71,48 @@ Add a user patch with explicit identities and roots appropriate for the host:
         outboundAllowChats: ['userid-a']
         # Diagnostic verbosity: error | warn | info (default) | debug.
         logLevel: 'info'
+        # Trusted browser origin for the restart action. Local DSH defaults to this value.
+        managementOrigin: 'http://127.0.0.1:3180'
         defaultCwd: '/srv/dsh-workspace'
         allowedCwdRoots: ['/srv/dsh-workspace']
+        # Optional. Action workspace where /new starts a fresh session and
+        # sessions are organized by directory (see /sessions). Defaults to
+        # ~/project/wecom-workspace.
+        defaultWorkspace: '/srv/dsh-workspace/wecom-workspace'
         # Optional. Without this, agentPresets.defaultId is used.
         defaultPreset: 'standard'
         maxLiveChats: 100
         idleChatMs: 1800000
+        # Optional. Resume this chat's latest persisted `wecom:` session across
+        # process restarts instead of starting fresh. Requires the host's
+        # sessionPersistence service (the web profile ships
+        # dsh-session-persistence-jsonl). Falls back to a fresh session when
+        # unavailable or nothing is persisted. Defaults to false.
+        resumeSessions: true
+        # Optional. Bind a chat (key `"type:chatId"`) to an existing DSH web
+        # session id to share one conversation log. The target must be persisted
+        # and idle (not active in the browser). Prefer /sessions and /attach for
+        # runtime binding.
+        bindSession:
+          'single:userid-a': 'some-web-session-id'
+        # Optional. Mirror DSH web activity back to WeCom. When a chat is bound
+        # to a shared `session-<uuid>` (bindSession, /attach, /sessions <id>, or
+        # /new), messages the user sends in the browser on that session — and the
+        # assistant's replies — are forwarded to the bound WeCom chat, so the
+        # conversation is visible in both directions. Never loops (the plugin's
+        # own wecom->web forwards are detected and skipped). Defaults to true.
+        mirrorWebToWecom: true
+        # Optional. Show a "thinking" placeholder on WeCom while an agent turn
+        # runs, then replace it with the reply via a streaming reply, so the user
+        # knows the bot received the message and is working. Defaults to true.
+        showThinking: true
+        # Optional. Placeholder text shown while thinking. Defaults to "🤔 思考中…".
+        thinkingText: '🤔 思考中…'
+        # Optional. Persist runtime chat->web-session bindings (/attach, /sessions,
+        # /new) across process restarts, so a bound chat keeps pointing at its
+        # shared web session after a restart. Stored in
+        # <defaultWorkspace>/.dsh-wecom-bindings.json. Defaults to true.
+        persistBindings: true
 ```
 
 `allowChats` authorizes direct chats by chat id or userid. For a group it
@@ -87,16 +138,45 @@ always dropped, even at `debug`. Only identity and metadata are emitted.
 no roots configured, only `defaultCwd` (or `process.cwd()`) and its descendants
 are available.
 
+## Connection status and plugin restart
+
+Use the WeCom connection button in the DSH sidebar to open the plugin panel.
+It updates automatically and shows `unconfigured`, `connecting`, `online`,
+`reconnecting`, `offline`, or `error`, together with safe timestamps,
+diagnostics, a redacted bot identity, and the plugin version. `online` is shown
+only after WeCom authentication succeeds.
+
+The panel's Restart action rebuilds only the `dsh-wecom` bridge and long
+connection. It first asks for confirmation because process-local WeCom
+conversations are reset. The action is serialized: repeated clicks reuse the
+same restart, disconnect and dispose the old pair before one replacement is
+created, and then report either the new connection state or a safe instruction
+to check credentials and network. It does not restart DSH or edit profile
+configuration.
+
+For an `unconfigured` status, update the DSH profile environment with both
+credential variables and restart the DSH profile. A plugin-only restart cannot
+read a changed parent-process environment. Configure `managementOrigin` for a
+non-local DSH browser origin; its exact scheme, host, and port authorize the
+restart action. The local default is `http://127.0.0.1:3180`.
+
+The status API deliberately never returns `botSecret`, tokens, message bodies,
+or WebSocket frames. Its restart endpoint accepts only the configured trusted
+origin and rejects cross-site browser fetches.
+
 ## Commands
 
 | Command | Effect |
 | --- | --- |
 | `/help` | Show commands |
-| `/new` | Start a new in-process session generation |
+| `/new` | Start a fresh session rooted at the action workspace |
 | `/cd [directory]` | Show or change to an allowed working directory |
 | `/pwd` | Show the current working directory |
 | `/agent [preset-id-or-unique-name]` | List or switch a valid preset |
 | `/status` | Show session, directory, preset, and the live agent model |
+| `/sessions [session-id]` | List persisted sessions under the current directory; with an id, bind to that session |
+| `/attach [session-id]` | Bind to a DSH web session to share a conversation (no arg shows current binding) |
+| `/detach` | Unbind and return to this chat's own session |
 
 Preset ids are the stable contract. A display name is accepted only when it is
 unique. Broken presets are rejected before session creation. When
@@ -112,8 +192,14 @@ recorded consistently in the session metadata and command/status output.
   reply after the agent turn; it does not promise a five-second first frame.
   WeCom documents a ten-minute limit after streaming has begun.
 - Session ids include bot namespace, chat type, chat identity, process epoch,
-  and generation. The bridge never resumes persistent sessions, so `/new` and a
-  plugin reload cannot revive an old generation.
+  and generation. By default the bridge never resumes persistent sessions, so
+  `/new` and a plugin-only restart cannot revive an old generation. With
+  `resumeSessions: true`, the process epoch is dropped from the id (so ids are
+  stable across restarts) and the latest persisted generation is resumed on
+  startup; `/new`, `/cd`, and `/agent` still start a fresh generation. A bound
+  chat instead resumes its bound web session id (see `/sessions`, `/attach`,
+  `bindSession`), refused with a clear message if that session is live in the
+  browser.
 - Queue entries are removed after settlement. Live chat states are bounded by
   `maxLiveChats` and idle eviction. In-flight queues are drained before plugin
   unload disposes their agents. Configure values for the expected traffic.
@@ -125,6 +211,8 @@ pnpm --filter @dsh-plugins/dsh-wecom check
 pnpm --filter @dsh-plugins/dsh-wecom pack:check
 pnpm --filter @dsh-plugins/dsh-wecom release:check
 ```
+
+The validation target for this feature release is `@dsh-plugins/dsh-wecom@0.3.0`.
 
 The test suite uses fakes for DSH and the WeCom SDK. It does not perform a live
 WeCom credential, network, or production-profile end-to-end test.

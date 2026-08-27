@@ -11,7 +11,7 @@ export class RemoteService {
     private readonly remoteOrigin: string,
     private readonly state: RemoteStateStore,
     private readonly gateway: RemoteGateway,
-    private readonly tunnel: TunnelSupervisor,
+    private readonly tunnel: TunnelSupervisor | null,
   ) {}
 
   static async start(webServer: WebServer, config: RemoteConfig): Promise<RemoteService> {
@@ -23,9 +23,10 @@ export class RemoteService {
       state,
       host: resolved.gatewayHost,
       port: resolved.gatewayPort,
+      ...(resolved.mode === 'host' ? { agentSocketPath: resolved.agentSocketPath } : {}),
     })
     await gateway.listen()
-    const tunnel = new TunnelSupervisor({
+    const tunnel = resolved.mode === 'ssh' || resolved.sshCompatibility ? new TunnelSupervisor({
       sshTarget: resolved.sshTarget,
       remoteSocketPath: resolved.remoteSocketPath,
       localPort: gateway.port,
@@ -33,8 +34,8 @@ export class RemoteService {
       reconnectMaxMs: resolved.reconnectMaxMs,
       reconnectMaxRetries: resolved.reconnectMaxRetries,
       stabilityDelayMs: resolved.tunnelStabilityDelayMs,
-    })
-    tunnel.start()
+    }) : null
+    tunnel?.start()
     return new RemoteService(resolved.remoteOrigin, state, gateway, tunnel)
   }
 
@@ -44,7 +45,7 @@ export class RemoteService {
       accessUrl: `${this.remoteOrigin}/#/access/${state.token}`,
       gatewayPort: this.gateway.port,
       sessionVersion: state.sessionVersion,
-      tunnel: this.tunnel.status(),
+      tunnel: this.tunnel?.status() ?? { phase: 'online', attempts: 0, reason: null },
     }
   }
 
@@ -55,12 +56,12 @@ export class RemoteService {
   }
 
   reconnect(): RemoteStatus {
-    this.tunnel.reconnect()
+    this.tunnel?.reconnect()
     return this.status()
   }
 
   async close(): Promise<void> {
-    this.tunnel.stop()
+    this.tunnel?.stop()
     await this.gateway.close()
   }
 }
@@ -74,10 +75,13 @@ export function managementOrigins(config: RemoteConfig, webServer: WebServer): r
 }
 
 export interface ResolvedRemoteConfig {
+  mode: 'ssh' | 'host'
+  sshCompatibility: boolean
   instanceId: string | undefined
   remoteOrigin: string
   sshTarget: string
   remoteSocketPath: string
+  agentSocketPath: string
   stateFile: string
   initialToken: string | undefined
   gatewayHost: '127.0.0.1'
@@ -92,6 +96,8 @@ export function resolveRuntimeConfig(webServer: Pick<WebServer, 'host' | 'port'>
   if (webServer.host !== '127.0.0.1') throw new Error('dsh-remote: webServer must remain bound to loopback.')
   if (config.gatewayHost !== undefined && config.gatewayHost !== '127.0.0.1') throw new Error('dsh-remote: gatewayHost must be 127.0.0.1.')
   const instanceId = optionalInstanceId(environmentValue('DSH_REMOTE_INSTANCE_ID') ?? config.instanceId)
+  const mode = requiredMode(environmentValue('DSH_REMOTE_MODE') ?? config.mode ?? 'ssh')
+  const sshCompatibility = optionalBoolean(environmentValue('DSH_REMOTE_SSH_COMPATIBILITY')) ?? config.sshCompatibility ?? false
   const baseDomain = requiredDomain(environmentValue('DSH_REMOTE_BASE_DOMAIN') ?? config.baseDomain ?? 'dsh.onlyservice.io', 'baseDomain')
   const remoteOrigin = requiredHttpsOrigin(
     environmentValue('DSH_REMOTE_ORIGIN') ?? (instanceId === undefined ? config.remoteOrigin : `https://${instanceId}.${baseDomain}`),
@@ -102,18 +108,23 @@ export function resolveRuntimeConfig(webServer: Pick<WebServer, 'host' | 'port'>
     ?? (instanceId === undefined ? config.remoteSocketPath : `/home/chriswang/.local/share/dsh-remote/instances/${instanceId}.sock`)
   assertSafeSshTarget(sshTarget)
   assertSafeRemoteSocketPath(remoteSocketPath)
+  const agentSocketPath = environmentValue('DSH_REMOTE_AGENT_SOCKET_PATH') ?? config.agentSocketPath ?? defaultAgentSocketPath()
+  assertSafeRemoteSocketPath(agentSocketPath)
   const stateFile = environmentValue('DSH_REMOTE_STATE_FILE') ?? config.stateFile
     ?? (instanceId === undefined ? defaultStatePath() : defaultInstanceStatePath(instanceId))
   if (!posix.isAbsolute(stateFile)) throw new Error('dsh-remote: stateFile must be absolute.')
   return {
+    mode,
+    sshCompatibility,
     instanceId,
     remoteOrigin,
     sshTarget,
     remoteSocketPath,
+    agentSocketPath,
     stateFile,
     initialToken: environmentValue('DSH_REMOTE_INITIAL_TOKEN'),
     gatewayHost: '127.0.0.1',
-    gatewayPort: boundedInteger(config.gatewayPort ?? 0, 0, 65535, 'gatewayPort'),
+    gatewayPort: hostGatewayPort(mode, config.gatewayPort),
     reconnectBaseMs: boundedInteger(config.reconnectBaseMs ?? 500, 100, 60_000, 'reconnectBaseMs'),
     reconnectMaxMs: boundedInteger(config.reconnectMaxMs ?? 30_000, 100, 300_000, 'reconnectMaxMs'),
     reconnectMaxRetries: boundedInteger(config.reconnectMaxRetries ?? 5, 0, 20, 'reconnectMaxRetries'),
@@ -153,6 +164,29 @@ function defaultStatePath(): string {
 function defaultInstanceStatePath(instanceId: string): string {
   const base = process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config')
   return join(base, 'dsh-remote', 'instances', `${instanceId}.json`)
+}
+
+function defaultAgentSocketPath(): string {
+  const base = process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config')
+  return join(base, 'dsh-remote-agent', 'agent.sock')
+}
+
+function requiredMode(value: string): 'ssh' | 'host' {
+  if (value !== 'ssh' && value !== 'host') throw new Error('dsh-remote: mode must be ssh or host.')
+  return value
+}
+
+function optionalBoolean(value: string | undefined): boolean | undefined {
+  if (value === undefined) return undefined
+  if (value === 'true') return true
+  if (value === 'false') return false
+  throw new Error('dsh-remote: boolean environment values must be true or false.')
+}
+
+function hostGatewayPort(mode: 'ssh' | 'host', value: number | undefined): number {
+  const port = boundedInteger(value ?? (mode === 'host' ? 29321 : 0), 0, 65535, 'gatewayPort')
+  if (mode === 'host' && port === 0) throw new Error('dsh-remote: host mode requires a fixed gatewayPort.')
+  return port
 }
 
 function optionalInstanceId(value: string | undefined): string | undefined {

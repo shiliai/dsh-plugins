@@ -11,6 +11,8 @@
     "test": "pnpm --recursive --if-present run test",
     "versions:check": "node scripts/verify-plugin-versions.mjs",
     "update:smoke": "node scripts/verify-dsh-git-update.mjs",
+    "bootstrap": "node scripts/dsh-bootstrap/bootstrap.mjs",
+    "bootstrap:check": "node scripts/dsh-bootstrap/bootstrap.mjs check",
     "updater:pack:check": "pnpm --dir scripts/dsh-plugin-updater pack --dry-run",
     "check": "pnpm versions:check && pnpm --recursive --if-present run check",
     "pack:check": "pnpm --recursive --if-present run pack:check && pnpm updater:pack:check",
