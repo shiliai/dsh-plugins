@@ -7,9 +7,12 @@
  *
  * What it does (each phase is skippable):
  *   1. ensure-dsh    Install the DSH CLI itself if it is missing.
- *   2. settings      Symlink a portable settings.yaml into $DSH_HOME so model
- *                    config (context window, multimodal, thinking effort) stays
- *                    single-source and syncs on `git pull`.
+ *   2. settings      Provision $DSH_HOME/settings.yaml from the portable template
+ *                    (model config: context window, multimodal, thinking effort). When
+ *                    a provider still has a placeholder baseURL, resolve a real
+ *                    per-machine endpoint from a `<KEY>_BASE_URL` env var (or prompt)
+ *                    and materialize a local settings.yaml; otherwise keep the
+ *                    template symlinked so updates sync on `git pull`.
  *   3. credentials   Prompt once per machine for the api keys referenced by
  *                    settings.yaml and write them to $DSH_HOME/.credentials.yaml
  *                    (never committed, chmod 600).
@@ -43,6 +46,11 @@ let YIELD = false
 const CREDENTIALS_FILENAME = '.credentials.yaml'
 const SETTINGS_FILENAME = 'settings.yaml'
 const PROFILE_PATCH_FILENAME = 'cordis.patch.yml'
+// The placeholder DSH ships in the committed template. A provider whose baseURL is
+// still this value has not been given a real per-machine endpoint yet; dsh-bootstrap
+// resolves it from a `<KEY>_BASE_URL` env var (or an interactive prompt) and writes the
+// concrete value into a machine-local settings.yaml.
+const PLACEHOLDER_BASEURL = 'https://your-llm-gateway.example.com/v1'
 
 // ---------------------------------------------------------------------------
 // CLI / config
@@ -176,8 +184,93 @@ async function askYesNo(q, def = true) {
   return /^y(es)?$/i.test(raw.trim())
 }
 
+// Raw keypress capture for the interactive checkbox. Reads one complete key: a bare
+// character, or a full escape sequence (arrows use ESC [ A/B, some terminals ESC O
+// A/B). Partial escape sequences are buffered across data events.
+async function rawKeypress(stdin, buffer) {
+  return new Promise((resolve) => {
+    const onData = (chunk) => {
+      for (const b of chunk) buffer.push(b)
+      if (buffer.length === 1 && buffer[0] !== 0x1b) {
+        stdin.removeListener('data', onData)
+        resolve(String.fromCharCode(buffer.shift()))
+        return
+      }
+      if (buffer[0] === 0x1b) {
+        if (buffer.length === 1) return // still waiting for the rest of the sequence
+        if (buffer[1] !== 0x5b && buffer[1] !== 0x4f) {
+          stdin.removeListener('data', onData)
+          resolve(String.fromCharCode(...buffer.splice(0)))
+          return
+        }
+        if (buffer.length >= 3) {
+          stdin.removeListener('data', onData)
+          resolve(String.fromCharCode(...buffer.splice(0)))
+          return
+        }
+      }
+    }
+    stdin.on('data', onData)
+  })
+}
+
+// Real interactive checkbox UI (↑/↓ + Space) used on a TTY, backed by the numeric
+// line input below for non-TTY / piped runs.
+async function checkboxSelect(title, items) {
+  const { stdin } = process
+  let idx = 0
+  const n = items.length
+  const marker = (i) => (i === idx ? '>' : ' ')
+  const row = (i) => `${items[i].selected ? '[x]' : '[ ]'} ${i + 1}. ${items[i].name}`
+  const ESC = '\x1b'
+  const up = `${ESC}[${n}A` // move cursor up to the first row
+  console.log(`\n${title}`)
+  console.log('  Use ↑/↓ to move, Space to toggle, Enter to confirm, q to quit:')
+  for (let i = 0; i < n; i++) process.stdout.write(`\r\x1b[K  ${marker(i)} ${row(i)}\n`)
+  const redraw = () => {
+    process.stdout.write(up)
+    for (let i = 0; i < n; i++) process.stdout.write(`\r\x1b[K  ${marker(i)} ${row(i)}\n`)
+  }
+  rl?.pause()
+  stdin.setRawMode(true)
+  stdin.resume()
+  const buffer = []
+  let result
+  try {
+    for (;;) {
+      const key = await rawKeypress(stdin, buffer)
+      if (key === '\r' || key === '\n' || key === 'q' || key === '\u0003') {
+        result = items.filter((it) => it.selected)
+        break
+      }
+      if (key === ' ') { items[idx].selected = !items[idx].selected; redraw(); continue }
+      if (key === `${ESC}[A` || key === `${ESC}OA`) { idx = (idx + n - 1) % n; redraw(); continue }
+      if (key === `${ESC}[B` || key === `${ESC}OB`) { idx = (idx + 1) % n; redraw(); continue }
+      const tok = key.trim()
+      if (tok !== '' && /^[0-9]+$/.test(tok)) {
+        const j = Number(tok) - 1
+        if (items[j]) items[j].selected = !items[j].selected
+        redraw()
+      }
+    }
+  } finally {
+    stdin.setRawMode(false)
+    stdin.pause()
+    rl?.resume()
+  }
+  console.log('')
+  return result
+}
+
 async function multiSelect(title, items) {
   // items: [{ id, name, selected }]. Mutates `selected`.
+  if (TTY) {
+    try {
+      return await checkboxSelect(title, items)
+    } catch (err) {
+      warn(`interactive checkbox unavailable (${err.message}) — falling back to number input`)
+    }
+  }
   console.log(`\n${title}`)
   for (;;) {
     items.forEach((it, i) => {
@@ -238,7 +331,7 @@ async function ensureDsh(opts) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2: symlink portable settings.yaml
+// Phase 2: provision $DSH_HOME/settings.yaml (portable template + per-machine baseURLs)
 // ---------------------------------------------------------------------------
 
 function settingsSourcePath(opts) {
@@ -255,6 +348,97 @@ function linkIsTo(target, source) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// baseURL helpers
+// ---------------------------------------------------------------------------
+
+// DSH reads `apiKeyEnv` through its credentials seam at request time, but `baseURL`
+// is a plain config value that DSH does not expand against the environment. So
+// dsh-bootstrap resolves a provider's real endpoint from an env var at provisioning
+// time and materializes it into settings.yaml. The env var name is derived from the
+// key's name: `GB10_CLUSTER_API_KEY` -> `GB10_CLUSTER_BASE_URL`.
+function baseUrlEnvFor(apiKeyEnv) {
+  return apiKeyEnv
+    .replace(/_API_KEY$/, '')
+    .replace(/_KEY$/, '')
+    .replace(/_TOKEN$/, '')
+    + '_BASE_URL'
+}
+
+function quoteYaml(v) {
+  // Single-quote with ''-escaping so URLs with '?'/'&'/'=' stay valid YAML scalars.
+  return `'${String(v).replace(/'/g, "''")}'`
+}
+
+// Cheap line-based projection of the template's `llm-pi-ai.providers` blocks.
+// Only reads the fields dsh-bootstrap cares about; real YAML editing of unrelated
+// content is never done. Providers are 4-space keys under `  providers:`.
+function providersFromSettings(text) {
+  const lines = text.split('\n')
+  const out = []
+  const providerRe = /^    ([A-Za-z0-9_-]+):\s*$/
+  let cur = null
+  for (const line of lines) {
+    const pm = providerRe.exec(line)
+    if (pm) {
+      if (cur) out.push(cur)
+      cur = { id: pm[1], apiKeyEnv: null, currentBaseUrl: null, hasBaseUrl: false }
+      continue
+    }
+    if (!cur) continue
+    const key = /^(\s*)([A-Za-z0-9_-]+):\s*(\S.*)?$/.exec(line)
+    if (!key) continue
+    const indent = key[1].length
+    if (indent <= 2) {
+      // Left the `providers:` namespace entirely (e.g. `ui-theme:`).
+      out.push(cur)
+      cur = null
+      continue
+    }
+    if (indent < 6) continue
+    const name = key[2]
+    const val = (key[3] ?? '').trim()
+    if (name === 'apiKeyEnv') cur.apiKeyEnv = val
+    else if (name === 'baseURL') { cur.hasBaseUrl = true; cur.currentBaseUrl = val }
+  }
+  if (cur) out.push(cur)
+  return out
+}
+
+// Replace placeholder baseURL values with concrete per-machine URLs. Only lines whose
+// current value equals PLACEHOLDER_BASEURL are touched, so real values are never lost.
+function patchProviderBaseUrls(text, overrides) {
+  const lines = text.split('\n')
+  const providerRe = /^    ([A-Za-z0-9_-]+):\s*$/
+  let cur = null
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const pm = providerRe.exec(line)
+    if (pm) { cur = pm[1]; continue }
+    if (!cur) continue
+    const key = /^(\s*)([A-Za-z0-9_-]+):\s*(.*)$/.exec(line)
+    if (!key) continue
+    if (key[1].length <= 2) { cur = null; continue }
+    if (key[2] === 'baseURL' && Object.prototype.hasOwnProperty.call(overrides, cur)) {
+      const val = key[3].trim()
+      if (val === PLACEHOLDER_BASEURL) {
+        lines[i] = `${key[1]}baseURL: ${quoteYaml(overrides[cur])}`
+      }
+      // Whatever happened, this provider is now handled.
+      delete overrides[cur]
+    }
+  }
+  return lines.join('\n')
+}
+
+// Whether any provider still needs a per-machine baseURL that we can resolve (an
+// env var is set, or we are on an interactive TTY and can prompt).
+function needsBaseUrls(text) {
+  return providersFromSettings(text)
+    .filter((p) => p.hasBaseUrl && p.currentBaseUrl === PLACEHOLDER_BASEURL)
+    .some((p) => (p.apiKeyEnv && process.env[baseUrlEnvFor(p.apiKeyEnv)]) || TTY)
+}
+
 async function installSettings(opts) {
   const source = settingsSourcePath(opts)
   if (!existsSync(source)) {
@@ -265,38 +449,38 @@ async function installSettings(opts) {
   const target = join(dshHome, SETTINGS_FILENAME)
   mkdirSync(dshHome, { recursive: true })
 
-  if (existsSync(target) && linkIsTo(target, source)) {
+  const materialize = needsBaseUrls(readFileSync(source, 'utf8'))
+
+  // Portable symlink already in place and nothing to materialize: done.
+  if (!materialize && existsSync(target) && linkIsTo(target, source)) {
     log('settings', `already symlinked to ${source}`)
     return true
   }
 
   if (opts.command === 'check') {
-    log('settings', `would symlink ${source} -> ${target}`)
+    log('settings', materialize
+      ? `would write a local settings.yaml from ${basename(source)} and resolve per-machine baseURLs from *_BASE_URL env vars`
+      : `would symlink ${source} -> ${target}`)
     return true
   }
 
-  // The target already holds a real config that is not our symlink. Replacing
-  // it is destructive, so require explicit confirmation (default: no, and
-  // --yes keeps that default). Nothing is lost either way: we back it up.
+  // An existing real (non-symlink) config is the machine's own file — never clobber
+  // it. If we're materializing baseURLs it's already the local file we need.
   if (existsSync(target) && !lstatSync(target).isSymbolicLink()) {
-    const ok = await askYesNo(
-      `Existing real config at ${target} — replace it with a symlink to ${basename(source)}?\n` +
-      '  (the old file is backed up as settings.yaml.bak-<ts>; use --settings <your real file> if this is wrong)',
-      false,
-    )
-    if (!ok) {
-      warn(`leaving existing ${target} untouched`)
-      return false
-    }
-    const backup = `${target}.bak-${Date.now()}`
-    copyFileSync(target, backup)
-    log('settings', `backed up existing file to ${backup}`)
-    rmIfExists(target)
-  } else if (existsSync(target)) {
-    // stale symlink to somewhere else — remove it
-    rmIfExists(target)
+    log('settings', `using existing real config at ${target} (left untouched)`)
+    return true
   }
 
+  // Target is absent or a (possibly stale) symlink.
+  if (materialize) {
+    rmIfExists(target)
+    writeFileSync(target, readFileSync(source, 'utf8'))
+    log('settings', `materialized local settings.yaml from ${basename(source)} (baseURLs from *_BASE_URL env vars)`)
+    return true
+  }
+
+  // Fully portable template — symlink it so updates sync on `git pull`.
+  rmIfExists(target)
   try {
     symlinkSync(source, target)
     log('settings', `symlinked ${source} -> ${target}`)
@@ -306,6 +490,70 @@ async function installSettings(opts) {
     copyFileSync(source, target)
   }
   return true
+}
+
+// Resolve each provider's placeholder baseURL from its `<KEY>_BASE_URL` env var (or an
+// interactive prompt) and write the concrete value into the (local) settings.yaml.
+async function ensureBaseUrls(opts) {
+  const target = join(opts.dshHome, SETTINGS_FILENAME)
+  let text = existsSync(target) ? readFileSync(target, 'utf8') : null
+  // On a dry-run with no local file yet, plan against the template source instead.
+  if (text === null && opts.command === 'check' && existsSync(settingsSourcePath(opts))) {
+    text = readFileSync(settingsSourcePath(opts), 'utf8')
+  }
+  if (text === null) return
+  if (existsSync(target) && lstatSync(target).isSymbolicLink()) {
+    log('baseurl', 'settings.yaml is a portable symlink — leaving placeholder baseURLs as-is')
+    log('baseurl', 'set <KEY>_BASE_URL and re-run to materialize real endpoints into a local settings.yaml')
+    return
+  }
+  const pending = providersFromSettings(text)
+    .filter((p) => p.hasBaseUrl && p.currentBaseUrl === PLACEHOLDER_BASEURL)
+  if (!pending.length) {
+    log('baseurl', 'no placeholder baseURLs to resolve')
+    return
+  }
+
+  if (opts.command === 'check') {
+    for (const p of pending) {
+      const env = baseUrlEnvFor(p.apiKeyEnv)
+      const has = !!process.env[env]
+      log('baseurl', `would resolve ${p.id} baseURL from $${env}${has ? '' : ' (or prompt)'}`)
+    }
+    return
+  }
+
+  // No local file: nothing to patch into.
+  if (!existsSync(target)) {
+    warn('no local settings.yaml to write baseURLs into')
+    return
+  }
+
+  const overrides = {}
+  for (const p of pending) {
+    const env = baseUrlEnvFor(p.apiKeyEnv)
+    let url = process.env[env]
+    if (url) {
+      overrides[p.id] = url
+      log('baseurl', `${p.id}: using $${env}`)
+      continue
+    }
+    if (opts.yes) {
+      warn(`no $${env} set; leaving ${p.id} baseURL as placeholder`)
+      continue
+    }
+    const v = await vaultedLine(`  Enter base URL for '${p.id}' ($${env}, blank to keep placeholder):`)
+    if (v.trim()) overrides[p.id] = v.trim()
+  }
+
+  if (!Object.keys(overrides).length) {
+    warn('no baseURLs to write')
+    return
+  }
+  const next = patchProviderBaseUrls(text, overrides)
+  if (next === text) { warn('nothing changed'); return }
+  writeFileSync(target, next)
+  console.log('  wrote local baseURLs into settings.yaml (machine-specific; NOT committed).')
 }
 
 function rmIfExists(p) {
@@ -613,6 +861,10 @@ async function main() {
     console.log(`\n  Step: sync portable model config (${SETTINGS_FILENAME})`)
     await installSettings(opts)
   }
+  if (!opts.skip.has('baseurl')) {
+    console.log(`\n  Step: per-machine base URLs`)
+    await ensureBaseUrls(opts)
+  }
   if (!opts.skip.has('credentials')) {
     console.log(`\n  Step: API credentials (${CREDENTIALS_FILENAME})`)
     await ensureCredentials(opts)
@@ -653,12 +905,13 @@ commands:
 options:
   --profile <name>     target profile (default: config "profile")
   --config <path>      plugin/manifest config JSON (default: ./bootstrap.config.json)
-  --settings <path>    portable settings.yaml to symlink (default: config "settingsSource")
+  --settings <path>    portable settings.yaml to use (default: config "settingsSource")
   --plugins <ids>      comma-separated plugin ids to install (others stay unselected)
   --rekey              force re-prompt for credential values
   --yes                non-interactive: accept defaults, install all optional plugins
   --skip-dsh           skip DSH install check
-  --skip-settings      skip settings symlink
+  --skip-settings      skip provisioning the settings.yaml
+  --skip-baseurl       skip resolving per-machine base URL placeholders
   --skip-credentials   skip credentials
   --skip-plugins       skip plugins
   -h, --help           show this help`)
