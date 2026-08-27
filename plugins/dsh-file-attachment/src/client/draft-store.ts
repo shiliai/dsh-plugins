@@ -36,7 +36,7 @@ export class DraftAttachmentStore {
   }
 
   setError(sessionId: string, error: string): void {
-    this.update(sessionId, state => ({ ...state, uploading: false, error }))
+    this.update(sessionId, state => ({ ...state, error }))
   }
 
   subscribe = (listener: () => void): (() => void) => {

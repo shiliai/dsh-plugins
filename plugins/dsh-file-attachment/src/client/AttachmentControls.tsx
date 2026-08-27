@@ -40,7 +40,9 @@ export function AttachmentButton(props: InputProps) {
   }, [sessionKey, store])
 
   const addFiles = useCallback(async (files: readonly File[]) => {
-    if (files.length === 0 || phaseRef.current !== 'plain' || uploadingRef.current) return
+    if (files.length === 0) return
+    const unavailableError = attachmentInputUnavailableError(phaseRef.current, uploadingRef.current)
+    if (unavailableError !== undefined) return store.setError(sessionKey, unavailableError)
     const error = validateClientBatch(files, stateRef.current.files, limits)
     if (error !== undefined) return store.setError(sessionKey, error)
     uploadingRef.current = true
@@ -61,10 +63,7 @@ export function AttachmentButton(props: InputProps) {
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
-      if (!isComposerTextTarget(event.target)) return
-      const files = claimClipboardFiles(event)
-      if (files.length === 0) return
-      void addFiles(files)
+      handleAttachmentPaste(event, phaseRef.current, uploadingRef.current, files => void addFiles(files), error => store.setError(sessionKey, error))
     }
     const onDragOver = (event: DragEvent) => {
       if (phaseRef.current !== 'plain' || !hasFiles(event.dataTransfer)) return
@@ -163,6 +162,27 @@ function useDraftAttachments(store: DraftAttachmentStore, sessionId: string) {
 
 export function isComposerTextTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLTextAreaElement || target instanceof HTMLElement && target.isContentEditable
+}
+
+export function handleAttachmentPaste(
+  event: ClipboardEvent,
+  phase: string,
+  uploading: boolean,
+  addFiles: (files: readonly File[]) => void,
+  reportError: (error: string) => void,
+): void {
+  if (!isComposerTextTarget(event.target)) return
+  const files = claimClipboardFiles(event)
+  if (files.length === 0) return
+  const unavailableError = attachmentInputUnavailableError(phase, uploading)
+  if (unavailableError !== undefined) return reportError(unavailableError)
+  addFiles(files)
+}
+
+export function attachmentInputUnavailableError(phase: string, uploading: boolean): string | undefined {
+  if (phase !== 'plain') return 'Files can only be attached while composing a message.'
+  if (uploading) return 'Wait for the current file upload to finish before attaching more files.'
+  return undefined
 }
 
 function hasFiles(data: DataTransfer | null): boolean {

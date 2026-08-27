@@ -37,6 +37,7 @@ describe('DraftAttachmentStore', () => {
     expect(store.get('s')).toBe(store.get('s'))
     store.setUploading('s', true)
     store.setError('s', 'failed')
+    expect(store.get('s')).toMatchObject({ uploading: true, error: 'failed' })
     const file = { fileId: 'id', name: 'x', mediaType: 'text/plain', bytes: 1, uri: 'file:///x', expiresAt: 1 } satisfies UploadedFile
     store.add('s', [file])
     expect(store.get('s').files).toEqual([file])
