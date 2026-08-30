@@ -1,18 +1,21 @@
 import { readdir, realpath, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, resolve } from 'node:path'
-import type { DirectoryListing, NoteDocument, NoteSearchResult, VaultTreeNode } from './contracts.ts'
+import type { DirectoryListing, NoteDocument, NoteSearchResult, VaultContextKind, VaultContextReference, VaultTag, VaultTreeNode } from './contracts.ts'
 import { VaultError, VaultService } from './vault-service.ts'
 
 export interface VaultAccess {
   readonly root: string
   readonly maxNoteBytes: number
   listTree(): Promise<VaultTreeNode[]>
-  listNotePathsPage(cursor?: string, limit?: number): Promise<{ paths: string[]; nextCursor?: string }>
+  listNotePathsPage(cursor?: string, limit?: number, prefix?: string): Promise<{ paths: string[]; nextCursor?: string }>
   readNote(path: string): Promise<NoteDocument>
   writeNote(path: string, content: string, expectedModifiedMs?: number): Promise<NoteDocument>
   moveNote(from: string, to: string): Promise<NoteDocument>
   deleteNote(path: string): Promise<void>
-  searchNotes(query: string): Promise<NoteSearchResult[]>
+  searchNotes(query: string, prefix?: string): Promise<NoteSearchResult[]>
+  listTags(query?: string): Promise<VaultTag[]>
+  searchNotesByTag(tag: string, includeDescendants?: boolean): Promise<string[]>
+  resolveContext(kind: VaultContextKind, value: string): Promise<VaultContextReference>
   openAsset(path: string): ReturnType<VaultService['openAsset']>
 }
 
@@ -21,11 +24,12 @@ export class VaultManager implements VaultAccess {
     private current: VaultService,
     private readonly configuredMaxNoteBytes: number,
     private readonly searchResultLimit: number,
+    private readonly onVaultChange: (root: string) => void,
   ) {}
 
-  static async create(root: string, maxNoteBytes: number, searchResultLimit: number): Promise<VaultManager> {
-    const vault = await VaultService.create(root, maxNoteBytes, searchResultLimit)
-    return new VaultManager(vault, maxNoteBytes, searchResultLimit)
+  static create(root: string, maxNoteBytes: number, searchResultLimit: number, onVaultChange: (root: string) => void = () => undefined): Promise<VaultManager> {
+    return VaultService.create(root, maxNoteBytes, searchResultLimit)
+      .then(vault => new VaultManager(vault, maxNoteBytes, searchResultLimit, onVaultChange))
   }
 
   get root(): string { return this.current.root }
@@ -42,6 +46,7 @@ export class VaultManager implements VaultAccess {
       if (error instanceof VaultError) throw error
       throw new VaultError(error instanceof Error ? error.message : 'Vault directory is not available.', 'INVALID_VAULT_ROOT', 400)
     }
+    this.onVaultChange(this.current.root)
   }
 
   async listDirectories(path = this.root): Promise<DirectoryListing> {
@@ -63,8 +68,8 @@ export class VaultManager implements VaultAccess {
   }
 
   listTree(): ReturnType<VaultService['listTree']> { return this.current.listTree() }
-  listNotePathsPage(cursor?: string, limit?: number): ReturnType<VaultService['listNotePathsPage']> {
-    return this.current.listNotePathsPage(cursor, limit)
+  listNotePathsPage(cursor?: string, limit?: number, prefix?: string): ReturnType<VaultService['listNotePathsPage']> {
+    return this.current.listNotePathsPage(cursor, limit, prefix)
   }
   readNote(path: string): ReturnType<VaultService['readNote']> { return this.current.readNote(path) }
   writeNote(path: string, content: string, expectedModifiedMs?: number): ReturnType<VaultService['writeNote']> {
@@ -72,6 +77,13 @@ export class VaultManager implements VaultAccess {
   }
   moveNote(from: string, to: string): ReturnType<VaultService['moveNote']> { return this.current.moveNote(from, to) }
   deleteNote(path: string): ReturnType<VaultService['deleteNote']> { return this.current.deleteNote(path) }
-  searchNotes(query: string): ReturnType<VaultService['searchNotes']> { return this.current.searchNotes(query) }
+  searchNotes(query: string, prefix?: string): ReturnType<VaultService['searchNotes']> { return this.current.searchNotes(query, prefix) }
+  listTags(query?: string): ReturnType<VaultService['listTags']> { return this.current.listTags(query) }
+  searchNotesByTag(tag: string, includeDescendants?: boolean): ReturnType<VaultService['searchNotesByTag']> {
+    return this.current.searchNotesByTag(tag, includeDescendants)
+  }
+  resolveContext(kind: VaultContextKind, value: string): ReturnType<VaultService['resolveContext']> {
+    return this.current.resolveContext(kind, value)
+  }
   openAsset(path: string): ReturnType<VaultService['openAsset']> { return this.current.openAsset(path) }
 }

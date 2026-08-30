@@ -2,7 +2,22 @@ declare module '@deepseek-ai/cordis' {
   export interface Context {
     tools: { register(definition: unknown): () => void }
     webServer: import('@deepseek-ai/dsh-host-webserver').WebServer
+    skills: {
+      registerProvider(create: (control: SkillProviderControl) => SkillProvider): () => void
+      register(skill: unknown): () => void
+    }
     effect(disposer: () => (() => void), label: string): void
+  }
+
+  export interface SkillProviderControl {
+    readonly signal: AbortSignal
+    readonly invalidate: () => void
+  }
+
+  export interface SkillProvider {
+    readonly name: string
+    list(options: { cwd?: string; signal?: AbortSignal }): Promise<readonly unknown[]>
+    get(candidate: unknown, options: { cwd?: string; signal?: AbortSignal }): Promise<unknown>
   }
 }
 
@@ -40,6 +55,15 @@ declare module '@deepseek-ai/dsh-client-runtime/client' {
         getSnapshot(): {
           current: string | undefined
           byId: Record<string, { blank: boolean }>
+        }
+      }
+      scope(id: string): import('@deepseek-ai/cordis').Context | undefined
+    }
+    conversation: {
+      input: {
+        for(context: import('@deepseek-ai/cordis').Context): {
+          setDraft(text: string): void
+          state: { getSnapshot(): { draft: string } }
         }
       }
     }

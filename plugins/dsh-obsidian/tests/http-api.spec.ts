@@ -27,8 +27,8 @@ async function fixture(): Promise<ApiFixture> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-obsidian-api-'))
   roots.push(root)
   await mkdir(join(root, 'Projects'), { recursive: true })
-  await writeFile(join(root, 'Home.md'), '# Home\nWelcome to the vault.\n')
-  await writeFile(join(root, 'Projects', 'Roadmap.md'), '# Roadmap\nShip the preview.\n')
+  await writeFile(join(root, 'Home.md'), '---\ntags: home\n---\n# Home\nWelcome to the vault.\n')
+  await writeFile(join(root, 'Projects', 'Roadmap.md'), '# Roadmap\nShip the preview. #project/atlas\n')
 
   let route: PrefixRoute | undefined
   const unregister = vi.fn()
@@ -78,11 +78,30 @@ describe('registerVaultApi', () => {
 
     const note = await request(baseUrl, '/dsh-obsidian/api/note?path=Projects%2FRoadmap.md')
     expect(note.status).toBe(200)
-    expect(await note.json()).toMatchObject({ path: 'Projects/Roadmap.md', content: '# Roadmap\nShip the preview.\n' })
+    expect(await note.json()).toMatchObject({ path: 'Projects/Roadmap.md', content: '# Roadmap\nShip the preview. #project/atlas\n' })
 
     const search = await request(baseUrl, '/dsh-obsidian/api/search?q=preview')
     expect(search.status).toBe(200)
-    expect(await search.json()).toEqual({ results: [{ path: 'Projects/Roadmap.md', line: 2, excerpt: 'Ship the preview.' }] })
+    expect(await search.json()).toEqual({ results: [{ path: 'Projects/Roadmap.md', line: 2, excerpt: 'Ship the preview. #project/atlas' }] })
+
+    const tags = await request(baseUrl, '/dsh-obsidian/api/tags')
+    expect(tags.status).toBe(200)
+    expect(await tags.json()).toEqual({ tags: [
+      { name: 'home', count: 1 },
+      { name: 'project', count: 1 },
+      { name: 'project/atlas', count: 1 },
+    ] })
+
+    const tagged = await request(baseUrl, '/dsh-obsidian/api/tag?name=project')
+    expect(tagged.status).toBe(200)
+    expect(await tagged.json()).toEqual({ paths: ['Projects/Roadmap.md'] })
+
+    const context = await request(baseUrl, '/dsh-obsidian/api/context?kind=tag&value=project')
+    expect(context.status).toBe(200)
+    expect(await context.json()).toEqual({
+      kind: 'tag', vaultRoot: root, value: 'project',
+      entries: [{ path: 'Projects/Roadmap.md', absolutePath: join(root, 'Projects', 'Roadmap.md') }],
+    })
   })
 
   it('browses directories and switches the active vault for subsequent requests', async () => {

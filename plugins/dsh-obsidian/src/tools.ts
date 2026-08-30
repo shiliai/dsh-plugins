@@ -5,8 +5,10 @@ import type { VaultAccess } from './vault-manager.ts'
 interface PathArgs { path: string }
 interface WriteArgs extends PathArgs { content: string; expectedModifiedMs?: number }
 interface MoveArgs { from: string; to: string }
-interface SearchArgs { query: string }
-interface ListArgs { cursor?: string; limit?: number }
+interface SearchArgs { query: string; prefix?: string }
+interface ListArgs { cursor?: string; limit?: number; prefix?: string }
+interface ListTagsArgs { query?: string }
+interface TagSearchArgs { tag: string; includeDescendants?: boolean }
 interface SearchValue { results: { path: string; line: number; excerpt: string }[] }
 
 const MESSAGE_OUTPUT = {
@@ -28,6 +30,7 @@ export function registerNoteTools(ctx: Context, vault: VaultAccess): void {
     parameters: {
       cursor: { type: 'string', description: 'Cursor returned by a previous page.' },
       limit: { type: 'integer', description: 'Maximum paths to return (1-500).' },
+      prefix: { type: 'string', description: 'Optional vault-relative directory; only list Markdown notes recursively under it.' },
     },
     output: {
       schema: {
@@ -41,7 +44,7 @@ export function registerNoteTools(ctx: Context, vault: VaultAccess): void {
       render: (_args: ListArgs, value: { paths: string[] }) => [{ type: 'text', text: value.paths.join('\n') || 'No notes found.' }],
     },
     isConcurrencySafe: () => true,
-    execute: async (args: ListArgs) => vault.listNotePathsPage(args.cursor, args.limit),
+    execute: async (args: ListArgs) => vault.listNotePathsPage(args.cursor, args.limit, args.prefix),
     presentCall: () => ({ card: 'generic', kind: 'read', title: 'List vault notes', locations: [] }),
   }))
 
@@ -72,7 +75,10 @@ export function registerNoteTools(ctx: Context, vault: VaultAccess): void {
   ctx.tools.register(defineTool({
     name: 'obsidian_search_notes',
     description: 'Search note paths and Markdown content in the current Obsidian vault.',
-    parameters: { query: { type: 'string', required: true, description: 'Case-insensitive search text.' } },
+    parameters: {
+      query: { type: 'string', required: true, description: 'Case-insensitive search text.' },
+      prefix: { type: 'string', description: 'Optional vault-relative directory; only search Markdown notes recursively under it.' },
+    },
     output: {
       schema: {
         type: 'object',
@@ -92,8 +98,58 @@ export function registerNoteTools(ctx: Context, vault: VaultAccess): void {
       render: (_args: SearchArgs, value: SearchValue) => [{ type: 'text', text: value.results.map(item => `${item.path}:${item.line}: ${item.excerpt}`).join('\n') || 'No matches.' }],
     },
     isConcurrencySafe: () => true,
-    execute: async (args: SearchArgs) => ({ results: await vault.searchNotes(args.query) }),
+    execute: async (args: SearchArgs) => ({ results: await vault.searchNotes(args.query, args.prefix) }),
     presentCall: (args: SearchArgs) => ({ card: 'generic', kind: 'search', title: 'Search Obsidian notes', rawInput: args.query, locations: [] }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'obsidian_list_tags',
+    description: 'List Obsidian tags in the current vault. Tags come from Markdown bodies and YAML frontmatter; parent tags include descendant note counts.',
+    parameters: {
+      query: { type: 'string', description: 'Optional case-insensitive substring used to filter tag names.' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          tags: {
+            type: 'array', required: true, items: {
+              type: 'object', additionalProperties: false, properties: {
+                name: { type: 'string', required: true },
+                count: { type: 'integer', required: true },
+              },
+            },
+          },
+        },
+      },
+      render: (_args: ListTagsArgs, value: { tags: Array<{ name: string; count: number }> }) => [{
+        type: 'text', text: value.tags.map(tag => `#${tag.name} (${tag.count})`).join('\n') || 'No tags found.',
+      }],
+    },
+    isConcurrencySafe: () => true,
+    execute: async (args: ListTagsArgs) => ({ tags: await vault.listTags(args.query) }),
+    presentCall: (args: ListTagsArgs) => ({ card: 'generic', kind: 'search', title: 'List Obsidian tags', rawInput: args.query, locations: [] }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'obsidian_search_by_tag',
+    description: 'Find Markdown note paths carrying an Obsidian tag in the current vault. Parent tags include nested descendants by default.',
+    parameters: {
+      tag: { type: 'string', required: true, description: 'Tag name with or without the leading #.' },
+      includeDescendants: { type: 'boolean', description: 'Include nested child tags. Defaults to true.' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { paths: { type: 'array', required: true, items: { type: 'string' } } },
+      },
+      render: (_args: TagSearchArgs, value: { paths: string[] }) => [{ type: 'text', text: value.paths.join('\n') || 'No matching notes found.' }],
+    },
+    isConcurrencySafe: () => true,
+    execute: async (args: TagSearchArgs) => ({ paths: await vault.searchNotesByTag(args.tag, args.includeDescendants ?? true) }),
+    presentCall: (args: TagSearchArgs) => ({ card: 'generic', kind: 'search', title: 'Search Obsidian tag', rawInput: args.tag, locations: [] }),
   }))
 
   ctx.tools.register(defineTool({

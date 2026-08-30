@@ -100,6 +100,34 @@ describe('VaultService', () => {
     await expect(vault.readNote('slash\\name.md')).rejects.toMatchObject({ code: 'INVALID_PATH' })
   })
 
+  it('indexes inline and frontmatter tags, includes descendants, and resolves bounded context', async () => {
+    const { root, vault } = await fixture()
+    await writeFile(join(root, 'Home.md'), '---\ntags: [Home, Project]\n---\n# Home\n')
+    await writeFile(join(root, 'Projects', 'Roadmap.md'), '# Roadmap\n#project/atlas #meeting\n')
+
+    expect(await vault.listTags()).toEqual([
+      { name: 'Home', count: 1 },
+      { name: 'meeting', count: 1 },
+      { name: 'project', count: 2 },
+      { name: 'project/atlas', count: 1 },
+    ])
+    expect(await vault.searchNotesByTag('#PROJECT')).toEqual(['Projects/Roadmap.md', 'Home.md'])
+    expect(await vault.searchNotesByTag('project', false)).toEqual(['Home.md'])
+    expect(await vault.listNotePathsPage(undefined, 100, 'Projects')).toEqual({ paths: ['Projects/Roadmap.md'] })
+    expect(await vault.searchNotes('roadmap', 'Projects')).toEqual([
+      { path: 'Projects/Roadmap.md', line: 0, excerpt: 'Projects/Roadmap.md' },
+      { path: 'Projects/Roadmap.md', line: 1, excerpt: '# Roadmap' },
+    ])
+
+    await expect(vault.resolveContext('directory', 'Projects')).resolves.toEqual({
+      kind: 'directory', vaultRoot: vault.root, value: 'Projects', absolutePath: join(vault.root, 'Projects'), entries: [],
+    })
+    await expect(vault.resolveContext('tag', 'project/atlas')).resolves.toEqual({
+      kind: 'tag', vaultRoot: vault.root, value: 'project/atlas',
+      entries: [{ path: 'Projects/Roadmap.md', absolutePath: join(vault.root, 'Projects', 'Roadmap.md') }],
+    })
+  })
+
   it('never follows symlinks for note reads, assets, tree traversal, or mutations', async () => {
     const { root, vault } = await fixture()
     await mkdir(join(root, 'Assets'))

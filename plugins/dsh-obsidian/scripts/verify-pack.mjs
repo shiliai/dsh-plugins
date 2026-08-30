@@ -32,7 +32,7 @@ try {
     },
   }))
   await writeFile(join(consumer, 'check.ts'), `import '${packageJson.name}'\nimport '${packageJson.name}/client'\n`)
-  execFileSync('pnpm', ['install', '--prefer-offline', '--ignore-scripts', '--config.auto-install-peers=false'], { cwd: consumer, stdio: 'inherit' })
+  execFileSync('pnpm', ['install', '--offline', '--ignore-scripts', '--config.auto-install-peers=false'], { cwd: consumer, stdio: 'inherit' })
   await access(join(consumer, 'node_modules', packageJson.name, 'lib', 'index.js'))
   execFileSync(process.execPath, ['--input-type=module', '--eval', `import('${packageJson.name}')`], { cwd: consumer, stdio: 'inherit' })
   execFileSync(join(root, 'node_modules/.bin/tsc'), ['--noEmit', '--skipLibCheck', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', 'check.ts'], { cwd: consumer, stdio: 'inherit' })
