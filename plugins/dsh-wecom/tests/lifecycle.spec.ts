@@ -119,4 +119,25 @@ describe('WecomLifecycleController', () => {
     expect(bots).toHaveLength(1)
     expect(controller.getStatus()).toMatchObject({ state: 'offline', restarting: false })
   })
+
+  it('feeds lifecycle events to the authorization watchdog and surfaces its status', async () => {
+    const bot = new FakeBot()
+    const controller = new WecomLifecycleController({} as never, config(), '0.2.0', () => bot as never, () => ({ dispose: async () => {} }) as never)
+    await controller.start()
+    expect(controller.getStatus().watchdog).toMatchObject({ enabled: true, state: 'healthy' })
+    bot.emit({ type: 'error', error: new Error('Authentication failed (code: 853004)') })
+    expect(controller.getStatus().watchdog).toMatchObject({ state: 'degraded', kind: 'auth', code: '853004' })
+    // Healthy events heal the watchdog.
+    bot.emit({ type: 'authenticated' })
+    expect(controller.getStatus().watchdog).toMatchObject({ state: 'healthy' })
+  })
+
+  it('reflects a watchdog disabled via config', async () => {
+    const bot = new FakeBot()
+    const controller = new WecomLifecycleController({} as never, config({ authWatchdog: { enabled: false } }), '0.2.0', () => bot as never, () => ({ dispose: async () => {} }) as never)
+    await controller.start()
+    expect(controller.getStatus().watchdog).toMatchObject({ enabled: false, state: 'disabled' })
+    bot.emit({ type: 'error', error: new Error('Authentication failed (code: 853004)') })
+    expect(controller.getStatus().watchdog).toMatchObject({ state: 'disabled' })
+  })
 })

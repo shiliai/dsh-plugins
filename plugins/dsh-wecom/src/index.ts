@@ -16,6 +16,7 @@ import { registerWecomTools } from './tools.ts'
 import { registerWecomApi } from './http-api.ts'
 import { WecomLifecycleController } from './lifecycle.ts'
 import { PLUGIN_VERSION } from './version.ts'
+import { resolveWatchdogConfig, type AuthWatchdogConfig } from './watchdog.ts'
 
 export const name = 'dsh-wecom'
 export const inject = ['tools', 'agents', 'agentDefaultModel', 'agentPresets', 'sessions', 'webServer']
@@ -96,6 +97,13 @@ export interface Config {
   persistBindings?: boolean
   /** Override the file used to persist runtime bindings. Defaults to `<defaultWorkspace>/.dsh-wecom-bindings.json`. */
   bindingsFile?: string
+  /**
+   * Authorization watchdog. Monitors the WeCom long-connection lifecycle and
+   * data-permission health, and alerts a configurable destination when
+   * authorization becomes unavailable instead of failing silently. See
+   * `AuthWatchdogConfig` and the README "授权监控" section.
+   */
+  authWatchdog?: AuthWatchdogConfig
 }
 
 /** Keep runtime-loaded configuration compatible with the former apply() default. */
@@ -104,6 +112,7 @@ export function normalizeConfig(config: Config): Config {
     ...config,
     logLevel: isLogLevel(config.logLevel) ? config.logLevel : 'info',
     managementOrigin: normalizeManagementOrigin(config.managementOrigin),
+    authWatchdog: resolveWatchdogConfig(config.authWatchdog),
   }
 }
 
@@ -1021,5 +1030,7 @@ export { WecomBot } from './bot.ts'
 export type { InboundMessage, WecomLifecycleEvent } from './bot.ts'
 export { WecomLifecycleController } from './lifecycle.ts'
 export type { WecomStatus, WecomConnectionState } from './lifecycle.ts'
+export { AuthWatchdog, resolveWatchdogConfig, renderWatchdogAlert, extractWatchdogCode } from './watchdog.ts'
+export type { AuthWatchdogConfig, WatchdogStatus, WatchdogAlert, WatchdogDegradedKind, WatchdogState } from './watchdog.ts'
 export { parseCommand, resolveWorkingDir, renderHelp, COMMANDS } from './commands.ts'
 export { truncateUtf8, WECOM_MAX_MESSAGE_BYTES } from './safety.ts'
