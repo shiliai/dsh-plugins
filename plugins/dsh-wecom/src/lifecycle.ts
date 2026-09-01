@@ -118,6 +118,16 @@ export class WecomLifecycleController {
         if (!this.isInboundAuthorized(message)) return
         await bridge.enqueue(message)
       })
+      // Route user taps on rendered question cards back into the same session.
+      bot.onCardEvent?.(async event => {
+        if (!this.isInboundAuthorized({ chatId: event.chatId, chatType: event.chatType, text: '', frame: event.frame, msgId: event.msgId, senderId: event.senderId })) return
+        try {
+          await bridge.onCardSelection(event)
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.error(`[dsh-wecom] card selection handling failed (${safeErrorKind(error)})`)
+        }
+      })
       if (this.terminalDispose) await this.teardownCurrent()
     } catch {
       await this.teardownCurrent()

@@ -7,11 +7,25 @@ import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentHandle as DshAgentHandle } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
-import { WecomBot, type InboundMessage } from './bot.ts'
+import { WecomBot, type InboundCardEvent, type InboundMessage } from './bot.ts'
 import { parseCommand, renderHelp, resolveWorkingDir } from './commands.ts'
 import { summarizeTurn, type TurnResult } from './frame.ts'
 import { makeLogger, isLogLevel, type Logger, type LogLevel } from './log.ts'
 import { isAllowed, resolveAllowedDirectory, safeErrorKind, truncateUtf8 } from './safety.ts'
+import {
+  buildQuestionCard,
+  buildSelectionCard,
+  generateTaskId,
+  QuestionError,
+  renderQuestionText,
+  resolveSelection,
+  toAnswer,
+  toCardQuestion,
+  type AskUserQuestionAnswer,
+  type AskUserQuestionItem,
+  type AskUserQuestionRequest,
+  type CardQuestion,
+} from './questions.ts'
 import { registerWecomTools } from './tools.ts'
 import { registerWecomApi } from './http-api.ts'
 import { WecomLifecycleController } from './lifecycle.ts'
@@ -182,6 +196,23 @@ interface ChatState {
   workspace: string
 }
 
+/** An unanswered interactive question card waiting for a user tap. */
+interface PendingQuestion {
+  chatId: string
+  question: CardQuestion
+  timer: ReturnType<typeof setTimeout>
+  resolve: (answer: AskUserQuestionAnswer) => void
+  reject: (error: unknown) => void
+}
+
+/** Structural subset of the `userQuestions` service used to answer agent questions. */
+interface UserQuestionServiceLike {
+  registerProvider(provider: { ask(request: AskUserQuestionRequest): Promise<AskUserQuestionAnswer> }): () => void
+}
+
+/** How long an unanswered question card stays live before the agent turn is released. */
+const QUESTION_TIMEOUT_MS = 10 * 60_000
+
 function chatKey(chatType: string, chatId: string): string {
   return `${chatType}:${chatId}`
 }
@@ -234,6 +265,8 @@ export class WecomAgentBridge {
   /** Cached chatKey -> bound session id map read from the bindings file. */
   private cachedBindings: Map<string, string> | undefined
   private accepting = true
+  private readonly pendingQuestions = new Map<string, PendingQuestion>()
+  private disposeUserQuestions: (() => void) | undefined
 
   constructor(private ctx: Context, private bot: WecomBot, config: Config) {
     this.config = config
@@ -247,6 +280,24 @@ export class WecomAgentBridge {
       void this.evictIdle()
     }, interval)
     this.idleSweep.unref?.()
+    this.registerUserQuestionsProvider()
+  }
+
+  /**
+   * Register ourselves as the `ctx.userQuestions` provider so an agent's
+   * `ask_user_question` tool renders an interactive template card and the
+   * user's tap is fed back into the same session as the tool result. A provider
+   * may already be registered by another UI (e.g. the DSH browser); in that case
+   * we defer and questions fall back to plain text via the agent's own reply.
+   */
+  private registerUserQuestionsProvider(): void {
+    const service = (this.ctx as unknown as { userQuestions?: UserQuestionServiceLike }).userQuestions
+    if (!service) return
+    try {
+      this.disposeUserQuestions = service.registerProvider({ ask: request => this.askUserQuestion(request) })
+    } catch (error) {
+      this.log.warn('questions: a user-questions provider is already registered; WeCom questions fall back to plain text', { error: safeErrorKind(error) })
+    }
   }
 
   private chatState(message: Pick<InboundMessage, 'chatId' | 'chatType'>): ChatState {
@@ -689,6 +740,82 @@ export class WecomAgentBridge {
     set.add(messageId)
   }
 
+  /** Find the chat state whose live agent is the exact caller of a question. */
+  private stateForAgent(agent: unknown): ChatState | undefined {
+    if (!agent) return undefined
+    for (const state of this.states.values()) {
+      if (state.handle?.agent === agent) return state
+    }
+    return undefined
+  }
+
+  /**
+   * Answer an agent's `ask_user_question` request by rendering an interactive
+   * template card on WeCom and waiting for the user's tap. The resolved answer
+   * flows back into the same DSH session as the tool result, so the selection is
+   * delivered into the exact conversation that asked it.
+   */
+  private async askUserQuestion(request: AskUserQuestionRequest): Promise<AskUserQuestionAnswer> {
+    const state = this.stateForAgent(request.agent)
+    if (!state) throw new QuestionError('dsh-wecom: no live WeCom chat for the calling agent', 'WECOM_CALLER_NOT_LIVE')
+    const [first, ...rest] = request.questions
+    if (!first) throw new QuestionError('dsh-wecom: ask_user_question requires at least one question', 'EMPTY_QUESTIONS')
+    // WeCom cards render a single question cleanly; surface any extras as text
+    // so they are still visible while we wait for the primary card.
+    if (rest.length > 0) {
+      void this.bot.sendText(state.chatId, rest.map(renderQuestionText).join('\n\n')).catch(() => undefined)
+    }
+    return this.openQuestion(state.chatId, first)
+  }
+
+  /**
+   * Present one question as a card and resolve when the user's selection
+   * arrives. When the question cannot be card-rendered (no options, too many
+   * options, or the connection is down) it falls back to readable text and
+   * rejects, which releases the agent turn to surface that text to the user.
+   *
+   * Public so the question→card→selection flow can be unit-tested directly; the
+   * `userQuestions` provider calls it after resolving the caller's chat.
+   */
+  openQuestion(chatId: string, item: AskUserQuestionItem): Promise<AskUserQuestionAnswer> {
+    const taskId = generateTaskId()
+    const question = toCardQuestion(item, taskId)
+    if (!question || !this.bot.isReady()) {
+      return this.bot.sendText(chatId, renderQuestionText(item)).then(() => {
+        throw new QuestionError('dsh-wecom: question has no cardable options or the connection is unavailable; shown to the user as text', 'WECOM_CARD_UNRENDERABLE')
+      })
+    }
+    return this.bot.sendTemplateCard(chatId, buildQuestionCard(question)).then(() => new Promise<AskUserQuestionAnswer>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (this.pendingQuestions.delete(taskId)) {
+          reject(new QuestionError('dsh-wecom: question timed out waiting for a selection', 'WECOM_ASK_TIMEOUT'))
+        }
+      }, QUESTION_TIMEOUT_MS)
+      timer.unref?.()
+      this.pendingQuestions.set(taskId, { chatId, question, timer, resolve, reject })
+    }))
+  }
+
+  /**
+   * Handle a user tapping a rendered question card. Identifies the card by its
+   * `task_id`, reflects the choice on the card, and resolves the pending
+   * question so the selection is fed back into the same DSH session.
+   */
+  async onCardSelection(event: InboundCardEvent): Promise<void> {
+    const pending = this.pendingQuestions.get(event.taskId)
+    if (!pending) return
+    const option = resolveSelection(event.eventKey, pending.question)
+    if (!option) return
+    clearTimeout(pending.timer)
+    this.pendingQuestions.delete(event.taskId)
+    try {
+      await this.bot.updateTemplateCard(event.frame, buildSelectionCard(pending.question, option.label), event.senderId ? [event.senderId] : undefined)
+    } catch (error) {
+      this.log.warn('questions: reflecting the selection on the card failed', { error: safeErrorKind(error) })
+    }
+    pending.resolve(toAnswer(pending.question, option))
+  }
+
   private async handleCommand(message: InboundMessage): Promise<TurnResult | null> {
     const parsed = parseCommand(message.text)
     if (!parsed) return null
@@ -983,6 +1110,12 @@ export class WecomAgentBridge {
     this.accepting = false
     clearInterval(this.idleSweep)
     this.eventsDisposer?.()
+    this.disposeUserQuestions?.()
+    for (const pending of this.pendingQuestions.values()) {
+      clearTimeout(pending.timer)
+      pending.reject(new QuestionError('dsh-wecom: bridge shut down before the question was answered', 'WECOM_DISPOSED'))
+    }
+    this.pendingQuestions.clear()
     await Promise.allSettled([...this.queues.values()])
     await Promise.allSettled([...this.evictions.values()])
     const failures: unknown[] = []
@@ -1027,10 +1160,30 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 }
 
 export { WecomBot } from './bot.ts'
-export type { InboundMessage, WecomLifecycleEvent } from './bot.ts'
+export type { InboundCardEvent, InboundMessage, WecomLifecycleEvent } from './bot.ts'
 export { WecomLifecycleController } from './lifecycle.ts'
 export type { WecomStatus, WecomConnectionState } from './lifecycle.ts'
 export { AuthWatchdog, resolveWatchdogConfig, renderWatchdogAlert, extractWatchdogCode } from './watchdog.ts'
 export type { AuthWatchdogConfig, WatchdogStatus, WatchdogAlert, WatchdogDegradedKind, WatchdogState } from './watchdog.ts'
 export { parseCommand, resolveWorkingDir, renderHelp, COMMANDS } from './commands.ts'
 export { truncateUtf8, WECOM_MAX_MESSAGE_BYTES } from './safety.ts'
+export {
+  buildQuestionCard,
+  buildSelectionCard,
+  generateTaskId,
+  MAX_CARD_OPTIONS,
+  QuestionError,
+  renderQuestionText,
+  resolveSelection,
+  toAnswer,
+  toCardQuestion,
+} from './questions.ts'
+export type {
+  AskUserQuestionAnswer,
+  AskUserQuestionAnswerItem,
+  AskUserQuestionItem,
+  AskUserQuestionOption,
+  AskUserQuestionRequest,
+  CardOption,
+  CardQuestion,
+} from './questions.ts'
