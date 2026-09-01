@@ -25,6 +25,7 @@ test('keeps note workflow and composer routing usable across session transitions
   await page.getByRole('button', { name: 'Projects' }).click()
   await page.getByLabel('Parent directory').click()
   await page.getByLabel('Cancel vault selection').click()
+
   await page.getByRole('treeitem', { name: /Home/u }).click()
   await expect(page.getByLabel('Note editor')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Atlas Vault' })).toBeVisible()
@@ -32,7 +33,21 @@ test('keeps note workflow and composer routing usable across session transitions
   await page.screenshot({ path: testInfo.outputPath(`${subject}-desktop-vault-note.png`), fullPage: true })
   await page.getByLabel('Add note to chat').click()
   const composer = page.locator('textarea').first()
-  await expect(composer).toHaveValue(/Obsidian note/u)
+  await expect(composer).toHaveValue(/type: note[\s\S]*note: "Home\.md"[\s\S]*absolutePath:/u)
+
+  await page.getByRole('tab', { name: 'Tags' }).click()
+  const homeTag = page.getByRole('button', { name: '#home 1', exact: true })
+  await expect(homeTag).toBeVisible()
+  await homeTag.click({ button: 'right' })
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Add to chat' }).click()
+  await expect(composer).toHaveValue(/\[Obsidian context\][\s\S]*type: tag[\s\S]*tag: #home/u)
+
+  await page.getByRole('tab', { name: 'Notes' }).click()
+  const projects = page.getByRole('button', { name: 'Projects 1', exact: true })
+  await projects.click({ button: 'right' })
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Add to chat' }).click()
+  await expect(composer).toHaveValue(/type: directory[\s\S]*directory: "Projects"[\s\S]*absolutePath:/u)
+
   await page.getByRole('button', { name: 'Edit', exact: true }).click()
   await page.getByLabel(/Edit Home/u).fill('# Edited in isolated rc.6 fixture\n\n<style>body { display: none }</style>\n<div style="position:fixed"><button>Unsafe control</button></div>\n\n- [ ] Safe task')
   await page.getByRole('button', { name: 'Save', exact: true }).click()

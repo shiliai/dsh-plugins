@@ -172,11 +172,13 @@ dsh --profile web --patch ./obsidian-vault.patch.yml
 ## 笔记工作流
 
 - 浏览嵌套的 `.md` 文件，并搜索笔记路径或内容。
+- 切换到 **Tags** 浏览正文和 YAML Frontmatter 中的 Tag。Tag 名称不区分大小写；选择父 Tag 时会包含嵌套子 Tag。
 - 输入 `Projects/Plan.md` 这样的 Vault 相对路径来创建笔记。
 - 编辑并保存笔记，保存时会检测文件是否已被外部修改。
 - 预览 Markdown、GFM 表格、任务列表、Wiki 链接、frontmatter 和本地图片。
 - 从当前笔记的操作菜单中重命名、移动或永久删除笔记。
-- 将当前笔记引用加入当前 DSH 聊天草稿。
+- 右键点击笔记、目录、Tag 或搜索结果并选择 **Add to chat**；旁边的添加图标提供相同操作。
+- 从搜索框把当前关键词结果集整体添加到聊天。Tag 和关键词结果集添加后会冻结为当时的文件清单。
 - 通过定时刷新观察外部文件或模型工具造成的变化。
 
 只有 `.md` 文件会显示为笔记。隐藏目录、`.git`、`.obsidian` 和 `node_modules` 不会出现在笔记树中。本地预览支持 PNG、JPEG、GIF、WebP 和 AVIF 图片。
@@ -188,11 +190,17 @@ dsh --profile web --patch ./obsidian-vault.patch.yml
 - `obsidian_list_notes`
 - `obsidian_read_note`
 - `obsidian_search_notes`
+- `obsidian_list_tags`
+- `obsidian_search_by_tag`
 - `obsidian_write_note`
 - `obsidian_move_note`
 - `obsidian_delete_note`
 
-所有笔记路径都必须是 Vault 相对的 `.md` 路径。`obsidian_list_notes` 支持 1 到 500 的 `limit` 和用于继续翻页的 `cursor`。替换笔记时必须传入 `obsidian_read_note` 返回的 `modifiedMs`。删除操作不可撤销，只应在用户明确要求时执行。
+所有笔记路径都必须是 Vault 相对的 `.md` 路径。`obsidian_list_notes` 支持 1 到 500 的 `limit`、用于继续翻页的 `cursor`，以及可选的递归目录 `prefix`；`obsidian_search_notes` 也支持相同的 `prefix`。Tag 来自正文内联 `#tag` 和 YAML Frontmatter 的 `tags`，父 Tag 搜索默认包含子 Tag。替换笔记时必须传入 `obsidian_read_note` 返回的 `modifiedMs`。删除操作不可撤销，只应在用户明确要求时执行。
+
+## 聊天上下文
+
+**Add to chat** 会把模型可见的 `[Obsidian context]` 块写入当前 session 草稿。Host 会确认每个选中项都位于当前 Vault 内，再提供其绝对路径。笔记和目录只定义按需读取范围，不会把全文预先复制进 prompt；Tag 和关键词结果集则包含一份经过校验并冻结的文件清单，后续轮次可继续使用同一组证据。
 
 ## 安全与文件系统行为
 

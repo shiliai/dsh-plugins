@@ -3,7 +3,8 @@ import {
   link, lstat, mkdir, open, readdir, realpath, rename, stat, unlink, writeFile,
 } from 'node:fs/promises'
 import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path'
-import type { NoteDocument, NoteSearchResult, VaultTreeNode } from './contracts.ts'
+import type { NoteDocument, NoteSearchResult, VaultContextKind, VaultContextReference, VaultTag, VaultTreeNode } from './contracts.ts'
+import { isObsidianTag, normalizeTag, parseObsidianTags, tagAncestors } from './tags.ts'
 
 const HIDDEN_DIRECTORIES = new Set(['.git', '.obsidian', 'node_modules'])
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif'])
@@ -75,11 +76,11 @@ export class VaultService {
     return output
   }
 
-  async listNotePathsPage(cursor?: string, limit = 100): Promise<{ paths: string[]; nextCursor?: string }> {
+  async listNotePathsPage(cursor?: string, limit = 100, prefix?: string): Promise<{ paths: string[]; nextCursor?: string }> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
       throw new VaultError('Note list limit must be between 1 and 500.', 'INVALID_QUERY', 400)
     }
-    const paths = await this.listNotePaths()
+    const paths = await this.notePathsUnder(prefix)
     let start = 0
     if (cursor !== undefined) {
       const index = paths.indexOf(cursor)
@@ -102,6 +103,7 @@ export class VaultService {
       }
       return {
         path: normalizeRelativePath(path),
+        absolutePath: absolute,
         content: await handle.readFile({ encoding: 'utf8' }),
         modifiedMs: info.mtimeMs,
         size: info.size,
@@ -175,11 +177,11 @@ export class VaultService {
     })
   }
 
-  async searchNotes(query: string): Promise<NoteSearchResult[]> {
+  async searchNotes(query: string, prefix?: string): Promise<NoteSearchResult[]> {
     const needle = query.trim().toLocaleLowerCase()
     if (needle.length === 0) return []
     const results: NoteSearchResult[] = []
-    for (const path of await this.listNotePaths()) {
+    for (const path of await this.notePathsUnder(prefix)) {
       let note: NoteDocument
       try {
         note = await this.readNote(path)
@@ -199,6 +201,52 @@ export class VaultService {
       if (results.length >= this.searchResultLimit) break
     }
     return results.slice(0, this.searchResultLimit)
+  }
+
+  async listTags(query?: string): Promise<VaultTag[]> {
+    const needle = normalizeTag(query ?? '')
+    const index = await this.buildTagIndex()
+    return [...index.values()]
+      .filter(tag => needle === '' || normalizeTag(tag.name).includes(needle))
+      .map(tag => ({ name: tag.name, count: tag.paths.size }))
+      .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' }))
+  }
+
+  async searchNotesByTag(tag: string, includeDescendants = true): Promise<string[]> {
+    if (!isObsidianTag(tag)) throw new VaultError('A valid Obsidian tag is required.', 'INVALID_TAG', 400)
+    const normalized = normalizeTag(tag)
+    const index = await this.buildTagIndex()
+    if (includeDescendants) return [...(index.get(normalized)?.paths ?? [])]
+
+    const paths: string[] = []
+    for (const path of await this.listNotePaths()) {
+      const tags = await this.tagsForNote(path)
+      if (tags.some(candidate => normalizeTag(candidate) === normalized)) paths.push(path)
+    }
+    return paths
+  }
+
+  async resolveContext(kind: VaultContextKind, value: string): Promise<VaultContextReference> {
+    const trimmed = value.trim()
+    if (trimmed === '') throw new VaultError('A context value is required.', 'INVALID_QUERY', 400)
+
+    if (kind === 'note') {
+      const path = this.assertNotePath(trimmed)
+      const absolutePath = await this.existingPath(path, 'note')
+      return { kind, vaultRoot: this.root, value: path, absolutePath, entries: [{ path, absolutePath }] }
+    }
+    if (kind === 'directory') {
+      const path = normalizeRelativePath(trimmed)
+      const absolutePath = await this.existingPath(path, 'entry')
+      if (!(await stat(absolutePath)).isDirectory()) throw new VaultError('The requested path is not a directory.', 'NOT_A_DIRECTORY', 400)
+      return { kind, vaultRoot: this.root, value: path, absolutePath, entries: [] }
+    }
+
+    const paths = kind === 'tag'
+      ? await this.searchNotesByTag(trimmed)
+      : [...new Set((await this.searchNotes(trimmed)).map(result => result.path))]
+    const entries = await Promise.all(paths.map(async path => ({ path, absolutePath: await this.existingPath(path, 'note') })))
+    return { kind, vaultRoot: this.root, value: kind === 'tag' ? normalizeTag(trimmed) : trimmed, entries }
   }
 
   async openAsset(path: string): Promise<{ handle: Awaited<ReturnType<typeof open>>; size: number; contentType: string }> {
@@ -227,7 +275,7 @@ export class VaultService {
     return normalized
   }
 
-  private async existingPath(path: string, kind: 'note' | 'asset'): Promise<string> {
+  private async existingPath(path: string, kind: 'note' | 'asset' | 'entry'): Promise<string> {
     const normalized = kind === 'note' ? this.assertNotePath(path) : normalizeRelativePath(path)
     const lexical = resolve(this.root, normalized)
     if (!isInside(this.root, lexical)) throw new VaultError('Path leaves the vault.', 'PATH_ESCAPE', 403)
@@ -291,6 +339,39 @@ export class VaultService {
     } finally {
       release?.()
     }
+  }
+
+  private async notePathsUnder(prefix?: string): Promise<string[]> {
+    const paths = await this.listNotePaths()
+    if (prefix === undefined) return paths
+    const normalized = normalizeRelativePath(prefix)
+    const absolute = await this.existingPath(normalized, 'entry')
+    if (!(await stat(absolute)).isDirectory()) throw new VaultError('The note prefix must be a directory.', 'NOT_A_DIRECTORY', 400)
+    return paths.filter(path => path.startsWith(`${normalized}/`))
+  }
+
+  private async tagsForNote(path: string): Promise<string[]> {
+    try {
+      return parseObsidianTags((await this.readNote(path)).content)
+    } catch (error) {
+      if (error instanceof VaultError && error.code === 'NOTE_TOO_LARGE') return []
+      throw error
+    }
+  }
+
+  private async buildTagIndex(): Promise<Map<string, { name: string; paths: Set<string> }>> {
+    const index = new Map<string, { name: string; paths: Set<string> }>()
+    for (const path of await this.listNotePaths()) {
+      for (const explicitTag of await this.tagsForNote(path)) {
+        for (const displayName of tagAncestors(explicitTag)) {
+          const normalized = normalizeTag(displayName)
+          const tag = index.get(normalized) ?? { name: displayName, paths: new Set<string>() }
+          tag.paths.add(path)
+          index.set(normalized, tag)
+        }
+      }
+    }
+    return index
   }
 
   private async walk(absoluteDirectory: string, relativeDirectory: string): Promise<VaultTreeNode[]> {

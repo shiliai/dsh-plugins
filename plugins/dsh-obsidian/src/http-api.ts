@@ -1,9 +1,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
 import type { WebServer } from '@deepseek-ai/dsh-host-webserver'
-import type { ApiErrorPayload } from './contracts.ts'
+import type { ApiErrorPayload, AgentSkillInput, VaultContextKind } from './contracts.ts'
 import { VaultError } from './vault-service.ts'
 import { VaultManager } from './vault-manager.ts'
+import type { SkillCoordinator } from './skill-coordinator.ts'
+import { AgentSkillStoreError, AgentSkillRevisionConflictError } from './skill-store.ts'
+import { AgentSkillCodecError } from './skill-codec.ts'
+import { AgentSkillValidationError } from './validate-skill.ts'
 
 const API_PREFIX = '/dsh-obsidian/api'
 
@@ -18,14 +22,14 @@ interface MoveBody {
   to: string
 }
 
-export function registerVaultApi(webServer: WebServer, vault: VaultManager, mutationOrigin: string): () => void {
+export function registerVaultApi(webServer: WebServer, vault: VaultManager, mutationOrigin: string, skills?: SkillCoordinator): () => void {
   const authority = normalizeOrigin(mutationOrigin)
   return webServer.register({
     kind: 'prefix',
     path: API_PREFIX,
     handler: async (request, response) => {
       try {
-        await route(request, response, vault, authority)
+        await route(request, response, vault, authority, skills)
       } catch (error) {
         sendError(response, error)
       }
@@ -33,9 +37,43 @@ export function registerVaultApi(webServer: WebServer, vault: VaultManager, muta
   })
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, vault: VaultManager, authority: string): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, vault: VaultManager, authority: string, skills?: SkillCoordinator): Promise<void> {
   const url = new URL(request.url ?? '/', 'http://dsh.local')
   const endpoint = url.pathname.slice(API_PREFIX.length) || '/'
+  if (request.method === 'GET' && endpoint === '/skills' && skills !== undefined) {
+    sendJson(response, 200, { result: await skills.list() })
+    return
+  }
+  if (request.method === 'GET' && endpoint === '/skill' && skills !== undefined) {
+    sendJson(response, 200, await skills.read(requiredQuery(url, 'name')))
+    return
+  }
+  if (request.method === 'PUT' && endpoint === '/skill' && skills !== undefined) {
+    assertConfiguredOrigin(request, authority)
+    const body = await readJson(request, 2 * 1024 * 1024)
+    if (!isRecord(body) || !isRecord(body.skill)) {
+      throw new VaultError('Invalid skill write body.', 'INVALID_BODY', 400)
+    }
+    const input = body.skill as Partial<AgentSkillInput>
+    const expectedRevision = typeof body.expectedRevision === 'string' ? body.expectedRevision : undefined
+    const previousName = typeof body.previousName === 'string' ? body.previousName : undefined
+    const normalized = normalizeSkillInput(input)
+    let result
+    if (previousName !== undefined && expectedRevision !== undefined) {
+      result = await skills.update(previousName, expectedRevision, normalized)
+    } else {
+      result = await skills.create(normalized)
+    }
+    sendJson(response, 200, { result })
+    return
+  }
+  if (request.method === 'DELETE' && endpoint === '/skill' && skills !== undefined) {
+    assertConfiguredOrigin(request, authority)
+    const name = requiredQuery(url, 'name')
+    const expectedRevision = requiredQuery(url, 'expectedRevision')
+    sendJson(response, 200, { result: await skills.delete(name, expectedRevision) })
+    return
+  }
   if (request.method === 'GET' && endpoint === '/info') {
     sendJson(response, 200, { name: vault.root.split(/[\\/]/u).at(-1) ?? vault.root, root: vault.root })
     return
@@ -53,7 +91,21 @@ async function route(request: IncomingMessage, response: ServerResponse, vault: 
     return
   }
   if (request.method === 'GET' && endpoint === '/search') {
-    sendJson(response, 200, { results: await vault.searchNotes(requiredQuery(url, 'q')) })
+    sendJson(response, 200, { results: await vault.searchNotes(requiredQuery(url, 'q'), optionalQuery(url, 'prefix')) })
+    return
+  }
+  if (request.method === 'GET' && endpoint === '/tags') {
+    sendJson(response, 200, { tags: await vault.listTags(optionalQuery(url, 'q')) })
+    return
+  }
+  if (request.method === 'GET' && endpoint === '/tag') {
+    sendJson(response, 200, { paths: await vault.searchNotesByTag(requiredQuery(url, 'name'), optionalBooleanQuery(url, 'descendants') ?? true) })
+    return
+  }
+  if (request.method === 'GET' && endpoint === '/context') {
+    const kind = requiredQuery(url, 'kind')
+    if (!isContextKind(kind)) throw new VaultError('Context kind is not valid.', 'INVALID_QUERY', 400)
+    sendJson(response, 200, await vault.resolveContext(kind, requiredQuery(url, 'value')))
     return
   }
   if (request.method === 'GET' && endpoint === '/asset') {
@@ -117,6 +169,22 @@ function requiredQuery(url: URL, key: string): string {
   return value
 }
 
+function optionalQuery(url: URL, key: string): string | undefined {
+  return url.searchParams.get(key) ?? undefined
+}
+
+function optionalBooleanQuery(url: URL, key: string): boolean | undefined {
+  const value = url.searchParams.get(key)
+  if (value === null) return undefined
+  if (value === 'true') return true
+  if (value === 'false') return false
+  throw new VaultError(`Query parameter ${key} must be true or false.`, 'INVALID_QUERY', 400)
+}
+
+function isContextKind(value: string): value is VaultContextKind {
+  return value === 'note' || value === 'directory' || value === 'tag' || value === 'search'
+}
+
 function assertConfiguredOrigin(request: IncomingMessage, authority: string): void {
   const origin = request.headers.origin
   if (origin === undefined) {
@@ -140,6 +208,46 @@ function normalizeOrigin(value: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+interface SkillBodyLike {
+  name?: unknown
+  description?: unknown
+  whenToUse?: unknown
+  modelInvocable?: unknown
+  userInvocable?: unknown
+  instructions?: unknown
+}
+
+function normalizeSkillInput(input: Partial<AgentSkillInput>): AgentSkillInput {
+  const record = input as SkillBodyLike
+  if (typeof record.name !== 'string' || typeof record.description !== 'string' || typeof record.instructions !== 'string') {
+    throw new VaultError('Skill name, description and instructions are required.', 'INVALID_BODY', 400)
+  }
+  return {
+    name: record.name,
+    description: record.description,
+    ...(typeof record.whenToUse === 'string' && record.whenToUse.trim() !== ''
+      ? { whenToUse: record.whenToUse } : {}),
+    modelInvocable: typeof record.modelInvocable === 'boolean' ? record.modelInvocable : true,
+    userInvocable: typeof record.userInvocable === 'boolean' ? record.userInvocable : true,
+    instructions: record.instructions,
+  }
+}
+
+function isSkillError(error: unknown): error is Error {
+  return error instanceof AgentSkillStoreError
+    || error instanceof AgentSkillCodecError
+    || error instanceof AgentSkillValidationError
+    || error instanceof AgentSkillRevisionConflictError
+}
+
+function skillStatus(error: Error): number {
+  if (error instanceof AgentSkillValidationError) return 400
+  if (error instanceof Error && error.name === 'AgentSkillCollisionError') return 409
+  if (error instanceof AgentSkillRevisionConflictError) return 409
+  if (error instanceof AgentSkillCodecError) return 422
+  return 500
 }
 
 async function readJson(request: IncomingMessage, limit: number): Promise<unknown> {
@@ -179,10 +287,22 @@ function sendError(response: ServerResponse, error: unknown): void {
     response.destroy(error instanceof Error ? error : undefined)
     return
   }
-  const status = error instanceof VaultError ? error.status : 500
-  const payload: ApiErrorPayload = {
-    error: error instanceof Error ? error.message : 'Unexpected vault error.',
-    code: error instanceof VaultError ? error.code : 'INTERNAL_ERROR',
+  let status: number
+  let code: string
+  let message: string
+  if (error instanceof VaultError) {
+    status = error.status
+    code = error.code
+    message = error.message
+  } else if (isSkillError(error)) {
+    const err = error as Error
+    status = skillStatus(err)
+    code = err.name
+    message = err.message
+  } else {
+    status = 500
+    code = 'INTERNAL_ERROR'
+    message = error instanceof Error ? error.message : 'Unexpected vault error.'
   }
-  sendJson(response, status, payload)
+  sendJson(response, status, { error: message, code })
 }

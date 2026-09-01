@@ -18,8 +18,8 @@ async function fixture(): Promise<{ vault: VaultManager; root: string }> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-obsidian-tools-'))
   roots.push(root)
   await mkdir(join(root, 'Projects'), { recursive: true })
-  await writeFile(join(root, 'Home.md'), '# Home\nWelcome to the vault.\n')
-  await writeFile(join(root, 'Projects', 'Roadmap.md'), '# Roadmap\nShip the preview.\n')
+  await writeFile(join(root, 'Home.md'), '---\ntags: home\n---\n# Home\nWelcome to the vault.\n')
+  await writeFile(join(root, 'Projects', 'Roadmap.md'), '# Roadmap\nShip the preview. #project/atlas\n')
   return { root, vault: await VaultManager.create(root, 4096, 20) }
 }
 
@@ -42,6 +42,8 @@ describe('registerNoteTools', () => {
       'obsidian_list_notes',
       'obsidian_read_note',
       'obsidian_search_notes',
+      'obsidian_list_tags',
+      'obsidian_search_by_tag',
       'obsidian_write_note',
       'obsidian_move_note',
       'obsidian_delete_note',
@@ -59,11 +61,20 @@ describe('registerNoteTools', () => {
       paths: ['Home.md'],
     })
     await expect(tool('obsidian_read_note').execute({ path: 'Home.md' })).resolves.toMatchObject({
-      path: 'Home.md', content: '# Home\nWelcome to the vault.\n',
+      path: 'Home.md', content: '---\ntags: home\n---\n# Home\nWelcome to the vault.\n',
     })
     await expect(tool('obsidian_search_notes').execute({ query: 'preview' })).resolves.toEqual({
-      results: [{ path: 'Projects/Roadmap.md', line: 2, excerpt: 'Ship the preview.' }],
+      results: [{ path: 'Projects/Roadmap.md', line: 2, excerpt: 'Ship the preview. #project/atlas' }],
     })
+    await expect(tool('obsidian_list_tags').execute({})).resolves.toEqual({
+      tags: [
+        { name: 'home', count: 1 },
+        { name: 'project', count: 1 },
+        { name: 'project/atlas', count: 1 },
+      ],
+    })
+    await expect(tool('obsidian_search_by_tag').execute({ tag: '#project' })).resolves.toEqual({ paths: ['Projects/Roadmap.md'] })
+    await expect(tool('obsidian_list_notes').execute({ prefix: 'Projects' })).resolves.toEqual({ paths: ['Projects/Roadmap.md'] })
     await expect(tool('obsidian_write_note').execute({ path: 'Daily/Today.md', content: '# Today' })).resolves.toEqual({
       message: 'Saved Daily/Today.md', path: 'Daily/Today.md',
     })

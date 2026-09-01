@@ -160,6 +160,32 @@ Use the folder settings button beside the Vault name to browse directories on th
 | `mutationOrigin` | `DSH_OBSIDIAN_ORIGIN` or `http://127.0.0.1:3080` | Exact browser origin allowed to create, edit, move, delete or select a Vault. Include scheme and port, with no path. |
 | `maxNoteBytes` | `2097152` | Maximum UTF-8 size of one note. Must be a positive safe integer. |
 | `searchResultLimit` | `100` | Maximum results returned by one search. Must be a positive safe integer. |
+| `skillRoot` | `<vaultRoot>/.agents/skills` | Vault-scoped skills directory, resolved relative to `vaultRoot`. |
+
+> Note: a DSH row override replaces the row's whole `config`; it does not merge
+> keys. If you override `vaultRoot` etc., repeat every key you rely on,
+> including `skillRoot` when set.
+
+## Vault-scoped skills
+
+The plugin exposes a **Obsidian skills** panel (sidebar footer) to manage skills
+that are scoped to the currently selected Vault. Skill packages live under
+`<vaultRoot>/.agents/skills/<name>/SKILL.md` and travel with the Vault; switching
+Vaults switches the skill set. Editing is optimistic-concurrency safe (a
+`revision` digest guards stale writes, renames, and deletes).
+
+- **List / new / edit / delete** skills with `name`, `description`,
+  `whenToUse`, model/user invocation toggles, and Markdown instructions.
+- A **meeting-transcript-summary** template is one click away: given a meeting
+  transcript, identify the topic, only infer details/links/names after asking
+  the user when unclear, and write the resulting summary as its own document
+  under a `transcript` directory.
+- Malformed skill packages do not block the list; they are reported in a
+  warning section with their path.
+
+These skills are registered to the model through an `obsidian-vault` skill
+provider, so the active provider can load them automatically or the user can
+invoke them by name.
 
 If DSH is opened at another origin, set `mutationOrigin` to that exact origin. For example:
 
@@ -172,11 +198,16 @@ Do not add a trailing path. A mismatched origin allows read requests but rejects
 ## Note workflow
 
 - Browse nested `.md` files and search note paths or contents.
+- Switch to **Tags** to browse inline and YAML-frontmatter tags. Tag names are
+  case-insensitive; selecting a parent tag includes nested descendants.
 - Create a note by entering a Vault-relative path such as `Projects/Plan.md`.
 - Edit and save with stale-write conflict detection.
 - Preview Markdown, GFM tables, task lists, Wiki links, frontmatter and local images.
 - Rename, move or permanently delete the active note from its action menu.
-- Add the active note reference to the current DSH chat draft.
+- Right-click a note, directory, tag or search result and choose **Add to
+  chat**. The adjacent add icon provides the same action.
+- Add a complete keyword result set from the search box. Tag and keyword
+  result sets are frozen to their current files when added.
 - Observe external changes through periodic tree and active-note refresh.
 
 Only `.md` files appear as notes. Hidden directories, `.git`, `.obsidian` and `node_modules` are excluded from the note tree. Supported local preview images are PNG, JPEG, GIF, WebP and AVIF.
@@ -188,11 +219,28 @@ The active DSH provider receives these tools, all scoped to the currently select
 - `obsidian_list_notes`
 - `obsidian_read_note`
 - `obsidian_search_notes`
+- `obsidian_list_tags`
+- `obsidian_search_by_tag`
 - `obsidian_write_note`
 - `obsidian_move_note`
 - `obsidian_delete_note`
 
-All note paths are Vault-relative `.md` paths. `obsidian_list_notes` supports a `limit` from 1 to 500 and a continuation `cursor`. Replacing a note requires the `modifiedMs` value returned by `obsidian_read_note`. Deletion is permanent and should only be requested explicitly.
+All note paths are Vault-relative `.md` paths. `obsidian_list_notes` supports a
+`limit` from 1 to 500, a continuation `cursor`, and an optional recursive
+directory `prefix`. `obsidian_search_notes` supports the same directory
+`prefix`. Tags are read from inline `#tags` and YAML frontmatter `tags`; parent
+tag searches include descendants by default. Replacing a note requires the
+`modifiedMs` value returned by `obsidian_read_note`. Deletion is permanent and
+should only be requested explicitly.
+
+## Chat context
+
+**Add to chat** writes a model-visible `[Obsidian context]` block into the
+current session draft. The Host validates every selected item against the
+active Vault and supplies its absolute path. Notes and directories remain
+on-demand scopes; their contents are not copied into the prompt. Tag and
+keyword result sets contain a frozen list of validated files so later turns
+can use the same evidence set.
 
 ## Safety and filesystem behavior
 

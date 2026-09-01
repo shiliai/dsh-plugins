@@ -11,6 +11,7 @@ import X from 'lucide-react/dist/esm/icons/x'
 import { MarkdownPreview } from './MarkdownPreview.tsx'
 import type { VaultStore } from './store.ts'
 import type { VaultTreeNode } from '../contracts.ts'
+import { appendVaultContext } from './context-reference.ts'
 import css from './styles.module.css?dsh-inline'
 
 interface Props {
@@ -25,6 +26,7 @@ export function NotePanel({ store, inputActions, useInput }: Props) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [action, setAction] = useState<'move' | 'delete' | null>(null)
   const [renamePath, setRenamePath] = useState('')
+  const [contextMessage, setContextMessage] = useState<string | null>(null)
 
   const note = state.active
   const trimmedRenamePath = renamePath.trim()
@@ -60,7 +62,14 @@ export function NotePanel({ store, inputActions, useInput }: Props) {
             disabled={note === null || inputActions === undefined || pendingDiscard !== null}
             onClick={() => {
               if (note !== null && inputActions !== undefined) {
-                inputActions.setDraft(`${chatDraft}${chatDraft === '' ? '' : '\n\n'}Please work with the Obsidian note [[${note.path}]].`)
+                inputActions.setDraft(appendVaultContext(chatDraft, {
+                  kind: 'note',
+                  vaultRoot: state.vaultRoot,
+                  value: note.path,
+                  absolutePath: note.absolutePath,
+                  entries: [{ path: note.path, absolutePath: note.absolutePath }],
+                }))
+                setContextMessage(`Added ${note.path} to chat.`)
               }
             }}
           ><MessageSquarePlus size={16} /></button>
@@ -90,6 +99,8 @@ export function NotePanel({ store, inputActions, useInput }: Props) {
           <button className={css.iconButton} type="button" title="Close note" aria-label="Close note" disabled={pendingDiscard !== null} onClick={() => { store.closeNote() }}><X size={17} /></button>
         </div>
       </header>
+
+      {contextMessage !== null && <div className={css.inlineSuccess} role="status">{contextMessage}</div>}
 
       {pendingDiscard === null && action === 'move' && note !== null && (
         <form className={css.noteAction} aria-label="Move or rename note" onSubmit={event => {

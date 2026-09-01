@@ -6,7 +6,7 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
   return { promise: new Promise<T>(innerResolve => { resolve = innerResolve }), resolve }
 }
 
-const home = { path: 'Home.md', content: '# Home', modifiedMs: 1, size: 6 }
+const home = { path: 'Home.md', absolutePath: '/vault/Home.md', content: '# Home', modifiedMs: 1, size: 6 }
 
 function apiWithNotes(notes: Array<Promise<typeof home>>) {
   return {
@@ -20,6 +20,8 @@ function apiWithNotes(notes: Array<Promise<typeof home>>) {
       return next
     },
     search: async () => ({ results: [] }),
+    tags: async () => ({ tags: [] as Array<{ name: string; count: number }> }),
+    tag: async () => ({ paths: [] as string[] }),
     write: async () => home,
     move: async () => home,
     delete: async () => undefined,
@@ -98,5 +100,22 @@ describe('VaultStore request generations', () => {
     await pending
     expect(store.getSnapshot().active).toBeNull()
     expect(store.getSnapshot().saving).toBe(false)
+  })
+
+  it('loads the tag index and nested-tag note paths as a separate vault view', async () => {
+    const api = apiWithNotes([])
+    api.tags = async () => ({ tags: [{ name: 'project', count: 2 }] })
+    api.tag = async () => ({ paths: ['Projects/One.md', 'Projects/Two.md'] })
+    const store = new VaultStore({ open() {}, close() {} }, api)
+
+    store.setView('tags')
+    await store.refreshTags()
+    await store.selectTag('project')
+    expect(store.getSnapshot()).toMatchObject({
+      view: 'tags', selectedTag: 'project', tagPaths: ['Projects/One.md', 'Projects/Two.md'],
+      tags: [{ name: 'project', count: 2 }],
+    })
+    store.clearSelectedTag()
+    expect(store.getSnapshot().selectedTag).toBeNull()
   })
 })

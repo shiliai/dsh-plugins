@@ -1,8 +1,9 @@
 import { useSyncExternalStore } from 'react'
-import type { DirectoryListing, NoteDocument, NoteSearchResult, VaultTreeNode } from '../contracts.ts'
+import type { DirectoryListing, NoteDocument, NoteSearchResult, VaultTag, VaultTreeNode } from '../contracts.ts'
 import { vaultApi } from './api.ts'
 
 export type NoteMode = 'edit' | 'preview'
+export type VaultView = 'notes' | 'tags'
 
 export type PendingDiscardAction =
   | { kind: 'open'; path: string }
@@ -15,10 +16,15 @@ export interface VaultSnapshot {
   active: NoteDocument | null
   draft: string
   mode: NoteMode
+  view: VaultView
   query: string
   searchResults: NoteSearchResult[]
+  tags: VaultTag[]
+  selectedTag: string | null
+  tagPaths: string[]
   directoryListing: DirectoryListing | null
   loadingTree: boolean
+  loadingTags: boolean
   loadingDirectories: boolean
   switchingVault: boolean
   loadingNote: boolean
@@ -39,6 +45,8 @@ interface VaultApi {
   tree(): Promise<{ nodes: VaultTreeNode[] }>
   note(path: string): Promise<NoteDocument>
   search(query: string): Promise<{ results: NoteSearchResult[] }>
+  tags(query?: string): Promise<{ tags: VaultTag[] }>
+  tag(name: string, includeDescendants?: boolean): Promise<{ paths: string[] }>
   write(path: string, content: string, expectedModifiedMs?: number): Promise<NoteDocument>
   move(from: string, to: string): Promise<NoteDocument>
   delete(path: string): Promise<void>
@@ -51,10 +59,15 @@ const INITIAL: VaultSnapshot = {
   active: null,
   draft: '',
   mode: 'preview',
+  view: 'notes',
   query: '',
   searchResults: [],
+  tags: [],
+  selectedTag: null,
+  tagPaths: [],
   directoryListing: null,
   loadingTree: false,
+  loadingTags: false,
   loadingDirectories: false,
   switchingVault: false,
   loadingNote: false,
@@ -70,6 +83,7 @@ export class VaultStore {
   private draftGeneration = 0
   private saveGeneration = 0
   private treeGeneration = 0
+  private tagGeneration = 0
   private directoryGeneration = 0
 
   constructor(private readonly panel: PanelLifecycle, private readonly api: VaultApi = vaultApi) {}
@@ -91,6 +105,43 @@ export class VaultStore {
   async initialize(): Promise<void> {
     const [info] = await Promise.all([this.api.info(), this.refreshTree()])
     this.update({ vaultName: info.name, vaultRoot: info.root })
+  }
+
+  async refreshTags(): Promise<void> {
+    const generation = ++this.tagGeneration
+    this.update({ loadingTags: true })
+    try {
+      const { tags } = await this.api.tags()
+      if (generation === this.tagGeneration) this.update({ tags, loadingTags: false, error: null })
+    } catch (error) {
+      if (generation === this.tagGeneration) this.update({ loadingTags: false, error: message(error) })
+    }
+  }
+
+  setView(view: VaultView): void {
+    if (view === this.snapshot.view) return
+    this.update({ view, query: '', searchResults: [], selectedTag: null, tagPaths: [] })
+    if (view === 'tags') void this.refreshTags()
+  }
+
+  setTagQuery(query: string): void {
+    this.update({ query })
+  }
+
+  async selectTag(tag: string): Promise<void> {
+    const generation = ++this.tagGeneration
+    this.update({ selectedTag: tag, tagPaths: [], loadingTags: true, error: null })
+    try {
+      const { paths } = await this.api.tag(tag, true)
+      if (generation === this.tagGeneration && this.snapshot.selectedTag === tag) this.update({ tagPaths: paths, loadingTags: false })
+    } catch (error) {
+      if (generation === this.tagGeneration) this.update({ loadingTags: false, error: message(error) })
+    }
+  }
+
+  clearSelectedTag(): void {
+    this.tagGeneration++
+    this.update({ selectedTag: null, tagPaths: [], loadingTags: false })
   }
 
   async refreshTree(): Promise<void> {
@@ -138,6 +189,7 @@ export class VaultStore {
       this.invalidateSave()
       this.directoryGeneration++
       this.treeGeneration++
+      this.tagGeneration++
       this.panel.close()
       this.update({
         vaultName: info.name,
@@ -145,8 +197,12 @@ export class VaultStore {
         tree: [],
         active: null,
         draft: '',
+        view: 'notes',
         query: '',
         searchResults: [],
+        tags: [],
+        selectedTag: null,
+        tagPaths: [],
         directoryListing: null,
         loadingDirectories: false,
         switchingVault: false,
@@ -227,6 +283,7 @@ export class VaultStore {
       const draftChanged = draftGeneration !== this.draftGeneration
       this.update({ active: note, draft: draftChanged ? this.snapshot.draft : note.content, saving: false })
       await this.refreshTree()
+      if (this.snapshot.view === 'tags') await this.refreshTags()
     } catch (error) {
       if (saveGeneration === this.saveGeneration && noteGeneration === this.noteGeneration) this.update({ saving: false, error: message(error) })
     }
@@ -241,6 +298,7 @@ export class VaultStore {
       this.update({ saving: false })
       await this.api.write(normalized, `# ${titleFromPath(normalized)}\n\n`)
       await this.refreshTree()
+      if (this.snapshot.view === 'tags') await this.refreshTags()
       await this.openNote(normalized)
       this.setMode('edit')
     } catch (error) {
@@ -266,6 +324,7 @@ export class VaultStore {
       this.draftGeneration++
       this.update({ active: note, draft: note.content, error: null })
       await this.refreshTree()
+      if (this.snapshot.view === 'tags') await this.refreshTags()
     } catch (error) {
       this.update({ error: message(error) })
     }
@@ -283,6 +342,7 @@ export class VaultStore {
       this.update({ active: null, draft: '', error: null })
       this.panel.close()
       await this.refreshTree()
+      if (this.snapshot.view === 'tags') await this.refreshTags()
     } catch (error) {
       this.update({ error: message(error) })
     }
