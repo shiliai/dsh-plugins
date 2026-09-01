@@ -1,8 +1,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { WecomAgentBridge, type Config } from './index.ts'
 import { WecomBot } from './bot.ts'
-import { isAllowed } from './safety.ts'
+import { isAllowed, safeErrorKind } from './safety.ts'
+import { makeLogger } from './log.ts'
 import type { InboundMessage } from './bot.ts'
+import { AuthWatchdog, resolveWatchdogConfig, renderWatchdogAlert, type WatchdogAlert, type WatchdogStatus } from './watchdog.ts'
 
 export type WecomConnectionState = 'unconfigured' | 'connecting' | 'online' | 'reconnecting' | 'offline' | 'error'
 
@@ -16,6 +18,8 @@ export interface WecomStatus {
   botIdentity?: string | undefined
   restarting: boolean
   version: string
+  /** Authorization watchdog state. */
+  watchdog?: WatchdogStatus | undefined
 }
 
 type Snapshot = Omit<WecomStatus, 'restarting'>
@@ -35,6 +39,8 @@ export class WecomLifecycleController {
   private restartTask: Promise<WecomStatus> | undefined
   private terminalDispose = false
   private snapshot: Snapshot
+  private readonly log = makeLogger('info')
+  private readonly watchdog: AuthWatchdog
 
   constructor(
     private readonly ctx: Context,
@@ -44,6 +50,11 @@ export class WecomLifecycleController {
     private readonly createBridge: (ctx: Context, bot: WecomBot, config: Config) => WecomAgentBridge = (ctx, bot, config) => new WecomAgentBridge(ctx, bot, config),
   ) {
     this.snapshot = this.unconfigured() ?? this.status('offline')
+    this.watchdog = new AuthWatchdog({
+      config: resolveWatchdogConfig(config.authWatchdog),
+      send: (alert) => this.deliverAlert(alert),
+      log: this.log,
+    })
   }
 
   private enqueue(operation: () => Promise<void>): Promise<void> {
@@ -71,7 +82,7 @@ export class WecomLifecycleController {
   }
 
   getStatus(): WecomStatus {
-    return { ...this.snapshot, restarting: !this.terminalDispose && this.restartTask !== undefined }
+    return { ...this.snapshot, watchdog: this.watchdog.status(), restarting: !this.terminalDispose && this.restartTask !== undefined }
   }
 
   async start(): Promise<WecomStatus> {
@@ -81,6 +92,7 @@ export class WecomLifecycleController {
       if (unavailable !== undefined) this.snapshot = unavailable
       else await this.startReplacement()
     })
+    this.watchdog.start()
     return this.getStatus()
   }
 
@@ -91,6 +103,7 @@ export class WecomLifecycleController {
     try {
       bot = this.createBot(this.config)
       bot.onLifecycle(event => {
+        this.watchdog.observe(event)
         if (this.current?.bot !== bot) return
         if (event.type === 'connected') this.update('connecting', { error: undefined })
         if (event.type === 'authenticated') this.update('online', { authenticatedAt: Date.now(), error: undefined })
@@ -168,8 +181,42 @@ export class WecomLifecycleController {
     await this.current.bot.sendText(chatId, content)
   }
 
+  /** Distribute a watchdog alert to every configured destination (log always, WeCom chat and/or webhook). */
+  private async deliverAlert(alert: WatchdogAlert): Promise<void> {
+    const { summary, body } = renderWatchdogAlert(alert)
+    this.log.error(`watchdog alert: ${summary}`)
+    const settings = this.config.authWatchdog ?? {}
+    const chatId = settings.alertChatId
+    if (chatId) {
+      if (this.current === undefined) {
+        this.log.warn('watchdog alert not delivered to WeCom chat: connection unavailable', { chatId })
+      } else {
+        try {
+          await this.current.bot.sendText(chatId, body)
+          this.log.info('watchdog alert delivered to WeCom chat', { chatId })
+        } catch (error) {
+          this.log.error('watchdog WeCom chat delivery failed', { chatId, kind: safeErrorKind(error) })
+        }
+      }
+    }
+    const webhookUrl = settings.webhookUrl
+    if (webhookUrl) {
+      try {
+        const response = await fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text: body, summary, kind: alert.kind, code: alert.code, detail: alert.detail ?? null, at: new Date().toISOString() }),
+        })
+        if (!response.ok) this.log.warn('watchdog webhook alert non-ok response', { status: response.status })
+      } catch (error) {
+        this.log.error('watchdog webhook delivery failed', { kind: safeErrorKind(error) })
+      }
+    }
+  }
+
   async dispose(): Promise<void> {
     this.terminalDispose = true
+    this.watchdog.dispose()
     await this.enqueue(async () => {
       const cleanupFailure = await this.teardownCurrent()
       if (cleanupFailure === undefined) this.update('offline', { disconnectedAt: Date.now(), error: undefined })

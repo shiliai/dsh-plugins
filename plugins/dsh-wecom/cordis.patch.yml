@@ -10,3 +10,14 @@
         allowChats: []
         allowGroupSenders: []
         outboundAllowChats: []
+        # Authorization watchdog. Monitors the WeCom long connection and data
+        # permission, and alerts when authorization becomes unavailable instead
+        # of failing silently. alertChatId/webhookUrl are the destinations
+        # (log-only when unset). See README "授权监控" section.
+        authWatchdog:
+          enabled: true
+          checkIntervalMs: 60000
+          minDowntimeMs: 120000
+          alertCooldownMs: 3600000
+          alertChatId: ''
+          webhookUrl: ''

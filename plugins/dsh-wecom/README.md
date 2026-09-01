@@ -69,6 +69,15 @@ Add a user patch with explicit identities and roots appropriate for the host:
         allowGroupSenders: ['userid-a']
         # Agent-initiated messages use this separate default-deny allowlist.
         outboundAllowChats: ['userid-a']
+        # Authorization watchdog (see "Authorization layers and the watchdog").
+        # alertChatId / webhookUrl are the alert destinations; leave unset for log-only.
+        authWatchdog:
+          enabled: true
+          checkIntervalMs: 60000
+          minDowntimeMs: 120000
+          alertCooldownMs: 3600000
+          alertChatId: 'userid-a'
+          webhookUrl: 'https://example.com/hooks/wecom-alerts'
         # Diagnostic verbosity: error | warn | info (default) | debug.
         logLevel: 'info'
         # Trusted browser origin for the restart action. Local DSH defaults to this value.
@@ -164,6 +173,116 @@ The status API deliberately never returns `botSecret`, tokens, message bodies,
 or WebSocket frames. Its restart endpoint accepts only the configured trusted
 origin and rejects cross-site browser fetches.
 
+## Authorization layers and the watchdog
+
+WeCom authorization has **two independent layers** that must be understood
+separately, because only one of them is renewed automatically:
+
+1. **The WebSocket long-connection credential** (`botId` + `botSecret`). The
+   smart-robot SDK owns connect/auth/heartbeat/reconnect on this layer. When an
+   API call returns errcode `853004` (token expired/invalid), the WeCom CLI
+   chain silently mints a new access token from the bot credentials and replays
+   the request — no manual action is needed
+   ([wecom-cli CHANGELOG](https://github.com/WecomTeam/wecom-cli/blob/main/CHANGELOG.md)).
+   If the `botSecret` itself is wrong or revoked, the SDK surfaces an
+   `Authentication failed` / `WS_AUTH_FAILURE_EXHAUSTED` error and keeps
+   retrying.
+
+2. **WeCom "数据权限 / 定期授权" (data-permission periodic authorization)**. This
+   grants the bot access to data via the HTTP APIs and is valid **90 days**, not
+   indefinitely ([获取数据权限接入指引](https://developer.work.weixin.qq.com/document/path/101545)).
+   WeCom pushes an **`auth_data_permission`** event (a `指令回调` callback) once,
+   7 days before expiry, and shows admin-side reminders at 7/3/1 days and on the
+   expiry day; re-authorizing in the admin console restarts the 90 days
+   ([数据权限授权和到期事件](https://developer.work.weixin.qq.com/document/path/101587)).
+
+This layer is **not** auto-renewed and will silently break API access when it
+lapses. That is what the plugin's authorization watchdog watches for and reports
+instead of failing silently.
+
+### How the watchdog works
+
+The watchdog is enabled by default and observes the same `WecomLifecycleEvent`s
+the plugin already emits for the long connection (`connected` / `authenticated`
+/ `disconnected` / `reconnecting` / `error`). It enters a `degraded` state when
+authorization becomes unavailable — an SDK auth error (for example
+`WS_AUTH_FAILURE_EXHAUSTED` or an `Authentication failed (code: <errcode>)`),
+any other SDK error, or a connection that has stayed down for a while. After the
+connection has been degraded for at least `minDowntimeMs` (default 2 minutes —
+this filters transient reconnect blips) it raises an **alert**. While the
+degradation persists it re-alerts at most once per `alertCooldownMs` (default
+1 hour), so a silent failure is surfaced repeatedly until it is resolved.
+
+An alert is delivered to every configured destination:
+
+- **WeCom chat** — `authWatchdog.alertChatId` (a user `userid` or group
+  `chatid`) is sent a Markdown alert through the resident bot.
+- **HTTP webhook** — `authWatchdog.webhookUrl` is POSTed a JSON payload
+  (`{ text, summary, kind, code, detail, at }`) for email/log bridges.
+- **Log** — a `[dsh-wecom]` `error`-level line is always written.
+
+With neither destination set, alerts are log-only. The alert body identifies the
+degradation kind (`auth` / `connection` / `unknown`) and the real diagnostic
+code, and, for `auth` degradations, instructs the operator to re-authorize data
+permission (see the diagnosis note below). The watchdog never blocks the bot —
+it is purely observational, and its state is exposed on the plugin status API as
+`status.watchdog` (`healthy` / `degraded` / `disabled`).
+
+### Configuration reference
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `authWatchdog.enabled` | `true` | Master switch; `false` disables monitoring. |
+| `authWatchdog.checkIntervalMs` | `60000` | How often the watchdog re-evaluates and re-alerts. Clamped to ≥ 5000 ms. |
+| `authWatchdog.minDowntimeMs` | `120000` | Sustained downtime before the first alert; filters reconnect noise. Clamped to ≥ 5000 ms. |
+| `authWatchdog.alertCooldownMs` | `3600000` | Minimum gap between repeated alerts while still degraded. Clamped to ≥ 30000 ms. |
+| `authWatchdog.alertChatId` | (none) | WeCom chat to send alerts to via the bot. |
+| `authWatchdog.webhookUrl` | (none) | HTTP(S) URL POSTed alert JSON for log/email bridges. |
+
+### Backend callback settings and the renewal extension point
+
+The plugin runs a WebSocket long connection, **not** an HTTP callback server, so
+it cannot receive WeCom's `auth_data_permission` (`指令回调`) event in-process.
+To get a **proactive** renewal reminder before expiry, an operator must:
+
+1. Configure a WeCom **指令回调** (callback) receiver with a public HTTPS URL,
+   verifying it with WeCom's URL + `echostr` challenge, and set the callback
+   token / `EncodingAESKey` for decrypting push payloads.
+2. Subscribe to the `auth_data_permission` event (pushed once, 7 days before
+   expiry).
+3. On receiving the event, call the plugin's extension point
+   `AuthWatchdog.notifyDataPermissionExpiry(detail)` (exported from the plugin
+   package) with the detail from the push. This raises an immediate `auth`
+   renewal-reminder alert through the same configured destinations, so the
+   operator is reminded *before* any breakage.
+
+The exact callback URL/token settings are decided by the operator's WeCom admin
+console, so they are documented here rather than configured in this plugin. If
+no callback receiver is run, the watchdog still catches a lapse reactively: the
+moment API access actually breaks (or the long connection stops authenticating),
+the real error code is surfaced in an alert as described above.
+
+### How to diagnose the authorization state
+
+Do not assume the authorization lifetime or the failure cause — **capture the
+real signal**:
+
+- The watchdog exposes the last observed code via `GET /dsh-wecom/api/status`
+  at `status.watchdog.code` (an errcode integer such as `853004`, or an SDK
+  code such as `WS_AUTH_FAILURE_EXHAUSTED` / `WS_RECONNECT_EXHAUSTED`), and
+  `status.watchdog.kind` (`auth` / `connection` / `unknown`).
+- The plugin log writes `[dsh-wecom] sdk: Authentication failed:
+  errcode=..., errmsg=...` when the SDK rejects the subscription, and
+  `watchdog: degradation began { kind, code }` lines.
+
+The WeCom docs state data permission is valid 90 days with a 7-day-before
+expiry event. If an operator has observed authorization drop after roughly "1
+week", that does **not** match the documented 90-day rule — check the actual
+errcode/event that surfaced (token `853004`/`40001`, API-scope errors such as
+`48002`, or a data-permission expiry) before changing configuration. The
+watchdog's `code` field is there so the operator reports the real value rather
+than guessing.
+
 ## Commands
 
 | Command | Effect |
@@ -212,7 +331,7 @@ pnpm --filter @dsh-plugins/dsh-wecom pack:check
 pnpm --filter @dsh-plugins/dsh-wecom release:check
 ```
 
-The validation target for this feature release is `@dsh-plugins/dsh-wecom@0.3.0`.
+The validation target for this feature release is `@dsh-plugins/dsh-wecom@0.3.1`.
 
 The test suite uses fakes for DSH and the WeCom SDK. It does not perform a live
 WeCom credential, network, or production-profile end-to-end test.
