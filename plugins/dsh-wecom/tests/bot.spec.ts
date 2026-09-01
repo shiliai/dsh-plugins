@@ -11,6 +11,8 @@ vi.mock('@wecom/aibot-node-sdk', () => {
     disconnect() {}
     replyStream = replyStream
     sendMessage = vi.fn(async () => ({}))
+    replyTemplateCard = vi.fn(async () => ({}))
+    updateTemplateCard = vi.fn(async () => ({}))
     on(event: string, listener: (...args: unknown[]) => void) {
       this.listeners.set(event, [...(this.listeners.get(event) ?? []), listener])
       return this
@@ -20,7 +22,7 @@ vi.mock('@wecom/aibot-node-sdk', () => {
       return true
     }
   }
-  return { WSClient, generateReqId: (prefix: string) => `${prefix}-sdk-id` }
+  return { WSClient, generateReqId: (prefix: string) => `${prefix}-sdk-id`, TemplateCardType: { MultipleInteraction: 'multiple_interaction', TextNotice: 'text_notice' } }
 })
 
 import { WecomBot } from '../src/bot.ts'
@@ -120,5 +122,46 @@ describe('WecomBot inbound boundary', () => {
     bot.client.emit('error', hostile)
     expect(errorLog).toHaveBeenCalledWith('[dsh-wecom] sdk error (OperationError)')
     errorLog.mockRestore()
+  })
+
+  it('emits a normalized template-card event and discards events without a task id', async () => {
+    const bot = new WecomBot({ botId: 'bot-1', botSecret: 'secret' })
+    const received = vi.fn()
+    bot.onCardEvent(received)
+    await bot.start(() => undefined)
+    bot.client.emit('event.template_card_event', {
+      body: { chatid: 'chat-1', chattype: 'single', msgid: 'cevt-1', from: { userid: 'user-1' }, event: { event_key: 'q1::2', task_id: 'task-9' } },
+      headers: { req_id: 'req-cevt' },
+    } as never)
+    bot.client.emit('event.template_card_event', {
+      body: { chatid: 'chat-1', msgid: 'cevt-2', from: { userid: 'user-1' }, event: { event_key: 'q1::1', task_id: '' } },
+      headers: { req_id: 'req-cevt-2' },
+    } as never)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(received).toHaveBeenCalledTimes(1)
+    expect(received.mock.calls[0]![0]).toMatchObject({
+      chatId: 'chat-1',
+      chatType: 'single',
+      senderId: 'user-1',
+      taskId: 'task-9',
+      eventKey: 'q1::2',
+    })
+  })
+
+  it('wraps the SDK template-card send and update paths', async () => {
+    const bot = new WecomBot({ botId: 'bot-1', botSecret: 'secret' })
+    const card = { card_type: 'multiple_interaction', task_id: 'task-9' }
+    const f = frame('m') as never
+    await bot.replyTemplateCard(f, card as never)
+    await bot.updateTemplateCard(f, { card_type: 'text_notice', task_id: 'task-9' } as never, ['user-1'])
+    await bot.sendTemplateCard('chat-1', card as never)
+    const client = bot.client as unknown as {
+      replyTemplateCard: ReturnType<typeof vi.fn>
+      updateTemplateCard: ReturnType<typeof vi.fn>
+      sendMessage: ReturnType<typeof vi.fn>
+    }
+    expect(client.replyTemplateCard).toHaveBeenCalledWith(f, card)
+    expect(client.updateTemplateCard).toHaveBeenCalledWith(f, { card_type: 'text_notice', task_id: 'task-9' }, ['user-1'])
+    expect(client.sendMessage).toHaveBeenCalledWith('chat-1', { msgtype: 'template_card', template_card: card })
   })
 })

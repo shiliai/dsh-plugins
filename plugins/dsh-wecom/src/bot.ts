@@ -1,5 +1,5 @@
 import { generateReqId, WSClient } from '@wecom/aibot-node-sdk'
-import type { WsFrame } from '@wecom/aibot-node-sdk'
+import type { TemplateCard, WsFrame } from '@wecom/aibot-node-sdk'
 import { makeLogger, sdkLogger, type Logger, type LogLevel } from './log.ts'
 import { safeErrorKind, truncateUtf8 } from './safety.ts'
 
@@ -27,9 +27,32 @@ export interface InboundMessage {
   senderId?: string | undefined
 }
 
+/**
+ * A normalized user interaction with a template card we rendered. Carries the
+ * `task_id` we set on the card (to correlate with the originating question) and
+ * the `event_key` WeCom includes for the tapped/submitted element.
+ */
+export interface InboundCardEvent {
+  /** stable identity of the chat (chatid) that tapped the card */
+  chatId: string
+  /** "single" | "group" | unknown */
+  chatType: string
+  /** sender userid when available */
+  senderId?: string | undefined
+  /** task_id we assigned when the card was sent (correlates to a question) */
+  taskId: string
+  /** opaque element key WeCom reports for the interaction */
+  eventKey?: string | undefined
+  /** unique event id for dedup */
+  msgId: string
+  /** raw event frame for replying/updating */
+  frame: WsFrame
+}
+
 export interface WecomBotEvents {
   ready: () => void
   'message.text': (msg: InboundMessage) => void | Promise<void>
+  'template_card_event': (evt: InboundCardEvent) => void | Promise<void>
   error: (err: unknown) => void
 }
 
@@ -54,6 +77,7 @@ export class WecomBot {
   private readonly maxDedupEntries = 10_000
   private readonly log: Logger
   private readonly lifecycleListeners = new Set<(event: WecomLifecycleEvent) => void>()
+  private readonly cardEventListeners = new Set<(evt: InboundCardEvent) => void | Promise<void>>()
 
   constructor(options: WecomBotOptions) {
     this.options = options
@@ -77,6 +101,12 @@ export class WecomBot {
   onLifecycle(listener: (event: WecomLifecycleEvent) => void): () => void {
     this.lifecycleListeners.add(listener)
     return () => this.lifecycleListeners.delete(listener)
+  }
+
+  /** Subscribe to normalized template-card interactions (user taps a rendered card). */
+  onCardEvent(listener: (evt: InboundCardEvent) => void | Promise<void>): () => void {
+    this.cardEventListeners.add(listener)
+    return () => this.cardEventListeners.delete(listener)
   }
 
   private emitLifecycle(event: WecomLifecycleEvent): void {
@@ -152,6 +182,30 @@ export class WecomBot {
       // so a failed turn cannot become an unhandled rejection or stop later work.
       void Promise.resolve().then(() => onMessage(msg)).catch((error: unknown) => this.handleMessageFailure(frame, error))
     })
+    this.client.on('event.template_card_event', (frame: WsFrame) => {
+      const body = frame?.body ?? {}
+      const event = (body.event ?? {}) as { event_key?: string; task_id?: string }
+      const evt: InboundCardEvent = {
+        chatId: (body.chatid ?? body.from?.userid ?? '') as string,
+        chatType: (body.chattype ?? '') as string,
+        senderId: (body.from?.userid ?? undefined) as string | undefined,
+        taskId: (event.task_id ?? '') as string,
+        eventKey: event.event_key,
+        msgId: (body.msgid ?? '') as string,
+        frame,
+      }
+      if (evt.taskId === '' || this.isDuplicate(evt.msgId)) return
+      this.log.info('inbound card event', {
+        chatId: evt.chatId === '' ? undefined : evt.chatId,
+        chatType: evt.chatType,
+        msgId: evt.msgId === '' ? undefined : evt.msgId,
+        taskId: evt.taskId,
+        hasEventKey: Boolean(evt.eventKey),
+      })
+      for (const listener of this.cardEventListeners) {
+        void Promise.resolve().then(() => listener(evt)).catch((error: unknown) => this.handleMessageFailure(frame, error))
+      }
+    })
     this.client.connect()
   }
 
@@ -201,6 +255,39 @@ export class WecomBot {
       msgtype: 'markdown',
       markdown: { content: truncateUtf8(content) },
     })
+  }
+
+  /** Reply to an inbound frame with a template card (interactive options). */
+  async replyTemplateCard(frame: WsFrame, card: TemplateCard): Promise<void> {
+    this.log.debug('reply card outbound', {
+      chatId: (frame?.body?.chatid ?? frame?.body?.from?.userid ?? '') as string,
+      taskId: card.task_id,
+      cardType: card.card_type,
+    })
+    await this.client.replyTemplateCard(frame, card)
+  }
+
+  /** Actively push a template card to a chat (does not depend on a reply window). */
+  async sendTemplateCard(chatId: string, card: TemplateCard): Promise<void> {
+    this.log.debug('send card outbound', {
+      chatId,
+      taskId: card.task_id,
+      cardType: card.card_type,
+    })
+    await this.client.sendMessage(chatId, {
+      msgtype: 'template_card',
+      template_card: card,
+    })
+  }
+
+  /** Reflect a card update after a user interaction (must be used with the event frame). */
+  async updateTemplateCard(frame: WsFrame, card: TemplateCard, userids?: string[]): Promise<void> {
+    this.log.debug('update card', {
+      chatId: (frame?.body?.chatid ?? frame?.body?.from?.userid ?? '') as string,
+      taskId: card.task_id,
+      userids: userids?.length ? userids.length : undefined,
+    })
+    await this.client.updateTemplateCard(frame, card, userids)
   }
 
   disconnect(): void {

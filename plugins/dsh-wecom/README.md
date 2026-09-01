@@ -323,6 +323,36 @@ recorded consistently in the session metadata and command/status output.
   `maxLiveChats` and idle eviction. In-flight queues are drained before plugin
   unload disposes their agents. Configure values for the expected traffic.
 
+## Interactive questions (selectable template cards)
+
+Plain WeCom text/stream replies cannot render tappable options, so the plugin
+bridges the agent's `ask_user_question` tool to an interactive
+`multiple_interaction` template card (official docs:
+[被动回复消息](https://developer.work.weixin.qq.com/document/path/101031) and
+[智能机器人长连接](https://developer.work.weixin.qq.com/document/path/101463)).
+
+When an agent asks a single-select question with up to **5** options, the bridge:
+
+1. Registers itself as the `ctx.userQuestions` provider and renders the question
+   as a `multiple_interaction` card (a dropdown of options plus a submit button).
+2. `WecomBot` normalizes the resulting `event.template_card_event` and routes it
+   to the bridge, which matches the card by its `task_id` and calls
+   `updateTemplateCard` to show the chosen option.
+3. The selection is delivered back into the **same** DSH session as the tool
+   result of the `ask_user_question` call, so the conversation continues with the
+   user's choice in context.
+
+Fallbacks, per the issue acceptance criteria:
+
+- A question with **no options**, **more than 5 options**, or a **multi-select**
+  layout cannot be card-rendered. The bridge sends it as readable numbered text
+  so it is still visible, then releases the turn.
+- If another UI (e.g. the DSH browser) has already registered the only
+  `userQuestions` provider, the WeCom bot defers and questions fall back to the
+  agent's own plain-text reply.
+- The existing plain-text/stream reply path is unchanged for every non-question
+  turn.
+
 ## Verification
 
 ```sh
@@ -331,7 +361,7 @@ pnpm --filter @dsh-plugins/dsh-wecom pack:check
 pnpm --filter @dsh-plugins/dsh-wecom release:check
 ```
 
-The validation target for this feature release is `@dsh-plugins/dsh-wecom@0.3.1`.
+The validation target for this feature release is `@dsh-plugins/dsh-wecom@0.3.2`.
 
 The test suite uses fakes for DSH and the WeCom SDK. It does not perform a live
 WeCom credential, network, or production-profile end-to-end test.
