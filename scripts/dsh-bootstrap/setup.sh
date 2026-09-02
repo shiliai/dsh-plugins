@@ -16,12 +16,16 @@ if [ -f "$HERE/bootstrap.mjs" ]; then
   BOOT_DIR="$HERE"
 else
   CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/dsh-bootstrap"
-  if [ ! -f "$CACHE/scripts/dsh-bootstrap/bootstrap.mjs" ]; then
+  if [ ! -d "$CACHE/.git" ]; then
     rm -rf "$CACHE"
     git clone --depth 1 --filter=blob:none --sparse "$REPO" "$CACHE" >/dev/null 2>&1
-    git -C "$CACHE" sparse-checkout set scripts/dsh-bootstrap >/dev/null 2>&1 || true
+  else
+    git -C "$CACHE" fetch --depth 1 origin main >/dev/null 2>&1
+    git -C "$CACHE" reset --hard FETCH_HEAD >/dev/null 2>&1
   fi
+  git -C "$CACHE" sparse-checkout set scripts/dsh-bootstrap >/dev/null 2>&1 || true
   BOOT_DIR="$CACHE/scripts/dsh-bootstrap"
 fi
 
+npm install --prefix "$BOOT_DIR" --omit=dev --ignore-scripts --no-audit --no-fund --package-lock=false >/dev/null
 exec node "$BOOT_DIR/bootstrap.mjs" "$@"

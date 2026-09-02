@@ -29,12 +29,15 @@
  *   node bootstrap.mjs --help
  */
 import { execFileSync, execSync } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { stdin as input, stdout as output } from 'node:process'
 import { createInterface } from 'node:readline/promises'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, lstatSync, realpathSync, chmodSync, copyFileSync, rmSync } from 'node:fs'
+import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, dirname, isAbsolute, resolve, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { Document, parseDocument } from 'yaml'
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
 const DSH_HOME_ENV = 'DSH_HOME'
@@ -574,43 +577,90 @@ function referencedApiKeys(settingsPath) {
   return [...keys]
 }
 
-function parseCredentialsYaml(path) {
-  // Minimal reader for the flat rc.8 document plus our pre-rc.8 wrapped format.
-  const out = {}
-  if (!existsSync(path)) return out
-  const lines = readFileSync(path, 'utf8').split('\n')
-  let inLegacyRefs = false
-  for (const line of lines) {
-    if (/^refs:\s*$/.test(line)) { inLegacyRefs = true; continue }
-    if (inLegacyRefs && /^\S/.test(line)) inLegacyRefs = false
-    if (inLegacyRefs) {
-      const m = /^\s+([A-Za-z0-9_]+):\s*(.*)$/.exec(line)
-      if (m) out[m[1]] = parseCredentialScalar(m[2])
-      continue
+function describeYamlError(error) {
+  const at = error.linePos?.[0]
+  return `${error.code ?? 'YAML_ERROR'}${at ? ` at line ${at.line}, column ${at.col}` : ''}`
+}
+
+function readCredentialsDocument(path) {
+  if (!existsSync(path)) return { document: new Document(new Map()), entries: new Map(), legacy: false, raw: undefined }
+  if (lstatSync(path).isSymbolicLink()) {
+    throw new Error(`refusing to replace symlinked credentials document at ${path}`)
+  }
+  const raw = readFileSync(path, 'utf8')
+  const document = parseDocument(raw, { prettyErrors: true, uniqueKeys: true })
+  if (document.errors.length) {
+    throw new Error(`invalid credentials document at ${path}: ${document.errors.map(describeYamlError).join('; ')}`)
+  }
+  const root = document.toJS({ mapAsMap: true }) ?? new Map()
+  if (!(root instanceof Map)) throw new Error(`credentials document at ${path} must be a mapping`)
+
+  const legacy = root.size === 2 && root.get('version') === 1 && root.get('refs') instanceof Map
+  const entries = legacy ? root.get('refs') : root
+  for (const [key, value] of entries) {
+    if (typeof key !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error(`credentials document at ${path} contains an invalid credential reference`)
     }
-    const m = /^([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$/.exec(line)
-    if (m && m[1] !== 'version') out[m[1]] = parseCredentialScalar(m[2])
+    if (typeof value !== 'string' || value.length === 0) {
+      throw new Error(`credentials document at ${path} contains a non-string or empty credential value`)
+    }
   }
-  return out
+  return { document, entries, legacy, raw }
 }
 
-function parseCredentialScalar(raw) {
-  const value = raw.trim()
-  if (value.startsWith("'") && value.endsWith("'")) {
-    return value.slice(1, -1).replace(/''/g, "'")
+const delay = (ms) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms))
+
+async function withCredentialsLock(path, operation) {
+  const lockPath = `${path}.lock`
+  const deadline = Date.now() + 2000
+  let retryMs = 20
+  for (;;) {
+    try {
+      await writeFile(lockPath, `${process.pid}\n`, { mode: 0o600, flag: 'wx' })
+      break
+    } catch (error) {
+      const contention = error?.code === 'EEXIST' ||
+        (error?.code === 'EPERM' && await lstat(lockPath).then(() => true, () => false))
+      if (!contention) throw error
+      if (Date.now() >= deadline) throw new Error(`timed out waiting for the credentials writer lock at ${lockPath}`)
+      await delay(retryMs)
+      retryMs = Math.min(retryMs * 2, 200)
+    }
   }
-  if (value.startsWith('"') && value.endsWith('"')) {
-    try { return JSON.parse(value) } catch { /* preserve malformed legacy input verbatim */ }
+  try {
+    return await operation()
+  } finally {
+    await rm(lockPath, { force: true })
   }
-  return value
 }
 
-function serializeCredentialsYaml(refs) {
-  const lines = []
-  for (const [k, v] of Object.entries(refs)) {
-    lines.push(`${k}: '${String(v).replace(/'/g, "''")}'`)
+async function writeCredentialsAtomic(path, content) {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+  const temp = `${path}.${randomBytes(6).toString('hex')}.tmp`
+  try {
+    await writeFile(temp, content, { mode: 0o600, flag: 'wx' })
+    await rename(temp, path)
+  } catch (error) {
+    await rm(temp, { force: true })
+    throw error
   }
-  return lines.join('\n') + '\n'
+}
+
+async function persistCredentials(path, changes) {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+  return withCredentialsLock(path, async () => {
+    const current = readCredentialsDocument(path)
+    let backup = null
+    let document = current.document
+    if (current.legacy) {
+      backup = `${path}.legacy-${Date.now()}.bak`
+      await writeCredentialsAtomic(backup, current.raw)
+      document = new Document(new Map(current.entries))
+    }
+    for (const [key, value] of changes) document.set(key, value)
+    await writeCredentialsAtomic(path, document.toString())
+    return backup
+  })
 }
 
 async function ensureCredentials(opts) {
@@ -621,30 +671,33 @@ async function ensureCredentials(opts) {
     return
   }
   const credPath = join(opts.dshHome, CREDENTIALS_FILENAME)
-  const refs = parseCredentialsYaml(credPath)
-  const missing = keys.filter((k) => !refs[k])
+  const current = readCredentialsDocument(credPath)
+  const missing = keys.filter((k) => !current.entries.has(k))
+  const targets = opts.rekey ? keys : missing
 
-  if (!missing.length && !opts.rekey) {
+  if (!targets.length && !current.legacy) {
+    if (existsSync(credPath)) {
+      try { chmodSync(credPath, 0o600) } catch { /* best-effort on Windows */ }
+    }
     log('credentials', `already present for: ${keys.join(', ')}`)
     return
   }
-  log('credentials', `api keys needed per settings.yaml: ${missing.length ? keys.join(', ') : ''}`)
+  log('credentials', current.legacy ? 'legacy credentials format detected; migrating to rc.8' :
+    `api keys needed per settings.yaml: ${targets.length ? keys.join(', ') : ''}`)
 
-  const touch = []
+  const changes = new Map()
   if (opts.command === 'check') {
-    log('credentials', `would prompt for/keep: ${missing.join(', ') || '(none)'} -> ${credPath}`)
-    return
-  }
-  if (!missing.length) {
-    log('credentials', 'all keys present')
+    log('credentials', `would migrate/prompt for: ${targets.join(', ') || '(migration only)'} -> ${credPath}`)
     return
   }
 
-  console.log('\n  Enter API keys for each provider. You can:')
-  console.log('    - paste the key directly, or')
-  console.log('    - type "env:VAR_NAME" to pull the value from an environment variable, or')
-  console.log('    - leave blank to skip this key (already-stored keys are kept).')
-  for (const k of missing) {
+  if (targets.length) {
+    console.log('\n  Enter API keys for each provider. You can:')
+    console.log('    - paste the key directly, or')
+    console.log('    - type "env:VAR_NAME" to pull the value from an environment variable, or')
+    console.log('    - leave blank to skip this key (already-stored keys are kept).')
+  }
+  for (const k of targets) {
     let val = null
     if (opts.yes) {
       warn(`skipping ${k} in --yes mode (no stored value)`)
@@ -652,30 +705,27 @@ async function ensureCredentials(opts) {
     }
     if (process.env[k]) {
       const use = await askYesNo(`Use $${k} from environment for '${k}'?`, true)
-      if (use) { val = process.env[k]; touch.push(k) }
-      else { const v = await questionHidden(`  Enter value for '${k}' (blank to skip): `); if (v) { val = v; touch.push(k) } }
+      if (use) val = process.env[k]
+      else { const v = await questionHidden(`  Enter value for '${k}' (blank to skip): `); if (v) val = v }
     } else {
       const v = await questionHidden(`  Enter value for '${k}' (blank to skip): `)
       if (v.startsWith('env:')) {
         const envName = v.slice(4).trim()
-        if (process.env[envName]) { val = process.env[envName]; touch.push(k) }
+        if (process.env[envName]) val = process.env[envName]
         else warn(`env var ${envName} not set; skipping ${k}`)
-      } else if (v) {
-        val = v
-        touch.push(k)
-      }
+      } else if (v) val = v
     }
-    if (val !== null) refs[k] = val
+    if (val !== null) changes.set(k, val)
   }
 
-  if (!touch.length) {
+  if (!changes.size && !current.legacy) {
     warn('nothing new to write; leaving credentials untouched')
     return
   }
-  writeFileSync(credPath, serializeCredentialsYaml(refs))
-  try { chmodSync(credPath, 0o600) } catch { /* best-effort on Windows */ }
+  const backup = await persistCredentials(credPath, changes)
   console.log(`  wrote ${credPath} (permissions 600)` +
     '\n  ⚠ Do NOT commit this file — it holds secrets and is machine-local by design.')
+  if (backup) log('credentials', `legacy backup: ${backup} (permissions 600)`)
 }
 
 // ---------------------------------------------------------------------------

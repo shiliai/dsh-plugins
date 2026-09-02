@@ -1,5 +1,6 @@
 packages:
   - plugins/*
+  - scripts/dsh-bootstrap
 
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true

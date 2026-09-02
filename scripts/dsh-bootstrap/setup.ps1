@@ -17,13 +17,17 @@ if (Test-Path (Join-Path $Here 'bootstrap.mjs')) {
   $BootDir = $Here
 } else {
   $Cache = Join-Path $env:LOCALAPPDATA 'dsh-bootstrap'
-  if (-not (Test-Path (Join-Path $Cache 'scripts\dsh-bootstrap\bootstrap.mjs'))) {
+  if (-not (Test-Path (Join-Path $Cache '.git'))) {
     if (Test-Path $Cache) { Remove-Item -Recurse -Force $Cache }
     git clone --depth 1 --filter=blob:none --sparse $Repo $Cache *> $null
-    git -C $Cache sparse-checkout set scripts/dsh-bootstrap *> $null
+  } else {
+    git -C $Cache fetch --depth 1 origin main *> $null
+    git -C $Cache reset --hard FETCH_HEAD *> $null
   }
+  git -C $Cache sparse-checkout set scripts/dsh-bootstrap *> $null
   $BootDir = Join-Path $Cache 'scripts\dsh-bootstrap'
 }
 
+npm install --prefix $BootDir --omit=dev --ignore-scripts --no-audit --no-fund --package-lock=false *> $null
 & node (Join-Path $BootDir 'bootstrap.mjs') @args
 exit $LASTEXITCODE
