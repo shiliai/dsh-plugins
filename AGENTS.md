@@ -1,5 +1,19 @@
 # DSH Plugins Repository Instructions
 
+## DSH restart safety
+
+- Never kill, restart, or replace a DSH host process from a tool call running
+  inside that same process. The Harness records `tool/call` before execution,
+  so terminating the host prevents the matching `tool/result` from being
+  persisted and causes `TOOL_OUTCOME_UNKNOWN` during session recovery.
+- Perform DSH restarts through an external supervisor or a separate terminal
+  that is not hosted by the process being replaced.
+- Split deployment into two phases: finish the deployment command and durably
+  record its result, then restart DSH externally. Verify health and session
+  recovery in a new request after the replacement process is listening.
+- Preserve the late socket-error protections introduced by commit `d9022d1`
+  in every `dsh-remote` release.
+
 ## Plugin versions
 
 - Every directory under `plugins/` is an independently versioned package. Its
