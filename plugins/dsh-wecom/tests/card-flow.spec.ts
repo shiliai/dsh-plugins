@@ -23,6 +23,11 @@ function emptyCtx() {
   return { get: () => undefined }
 }
 
+/** Wait for the deferred (setTimeout 0) provider registration to run. */
+function flushRegistration(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, 0))
+}
+
 function cardEvent(taskId: string, eventKey: string): InboundCardEvent {
   return {
     chatId: 'u1',
@@ -40,6 +45,70 @@ const QUESTION = { id: 'q1', question: '请问需要哪种部署方式？', opti
 describe('question card flow: template_card_event → session injection', () => {
   beforeEach(() => vi.clearAllMocks())
   afterEach(() => vi.clearAllMocks())
+
+  it('constructs a bridge without a `userQuestions` service (safe optional lookup, no inject error)', async () => {
+    // Regression: cordis blocks direct `ctx.userQuestions` property access when
+    // `userQuestions` is not in the plugin `inject` array. The bridge must use a
+    // safe optional `ctx.get` lookup and not throw when the service is absent.
+    const bot = cardBot()
+    const bridge = new WecomAgentBridge(emptyCtx() as never, bot as never, { botId: 'b', botSecret: 's' })
+    try {
+      expect(bridge).toBeDefined()
+    } finally {
+      await bridge.dispose()
+    }
+  })
+
+  it('registers as the provider when no browser host is present (standalone)', async () => {
+    const provider = {
+      registerProvider: vi.fn((p: unknown) => {
+        expect(p).toMatchObject({ ask: expect.any(Function) })
+        return vi.fn()
+      }),
+    }
+    const bot = cardBot()
+    const bridge = new WecomAgentBridge({ get: (name: string) => (name === 'userQuestions' ? provider : undefined) } as never, bot as never, { botId: 'b', botSecret: 's', questionHostWaitMs: 0 })
+    try {
+      await bridge.registerUserQuestionsProvider()
+      expect(provider.registerProvider).toHaveBeenCalledTimes(1)
+      await bridge.dispose()
+    } finally {
+      await bridge.dispose()
+    }
+  })
+
+  it('defers to the DSH browser (no registration) when an api-proxy host is present', async () => {
+    const provider = {
+      registerProvider: vi.fn(() => { throw Object.assign(new Error('a user-questions provider is already registered'), { code: 'DUPLICATE_PROVIDER' }) }),
+    }
+    const bot = cardBot()
+    const bridge = new WecomAgentBridge({ get: (name: string) => (name === 'apiProxy' ? { live: true } : name === 'userQuestions' ? provider : undefined) } as never, bot as never, { botId: 'b', botSecret: 's', questionHostWaitMs: 0 })
+    try {
+      await bridge.registerUserQuestionsProvider()
+      expect(bridge).toBeDefined()
+      expect(provider.registerProvider).not.toHaveBeenCalled()
+    } finally {
+      await bridge.dispose()
+    }
+  })
+
+  it('still registers and survives when another UI raced us (DUPLICATE_PROVIDER caught)', async () => {
+    // `userQuestions` allows a single provider. Even if the host registered
+    // before our deferred attempt, `registerProvider` throws DUPLICATE_PROVIDER
+    // and the bridge must catch it and continue instead of failing startup.
+    const provider = {
+      registerProvider: vi.fn(() => { throw Object.assign(new Error('a user-questions provider is already registered'), { code: 'DUPLICATE_PROVIDER' }) }),
+    }
+    const bot = cardBot()
+    const bridge = new WecomAgentBridge({ get: (name: string) => (name === 'userQuestions' ? provider : undefined) } as never, bot as never, { botId: 'b', botSecret: 's', questionHostWaitMs: 0 })
+    try {
+      await bridge.registerUserQuestionsProvider()
+      expect(bridge).toBeDefined()
+      expect(provider.registerProvider).toHaveBeenCalledTimes(1)
+    } finally {
+      await bridge.dispose()
+    }
+  })
 
   it('renders a multiple_interaction card and feeds the tapped choice back into the session', async () => {
     const bot = cardBot()
