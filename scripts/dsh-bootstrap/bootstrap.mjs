@@ -575,26 +575,40 @@ function referencedApiKeys(settingsPath) {
 }
 
 function parseCredentialsYaml(path) {
-  // Minimal YAML reader for the flat `refs:` map DSH uses. Enough for our own file.
+  // Minimal reader for the flat rc.8 document plus our pre-rc.8 wrapped format.
   const out = {}
   if (!existsSync(path)) return out
   const lines = readFileSync(path, 'utf8').split('\n')
-  let inRefs = false
+  let inLegacyRefs = false
   for (const line of lines) {
-    if (/^refs:\s*$/.test(line)) { inRefs = true; continue }
-    if (inRefs && /^\S/.test(line)) inRefs = false
-    if (inRefs) {
+    if (/^refs:\s*$/.test(line)) { inLegacyRefs = true; continue }
+    if (inLegacyRefs && /^\S/.test(line)) inLegacyRefs = false
+    if (inLegacyRefs) {
       const m = /^\s+([A-Za-z0-9_]+):\s*(.*)$/.exec(line)
-      if (m) out[m[1]] = m[2].replace(/^['"]|['"]$/g, '')
+      if (m) out[m[1]] = parseCredentialScalar(m[2])
+      continue
     }
+    const m = /^([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$/.exec(line)
+    if (m && m[1] !== 'version') out[m[1]] = parseCredentialScalar(m[2])
   }
   return out
 }
 
+function parseCredentialScalar(raw) {
+  const value = raw.trim()
+  if (value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1).replace(/''/g, "'")
+  }
+  if (value.startsWith('"') && value.endsWith('"')) {
+    try { return JSON.parse(value) } catch { /* preserve malformed legacy input verbatim */ }
+  }
+  return value
+}
+
 function serializeCredentialsYaml(refs) {
-  const lines = ['version: 1', 'refs:']
+  const lines = []
   for (const [k, v] of Object.entries(refs)) {
-    lines.push(`  ${k}: '${String(v).replace(/'/g, "''")}'`)
+    lines.push(`${k}: '${String(v).replace(/'/g, "''")}'`)
   }
   return lines.join('\n') + '\n'
 }

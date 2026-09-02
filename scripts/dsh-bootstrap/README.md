@@ -38,7 +38,9 @@ It is safe to run repeatedly — every step detects what is already done and ski
    `maxTokens`, and `reasoningEfforts` (thinking effort).
 3. **credentials** — detects every `apiKeyEnv:` referenced by `settings.yaml`, prompts once
    per machine for the key (or reads it from an environment variable / `env:VAR`), and writes
-   `$DSH_HOME/.credentials.yaml` with mode `600`. This file is **never committed**.
+   the rc.8 flat credential mapping at `$DSH_HOME/.credentials.yaml` with mode `600`. Legacy
+   bootstrap files using a `version`/`refs` wrapper are read and migrated on the next write.
+   This file is **never committed**.
 4. **plugins** — shows required plugins (auto-installed, e.g. `dsh-better-sidebar`) and lets
    you pick optional ones (Obsidian, remote, WeCom, file-attachment) with an interactive
    **checkbox** (↑/↓ to move, Space to toggle, Enter to confirm; plain number input works
