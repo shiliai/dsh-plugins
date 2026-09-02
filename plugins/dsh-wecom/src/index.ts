@@ -118,6 +118,13 @@ export interface Config {
    * `AuthWatchdogConfig` and the README "授权监控" section.
    */
   authWatchdog?: AuthWatchdogConfig
+  /**
+   * How long (ms) to wait for a browser host (api-proxy) to surface before
+   * declaring this a standalone WeCom deployment and registering ourselves as
+   * the `userQuestions` provider. Used to defer to the DSH browser when this
+   * plugin shares a process with it. Defaults to 15000.
+   */
+  questionHostWaitMs?: number
 }
 
 /** Keep runtime-loaded configuration compatible with the former apply() default. */
@@ -280,7 +287,6 @@ export class WecomAgentBridge {
       void this.evictIdle()
     }, interval)
     this.idleSweep.unref?.()
-    this.registerUserQuestionsProvider()
   }
 
   /**
@@ -289,14 +295,41 @@ export class WecomAgentBridge {
    * user's tap is fed back into the same session as the tool result. A provider
    * may already be registered by another UI (e.g. the DSH browser); in that case
    * we defer and questions fall back to plain text via the agent's own reply.
+   *
+   * The host api-proxy plugin (which provides the DSH browser's provider) is
+   * applied by the loader LATER than this plugin's `bot.start` completes, so we
+   * cannot simply register at connection time: that would steal the single
+   * `userQuestions` slot and make the host's `registerProvider` throw
+   * DUPLICATE_PROVIDER during bootstrap, failing the whole plugin tree. Instead
+   * we WAIT (up to a window) for the browser host's `apiProxy` service to appear
+   * and, when it does, defer to it (plain-text fallback). If no browser host is
+   * present within the window — a standalone WeCom deployment — we win the slot
+   * and render interactive cards. This mirrors the documented design: "if another
+   * UI (e.g. the DSH browser) has already registered ... the WeCom bot defers and
+   * questions fall back to the agent's own plain-text reply."
    */
-  private registerUserQuestionsProvider(): void {
-    const service = (this.ctx as unknown as { userQuestions?: UserQuestionServiceLike }).userQuestions
+  async registerUserQuestionsProvider(): Promise<void> {
+    const service = this.ctx.get('userQuestions') as UserQuestionServiceLike | undefined
     if (!service) return
+    const hostAvailable = await this.waitForHost()
+    if (hostAvailable) {
+      this.log.warn('questions: the DSH browser owns the user-questions provider; WeCom questions fall back to plain text')
+      return
+    }
     try {
       this.disposeUserQuestions = service.registerProvider({ ask: request => this.askUserQuestion(request) })
     } catch (error) {
       this.log.warn('questions: a user-questions provider is already registered; WeCom questions fall back to plain text', { error: safeErrorKind(error) })
+    }
+  }
+
+  /** True when the DSH browser host (api-proxy) has surfaced within the wait window. */
+  private async waitForHost(): Promise<boolean> {
+    const deadline = Date.now() + (this.config.questionHostWaitMs ?? 15_000)
+    for (;;) {
+      if (this.ctx.get('apiProxy') !== undefined) return true
+      if (Date.now() >= deadline) return false
+      await new Promise(resolve => setTimeout(resolve, 250))
     }
   }
 

@@ -118,6 +118,12 @@ export class WecomLifecycleController {
         if (!this.isInboundAuthorized(message)) return
         await bridge.enqueue(message)
       })
+      // The WeCom long connection is now up. Defer to the browser host if
+      // present (see registerUserQuestionsProvider): wait for the api-proxy host
+      // to surface, and only register our own provider when no browser owns the
+      // single `userQuestions` slot. This avoids racing the host at bootstrap,
+      // which would crash the whole plugin tree with DUPLICATE_PROVIDER.
+      if (typeof bridge.registerUserQuestionsProvider === 'function') await bridge.registerUserQuestionsProvider()
       // Route user taps on rendered question cards back into the same session.
       bot.onCardEvent?.(async event => {
         if (!this.isInboundAuthorized({ chatId: event.chatId, chatType: event.chatType, text: '', frame: event.frame, msgId: event.msgId, senderId: event.senderId })) return
@@ -129,7 +135,9 @@ export class WecomLifecycleController {
         }
       })
       if (this.terminalDispose) await this.teardownCurrent()
-    } catch {
+    } catch (startupError) {
+      // eslint-disable-next-line no-console
+      console.error(`[dsh-wecom] startup failed: ${startupError && (startupError as Error).stack ? (startupError as Error).stack : String(startupError)}`)
       await this.teardownCurrent()
       this.update('error', { error: DIAGNOSTIC.startup })
     }

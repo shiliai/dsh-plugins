@@ -353,6 +353,25 @@ Fallbacks, per the issue acceptance criteria:
 - The existing plain-text/stream reply path is unchanged for every non-question
   turn.
 
+### Coexistence with the DSH browser
+
+`ctx.userQuestions` allows a single active provider, and the DSH web profile's
+host api-proxy plugin registers the browser's provider when this plugin shares a
+process with the web UI. To avoid racing the host during bootstrap (which would
+crash the whole plugin tree with a `DUPLICATE_PROVIDER` error), the bridge waits
+up to `questionHostWaitMs` (default **15000 ms**) after the WeCom connection is
+established for the browser host (`apiProxy` service) to surface:
+
+- if a browser host appears, WeCom defers to it and questions fall back to plain
+  text (the documented behavior above);
+- if none appears within the window — a standalone WeCom deployment — the bridge
+  registers itself as the provider so interactive cards render.
+
+The registration uses `ctx.get('userQuestions')` (never listed in the plugin's
+`inject` array) so the optional seam is safe on hosts without it, and a late
+`DUPLICATE_PROVIDER` from `registerProvider` is caught and treated as the same
+plain-text fallback rather than failing startup.
+
 ## Verification
 
 ```sh
@@ -361,7 +380,7 @@ pnpm --filter @dsh-plugins/dsh-wecom pack:check
 pnpm --filter @dsh-plugins/dsh-wecom release:check
 ```
 
-The validation target for this feature release is `@dsh-plugins/dsh-wecom@0.3.2`.
+The validation target for this feature release is `@dsh-plugins/dsh-wecom@0.3.3`.
 
 The test suite uses fakes for DSH and the WeCom SDK. It does not perform a live
 WeCom credential, network, or production-profile end-to-end test.
