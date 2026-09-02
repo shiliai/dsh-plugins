@@ -38,7 +38,11 @@ It is safe to run repeatedly — every step detects what is already done and ski
    `maxTokens`, and `reasoningEfforts` (thinking effort).
 3. **credentials** — detects every `apiKeyEnv:` referenced by `settings.yaml`, prompts once
    per machine for the key (or reads it from an environment variable / `env:VAR`), and writes
-   `$DSH_HOME/.credentials.yaml` with mode `600`. This file is **never committed**.
+   the rc.8 flat credential mapping at `$DSH_HOME/.credentials.yaml` with mode `600`. Legacy
+   bootstrap files using a `version`/`refs` wrapper are migrated immediately, with a protected
+   `.legacy-<timestamp>.bak` rollback copy. Writes use rc.8-compatible YAML parsing, its shared
+   writer-lock convention, and atomic mode-`600` replacement.
+   This file is **never committed**.
 4. **plugins** — shows required plugins (auto-installed, e.g. `dsh-better-sidebar`) and lets
    you pick optional ones (Obsidian, remote, WeCom, file-attachment) with an interactive
    **checkbox** (↑/↓ to move, Space to toggle, Enter to confirm; plain number input works
@@ -46,8 +50,13 @@ It is safe to run repeatedly — every step detects what is already done and ski
    A plugin whose install fails (e.g. its path is not yet in the repo) is **skipped with a
    warning for optional plugins**; a required plugin failure still aborts so you know the
    base setup is incomplete.
-5. **update** (`sync` offers it; `update` runs it directly) — updates DSH itself, the
-   repo-sourced plugins (via the repository updater) and npm-sourced plugins.
+5. **update** (`sync` offers it; `update` runs it directly) — resolves and updates DSH
+   first, verifies the requested version plus `web --dump-config`, and only then updates
+   repo-sourced plugins (via the repository updater) and npm-sourced plugins. Managed
+   `~/.local/share/dsh-cli/current` installs are never overwritten with global npm; when
+   they are behind, bootstrap stops before touching plugins and asks you to use the managed
+   installer. It also refuses mixed npm/pnpm profiles or profile-local DSH core packages,
+   which can otherwise create incompatible private scope instances at runtime.
 
 ## Commands / options
 
@@ -128,6 +137,9 @@ keeps the portable **symlink** so model config syncs on `git pull`.
 
 - `DSH_HOME` defaults to `~/.dsh` on every platform via `homedir()`; override with the
   `DSH_HOME` environment variable.
+- The launcher refreshes its sparse cache on every run and installs the bootstrap's small
+  runtime dependency set before starting it. From a full repository clone, run `pnpm install`
+  once before invoking `node scripts/dsh-bootstrap/bootstrap.mjs` directly.
 - Windows: the script is platform-agnostic and the PS launcher is provided, but DSH's own
   platform support is designed-for, not fully verified — review each step on Windows.
 - Node `>=22` is required (matches DSH's engines).

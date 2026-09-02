@@ -29,12 +29,15 @@
  *   node bootstrap.mjs --help
  */
 import { execFileSync, execSync } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { stdin as input, stdout as output } from 'node:process'
 import { createInterface } from 'node:readline/promises'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, lstatSync, realpathSync, chmodSync, copyFileSync, rmSync } from 'node:fs'
+import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, dirname, isAbsolute, resolve, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { Document, parseDocument } from 'yaml'
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
 const DSH_HOME_ENV = 'DSH_HOME'
@@ -129,6 +132,39 @@ function dshVersion() {
   } catch {
     return null
   }
+}
+
+function validateDshRuntime(expectedVersion) {
+  const actual = dshVersion()
+  if (!actual) throw new Error('DSH validation failed: dsh --version did not return a version')
+  if (expectedVersion && actual !== expectedVersion) {
+    throw new Error(`DSH validation failed: expected ${expectedVersion}, observed ${actual}`)
+  }
+  try {
+    execFileSync('dsh', ['web', '--dump-config'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: process.env,
+    })
+  } catch (err) {
+    const detail = (err.stderr ?? '').toString().trim() || (err.message ?? '')
+    throw new Error(`DSH validation failed: dsh web --dump-config\n${detail}`)
+  }
+  return actual
+}
+
+function managedDshRuntime() {
+  const root = process.env.DSH_INSTALL_ROOT || join(homedir(), '.local', 'share', 'dsh-cli')
+  return existsSync(join(root, 'current')) ? root : null
+}
+
+function requestedDshVersion(cfg) {
+  const cmd = cfg.dshTargetVersionCommand ?? `npm view "${cfg.dshPackage}" version`
+  const version = sh(cmd)
+  if (!version || /\s/.test(version)) {
+    throw new Error(`could not resolve one DSH target version from: ${cmd}`)
+  }
+  return version
 }
 
 const TTY = !!(process.stdin.isTTY && process.stdout.isTTY)
@@ -574,29 +610,90 @@ function referencedApiKeys(settingsPath) {
   return [...keys]
 }
 
-function parseCredentialsYaml(path) {
-  // Minimal YAML reader for the flat `refs:` map DSH uses. Enough for our own file.
-  const out = {}
-  if (!existsSync(path)) return out
-  const lines = readFileSync(path, 'utf8').split('\n')
-  let inRefs = false
-  for (const line of lines) {
-    if (/^refs:\s*$/.test(line)) { inRefs = true; continue }
-    if (inRefs && /^\S/.test(line)) inRefs = false
-    if (inRefs) {
-      const m = /^\s+([A-Za-z0-9_]+):\s*(.*)$/.exec(line)
-      if (m) out[m[1]] = m[2].replace(/^['"]|['"]$/g, '')
-    }
-  }
-  return out
+function describeYamlError(error) {
+  const at = error.linePos?.[0]
+  return `${error.code ?? 'YAML_ERROR'}${at ? ` at line ${at.line}, column ${at.col}` : ''}`
 }
 
-function serializeCredentialsYaml(refs) {
-  const lines = ['version: 1', 'refs:']
-  for (const [k, v] of Object.entries(refs)) {
-    lines.push(`  ${k}: '${String(v).replace(/'/g, "''")}'`)
+function readCredentialsDocument(path) {
+  if (!existsSync(path)) return { document: new Document(new Map()), entries: new Map(), legacy: false, raw: undefined }
+  if (lstatSync(path).isSymbolicLink()) {
+    throw new Error(`refusing to replace symlinked credentials document at ${path}`)
   }
-  return lines.join('\n') + '\n'
+  const raw = readFileSync(path, 'utf8')
+  const document = parseDocument(raw, { prettyErrors: true, uniqueKeys: true })
+  if (document.errors.length) {
+    throw new Error(`invalid credentials document at ${path}: ${document.errors.map(describeYamlError).join('; ')}`)
+  }
+  const root = document.toJS({ mapAsMap: true }) ?? new Map()
+  if (!(root instanceof Map)) throw new Error(`credentials document at ${path} must be a mapping`)
+
+  const legacy = root.size === 2 && root.get('version') === 1 && root.get('refs') instanceof Map
+  const entries = legacy ? root.get('refs') : root
+  for (const [key, value] of entries) {
+    if (typeof key !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error(`credentials document at ${path} contains an invalid credential reference`)
+    }
+    if (typeof value !== 'string' || value.length === 0) {
+      throw new Error(`credentials document at ${path} contains a non-string or empty credential value`)
+    }
+  }
+  return { document, entries, legacy, raw }
+}
+
+const delay = (ms) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms))
+
+async function withCredentialsLock(path, operation) {
+  const lockPath = `${path}.lock`
+  const deadline = Date.now() + 2000
+  let retryMs = 20
+  for (;;) {
+    try {
+      await writeFile(lockPath, `${process.pid}\n`, { mode: 0o600, flag: 'wx' })
+      break
+    } catch (error) {
+      const contention = error?.code === 'EEXIST' ||
+        (error?.code === 'EPERM' && await lstat(lockPath).then(() => true, () => false))
+      if (!contention) throw error
+      if (Date.now() >= deadline) throw new Error(`timed out waiting for the credentials writer lock at ${lockPath}`)
+      await delay(retryMs)
+      retryMs = Math.min(retryMs * 2, 200)
+    }
+  }
+  try {
+    return await operation()
+  } finally {
+    await rm(lockPath, { force: true })
+  }
+}
+
+async function writeCredentialsAtomic(path, content) {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+  const temp = `${path}.${randomBytes(6).toString('hex')}.tmp`
+  try {
+    await writeFile(temp, content, { mode: 0o600, flag: 'wx' })
+    await rename(temp, path)
+  } catch (error) {
+    await rm(temp, { force: true })
+    throw error
+  }
+}
+
+async function persistCredentials(path, changes) {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+  return withCredentialsLock(path, async () => {
+    const current = readCredentialsDocument(path)
+    let backup = null
+    let document = current.document
+    if (current.legacy) {
+      backup = `${path}.legacy-${Date.now()}.bak`
+      await writeCredentialsAtomic(backup, current.raw)
+      document = new Document(new Map(current.entries))
+    }
+    for (const [key, value] of changes) document.set(key, value)
+    await writeCredentialsAtomic(path, document.toString())
+    return backup
+  })
 }
 
 async function ensureCredentials(opts) {
@@ -607,30 +704,33 @@ async function ensureCredentials(opts) {
     return
   }
   const credPath = join(opts.dshHome, CREDENTIALS_FILENAME)
-  const refs = parseCredentialsYaml(credPath)
-  const missing = keys.filter((k) => !refs[k])
+  const current = readCredentialsDocument(credPath)
+  const missing = keys.filter((k) => !current.entries.has(k))
+  const targets = opts.rekey ? keys : missing
 
-  if (!missing.length && !opts.rekey) {
+  if (!targets.length && !current.legacy) {
+    if (existsSync(credPath)) {
+      try { chmodSync(credPath, 0o600) } catch { /* best-effort on Windows */ }
+    }
     log('credentials', `already present for: ${keys.join(', ')}`)
     return
   }
-  log('credentials', `api keys needed per settings.yaml: ${missing.length ? keys.join(', ') : ''}`)
+  log('credentials', current.legacy ? 'legacy credentials format detected; migrating to rc.8' :
+    `api keys needed per settings.yaml: ${targets.length ? keys.join(', ') : ''}`)
 
-  const touch = []
+  const changes = new Map()
   if (opts.command === 'check') {
-    log('credentials', `would prompt for/keep: ${missing.join(', ') || '(none)'} -> ${credPath}`)
-    return
-  }
-  if (!missing.length) {
-    log('credentials', 'all keys present')
+    log('credentials', `would migrate/prompt for: ${targets.join(', ') || '(migration only)'} -> ${credPath}`)
     return
   }
 
-  console.log('\n  Enter API keys for each provider. You can:')
-  console.log('    - paste the key directly, or')
-  console.log('    - type "env:VAR_NAME" to pull the value from an environment variable, or')
-  console.log('    - leave blank to skip this key (already-stored keys are kept).')
-  for (const k of missing) {
+  if (targets.length) {
+    console.log('\n  Enter API keys for each provider. You can:')
+    console.log('    - paste the key directly, or')
+    console.log('    - type "env:VAR_NAME" to pull the value from an environment variable, or')
+    console.log('    - leave blank to skip this key (already-stored keys are kept).')
+  }
+  for (const k of targets) {
     let val = null
     if (opts.yes) {
       warn(`skipping ${k} in --yes mode (no stored value)`)
@@ -638,30 +738,27 @@ async function ensureCredentials(opts) {
     }
     if (process.env[k]) {
       const use = await askYesNo(`Use $${k} from environment for '${k}'?`, true)
-      if (use) { val = process.env[k]; touch.push(k) }
-      else { const v = await questionHidden(`  Enter value for '${k}' (blank to skip): `); if (v) { val = v; touch.push(k) } }
+      if (use) val = process.env[k]
+      else { const v = await questionHidden(`  Enter value for '${k}' (blank to skip): `); if (v) val = v }
     } else {
       const v = await questionHidden(`  Enter value for '${k}' (blank to skip): `)
       if (v.startsWith('env:')) {
         const envName = v.slice(4).trim()
-        if (process.env[envName]) { val = process.env[envName]; touch.push(k) }
+        if (process.env[envName]) val = process.env[envName]
         else warn(`env var ${envName} not set; skipping ${k}`)
-      } else if (v) {
-        val = v
-        touch.push(k)
-      }
+      } else if (v) val = v
     }
-    if (val !== null) refs[k] = val
+    if (val !== null) changes.set(k, val)
   }
 
-  if (!touch.length) {
+  if (!changes.size && !current.legacy) {
     warn('nothing new to write; leaving credentials untouched')
     return
   }
-  writeFileSync(credPath, serializeCredentialsYaml(refs))
-  try { chmodSync(credPath, 0o600) } catch { /* best-effort on Windows */ }
+  const backup = await persistCredentials(credPath, changes)
   console.log(`  wrote ${credPath} (permissions 600)` +
     '\n  ⚠ Do NOT commit this file — it holds secrets and is machine-local by design.')
+  if (backup) log('credentials', `legacy backup: ${backup} (permissions 600)`)
 }
 
 // ---------------------------------------------------------------------------
@@ -683,6 +780,36 @@ function installedPackageNames(opts) {
   }
 }
 
+const PROFILE_CORE_PACKAGES = [
+  'dsh-scope',
+  'dsh-agent-presets',
+  'dsh-host-apiproxy',
+  'dsh-agent-loop',
+]
+
+function profileHazards(opts) {
+  const dir = profileDir(opts)
+  const hazards = []
+  const npmLock = existsSync(join(dir, 'package-lock.json'))
+  const pnpmLock = existsSync(join(dir, 'pnpm-lock.yaml'))
+  if (npmLock && pnpmLock) hazards.push('both package-lock.json and pnpm-lock.yaml are present')
+  const localCore = PROFILE_CORE_PACKAGES.filter((name) =>
+    existsSync(join(dir, 'node_modules', '@deepseek-ai', name)))
+  if (localCore.length) hazards.push(`profile-local DSH core packages are present: ${localCore.join(', ')}`)
+  return hazards
+}
+
+function assertProfileSafe(opts) {
+  const hazards = profileHazards(opts)
+  if (!hazards.length) return
+  const dir = profileDir(opts)
+  throw new Error(
+    `unsafe mixed npm/pnpm profile at ${dir}: ${hazards.join('; ')}. ` +
+    'Back up the profile, move package-lock.json and node_modules out of the profile, ' +
+    'then rebuild it through dsh plugin before rerunning bootstrap. No plugin changes were made.',
+  )
+}
+
 function readAllowBuilds(opts) {
   // Read the profile's build-trust map (pnpm-workspace.yaml) so we merge, not clobber.
   const p = join(profileDir(opts), 'pnpm-workspace.yaml')
@@ -702,8 +829,15 @@ function readAllowBuilds(opts) {
 
 function runDshPlugin(opts, args, { allowFail = false } = {}) {
   const cmd = `dsh plugin --profile "${opts.profile}" ${args.join(' ')}`
+  const env = { ...process.env }
+  if (process.platform === 'linux' && process.arch === 'arm64') {
+    env.NODE_OPTIONS = [env.NODE_OPTIONS, '--no-node-snapshot'].filter(Boolean).join(' ')
+    env.UV_THREADPOOL_SIZE = env.UV_THREADPOOL_SIZE || '1'
+    env.NPM_CONFIG_CHILD_CONCURRENCY = env.NPM_CONFIG_CHILD_CONCURRENCY || '1'
+    env.NPM_CONFIG_NETWORK_CONCURRENCY = env.NPM_CONFIG_NETWORK_CONCURRENCY || '1'
+  }
   try {
-    return execSync(cmd, { cwd: profileDir(opts), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+    return execSync(cmd, { cwd: profileDir(opts), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env }).trim()
   } catch (err) {
     if (allowFail) return ''
     const detail = (err.stderr ?? '').toString().trim() || (err.message ?? '')
@@ -738,6 +872,7 @@ function ensureBuildTrust(opts) {
 }
 
 async function ensurePlugins(opts) {
+  assertProfileSafe(opts)
   const cfg = opts.configObj
   const installed = installedPackageNames(opts)
 
@@ -799,6 +934,33 @@ async function ensurePlugins(opts) {
 
 async function updateAll(opts) {
   const cfg = opts.configObj
+
+  // Upgrade and validate the CLI before allowing any profile mutation. A plugin
+  // resolved against a newer core can otherwise leave Web with duplicate private
+  // scope symbols and sessions that cannot bind to their selected workspace.
+  const dshCur = dshVersion()
+  if (!dshCur) throw new Error('DSH is not installed; run sync before update')
+  const dshTarget = requestedDshVersion(cfg)
+  if (dshCur !== dshTarget) {
+    const doUpdate = await askYesNo(`Update DSH CLI first (${dshCur} -> ${dshTarget})?`, true)
+    if (!doUpdate) throw new Error('DSH update declined; plugin updates were not started')
+    const managedRoot = managedDshRuntime()
+    if (managedRoot) {
+      throw new Error(
+        `managed DSH runtime detected at ${managedRoot} (${dshCur}, target ${dshTarget}); ` +
+        'refusing to overwrite it with a global npm install. Upgrade it with the managed DSH installer, ' +
+        'then rerun bootstrap. Plugin updates were not started.',
+      )
+    }
+    console.log(`  running: ${cfg.dshInstallCommand}`)
+    execSync(cfg.dshInstallCommand, { stdio: 'inherit', env: process.env })
+  } else {
+    log('update', `DSH already meets target ${dshTarget}`)
+  }
+  validateDshRuntime(dshTarget)
+  log('update', `DSH ${dshTarget} passed web config validation`)
+
+  assertProfileSafe(opts)
   const installed = installedPackageNames(opts)
 
   // Repo-sourced plugins: use the repository updater (resolves GitHub revisions).
@@ -826,15 +988,6 @@ async function updateAll(opts) {
     }
   }
 
-  // DSH itself.
-  const dshCur = dshVersion()
-  if (dshCur) {
-    const doUpdate = await askYesNo(`Update DSH CLI itself (current ${dshCur})?`, false)
-    if (doUpdate) {
-      console.log(`  running: ${cfg.dshInstallCommand}`)
-      execSync(cfg.dshInstallCommand, { stdio: 'inherit' })
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
