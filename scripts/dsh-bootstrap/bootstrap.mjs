@@ -134,6 +134,39 @@ function dshVersion() {
   }
 }
 
+function validateDshRuntime(expectedVersion) {
+  const actual = dshVersion()
+  if (!actual) throw new Error('DSH validation failed: dsh --version did not return a version')
+  if (expectedVersion && actual !== expectedVersion) {
+    throw new Error(`DSH validation failed: expected ${expectedVersion}, observed ${actual}`)
+  }
+  try {
+    execFileSync('dsh', ['web', '--dump-config'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: process.env,
+    })
+  } catch (err) {
+    const detail = (err.stderr ?? '').toString().trim() || (err.message ?? '')
+    throw new Error(`DSH validation failed: dsh web --dump-config\n${detail}`)
+  }
+  return actual
+}
+
+function managedDshRuntime() {
+  const root = process.env.DSH_INSTALL_ROOT || join(homedir(), '.local', 'share', 'dsh-cli')
+  return existsSync(join(root, 'current')) ? root : null
+}
+
+function requestedDshVersion(cfg) {
+  const cmd = cfg.dshTargetVersionCommand ?? `npm view "${cfg.dshPackage}" version`
+  const version = sh(cmd)
+  if (!version || /\s/.test(version)) {
+    throw new Error(`could not resolve one DSH target version from: ${cmd}`)
+  }
+  return version
+}
+
 const TTY = !!(process.stdin.isTTY && process.stdout.isTTY)
 const rl = TTY ? createInterface({ input, output, terminal: true }) : null
 // In non-TTY mode (piped/redirected stdin) readline/promises only answers the
@@ -747,6 +780,36 @@ function installedPackageNames(opts) {
   }
 }
 
+const PROFILE_CORE_PACKAGES = [
+  'dsh-scope',
+  'dsh-agent-presets',
+  'dsh-host-apiproxy',
+  'dsh-agent-loop',
+]
+
+function profileHazards(opts) {
+  const dir = profileDir(opts)
+  const hazards = []
+  const npmLock = existsSync(join(dir, 'package-lock.json'))
+  const pnpmLock = existsSync(join(dir, 'pnpm-lock.yaml'))
+  if (npmLock && pnpmLock) hazards.push('both package-lock.json and pnpm-lock.yaml are present')
+  const localCore = PROFILE_CORE_PACKAGES.filter((name) =>
+    existsSync(join(dir, 'node_modules', '@deepseek-ai', name)))
+  if (localCore.length) hazards.push(`profile-local DSH core packages are present: ${localCore.join(', ')}`)
+  return hazards
+}
+
+function assertProfileSafe(opts) {
+  const hazards = profileHazards(opts)
+  if (!hazards.length) return
+  const dir = profileDir(opts)
+  throw new Error(
+    `unsafe mixed npm/pnpm profile at ${dir}: ${hazards.join('; ')}. ` +
+    'Back up the profile, move package-lock.json and node_modules out of the profile, ' +
+    'then rebuild it through dsh plugin before rerunning bootstrap. No plugin changes were made.',
+  )
+}
+
 function readAllowBuilds(opts) {
   // Read the profile's build-trust map (pnpm-workspace.yaml) so we merge, not clobber.
   const p = join(profileDir(opts), 'pnpm-workspace.yaml')
@@ -766,8 +829,15 @@ function readAllowBuilds(opts) {
 
 function runDshPlugin(opts, args, { allowFail = false } = {}) {
   const cmd = `dsh plugin --profile "${opts.profile}" ${args.join(' ')}`
+  const env = { ...process.env }
+  if (process.platform === 'linux' && process.arch === 'arm64') {
+    env.NODE_OPTIONS = [env.NODE_OPTIONS, '--no-node-snapshot'].filter(Boolean).join(' ')
+    env.UV_THREADPOOL_SIZE = env.UV_THREADPOOL_SIZE || '1'
+    env.NPM_CONFIG_CHILD_CONCURRENCY = env.NPM_CONFIG_CHILD_CONCURRENCY || '1'
+    env.NPM_CONFIG_NETWORK_CONCURRENCY = env.NPM_CONFIG_NETWORK_CONCURRENCY || '1'
+  }
   try {
-    return execSync(cmd, { cwd: profileDir(opts), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+    return execSync(cmd, { cwd: profileDir(opts), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env }).trim()
   } catch (err) {
     if (allowFail) return ''
     const detail = (err.stderr ?? '').toString().trim() || (err.message ?? '')
@@ -802,6 +872,7 @@ function ensureBuildTrust(opts) {
 }
 
 async function ensurePlugins(opts) {
+  assertProfileSafe(opts)
   const cfg = opts.configObj
   const installed = installedPackageNames(opts)
 
@@ -863,6 +934,33 @@ async function ensurePlugins(opts) {
 
 async function updateAll(opts) {
   const cfg = opts.configObj
+
+  // Upgrade and validate the CLI before allowing any profile mutation. A plugin
+  // resolved against a newer core can otherwise leave Web with duplicate private
+  // scope symbols and sessions that cannot bind to their selected workspace.
+  const dshCur = dshVersion()
+  if (!dshCur) throw new Error('DSH is not installed; run sync before update')
+  const dshTarget = requestedDshVersion(cfg)
+  if (dshCur !== dshTarget) {
+    const doUpdate = await askYesNo(`Update DSH CLI first (${dshCur} -> ${dshTarget})?`, true)
+    if (!doUpdate) throw new Error('DSH update declined; plugin updates were not started')
+    const managedRoot = managedDshRuntime()
+    if (managedRoot) {
+      throw new Error(
+        `managed DSH runtime detected at ${managedRoot} (${dshCur}, target ${dshTarget}); ` +
+        'refusing to overwrite it with a global npm install. Upgrade it with the managed DSH installer, ' +
+        'then rerun bootstrap. Plugin updates were not started.',
+      )
+    }
+    console.log(`  running: ${cfg.dshInstallCommand}`)
+    execSync(cfg.dshInstallCommand, { stdio: 'inherit', env: process.env })
+  } else {
+    log('update', `DSH already meets target ${dshTarget}`)
+  }
+  validateDshRuntime(dshTarget)
+  log('update', `DSH ${dshTarget} passed web config validation`)
+
+  assertProfileSafe(opts)
   const installed = installedPackageNames(opts)
 
   // Repo-sourced plugins: use the repository updater (resolves GitHub revisions).
@@ -890,15 +988,6 @@ async function updateAll(opts) {
     }
   }
 
-  // DSH itself.
-  const dshCur = dshVersion()
-  if (dshCur) {
-    const doUpdate = await askYesNo(`Update DSH CLI itself (current ${dshCur})?`, false)
-    if (doUpdate) {
-      console.log(`  running: ${cfg.dshInstallCommand}`)
-      execSync(cfg.dshInstallCommand, { stdio: 'inherit' })
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------

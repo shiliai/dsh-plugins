@@ -50,8 +50,13 @@ It is safe to run repeatedly — every step detects what is already done and ski
    A plugin whose install fails (e.g. its path is not yet in the repo) is **skipped with a
    warning for optional plugins**; a required plugin failure still aborts so you know the
    base setup is incomplete.
-5. **update** (`sync` offers it; `update` runs it directly) — updates DSH itself, the
-   repo-sourced plugins (via the repository updater) and npm-sourced plugins.
+5. **update** (`sync` offers it; `update` runs it directly) — resolves and updates DSH
+   first, verifies the requested version plus `web --dump-config`, and only then updates
+   repo-sourced plugins (via the repository updater) and npm-sourced plugins. Managed
+   `~/.local/share/dsh-cli/current` installs are never overwritten with global npm; when
+   they are behind, bootstrap stops before touching plugins and asks you to use the managed
+   installer. It also refuses mixed npm/pnpm profiles or profile-local DSH core packages,
+   which can otherwise create incompatible private scope instances at runtime.
 
 ## Commands / options
 
