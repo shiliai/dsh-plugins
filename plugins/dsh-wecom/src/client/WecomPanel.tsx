@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { RefreshCw, RotateCcw, X } from 'lucide-react'
+import { Download, RefreshCw, RotateCcw, X } from 'lucide-react'
 import type { WecomStatus } from '../lifecycle.ts'
+import type { CliUpdateStatus } from '../cli-update.ts'
 import { wecomApi } from './api.ts'
 import css from './styles.module.css?dsh-inline'
 
@@ -13,6 +14,9 @@ export function WecomPanel({ close }: { close(): void }) {
   const [error, setError] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
   const [restarting, setRestarting] = useState(false)
+  const [update, setUpdate] = useState<CliUpdateStatus | null>(null)
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
+  const [updating, setUpdating] = useState(false)
   const refresh = async (): Promise<void> => {
     try { setStatus(await wecomApi.status()); setError(null) } catch { setError('WeCom status is unavailable.') }
   }
@@ -25,7 +29,16 @@ export function WecomPanel({ close }: { close(): void }) {
     setRestarting(true)
     try { setStatus(await wecomApi.restart()); setError(null); setConfirming(false) } catch { setError('WeCom restart could not start.') } finally { setRestarting(false) }
   }
+  const checkUpdate = async (): Promise<void> => {
+    setCheckingUpdate(true)
+    try { setUpdate(await wecomApi.checkCliUpdate()); setError(null) } catch { setError('WeCom CLI update check failed.') } finally { setCheckingUpdate(false) }
+  }
+  const installUpdate = async (): Promise<void> => {
+    setUpdating(true)
+    try { setUpdate(await wecomApi.updateCli()); setError(null) } catch { setError('WeCom CLI update failed.') } finally { setUpdating(false) }
+  }
   const phase = status?.state ?? 'offline'
+  const canUpdate = update?.state === 'outdated' || update?.state === 'missing'
   const indicatorClass = {
     unconfigured: css.indicatorUnconfigured,
     connecting: css.indicatorConnecting,
@@ -44,6 +57,13 @@ export function WecomPanel({ close }: { close(): void }) {
       <div><dt>Bot</dt><dd>{status?.botIdentity ?? 'Not configured'}</dd></div>
       <div><dt>Version</dt><dd>{status?.version ?? 'Unknown'}</dd></div>
     </dl>
+    <section className={css.updateSection} aria-label="WeCom CLI update">
+      <div className={css.updateHeader}><strong>WeCom CLI</strong><button className={css.iconButton} type="button" title="Check for WeCom CLI updates" aria-label="Check for WeCom CLI updates" disabled={checkingUpdate || updating} onClick={() => { void checkUpdate() }}><RefreshCw className={checkingUpdate ? css.spinning : undefined} size={15} /></button></div>
+      {update === null
+        ? <span className={css.muted}>Not checked</span>
+        : <div className={css.updateResult}><span>{update.installed ?? 'Not installed'} → {update.latest}</span><span className={css.muted}>{update.updated ? 'Updated successfully' : update.state === 'current' ? 'Up to date' : update.state === 'outdated' ? 'Update available' : update.state === 'missing' ? 'Install available' : 'Installed version is newer than the public release'}</span></div>}
+      {canUpdate && <button className={css.updateButton} type="button" disabled={checkingUpdate || updating} onClick={() => { void installUpdate() }}><Download size={15} />{updating ? 'Updating…' : 'Update'}</button>}
+    </section>
     {status?.error !== undefined && <div className={css.diagnostic} role="status">{status.error}</div>}
     <div className={css.actions}><button className={css.iconButton} type="button" title="Refresh status" aria-label="Refresh status" onClick={() => { void refresh() }}><RefreshCw size={16} /></button><button className={css.restartButton} type="button" disabled={restarting || status?.restarting === true} onClick={() => setConfirming(true)}><RotateCcw size={15} />Restart</button></div>
     {confirming && <section className={css.confirmation} role="alertdialog" aria-label="Restart WeCom confirmation"><span>Restarting resets process-local conversations.</span><div><button className={css.iconButton} type="button" title="Cancel restart" aria-label="Cancel restart" onClick={() => setConfirming(false)}><X size={15} /></button><button className={css.restartButton} type="button" disabled={restarting} onClick={() => { void restart() }}><RotateCcw size={15} />Restart</button></div></section>}

@@ -5,9 +5,11 @@ import type { WecomStatus } from '../src/lifecycle.ts'
 const online: WecomStatus = { state: 'online', changedAt: 1, authenticatedAt: 1, restarting: false, version: '0.2.0' }
 const ORIGIN = 'http://127.0.0.1:3180'
 
-function fixture(controller: { getStatus(): WecomStatus; restart(): Promise<WecomStatus> }, origin = ORIGIN) {
+const currentUpdate = { installed: '1.2.0', latest: '1.2.0', state: 'current' as const, checkedAt: 2, updated: false }
+
+function fixture(controller: { getStatus(): WecomStatus; restart(): Promise<WecomStatus> }, origin = ORIGIN, updates = { check: vi.fn(async () => currentUpdate), update: vi.fn(async () => ({ ...currentUpdate, updated: true })) }) {
   let handler: ((request: never, response: never) => Promise<void>) | undefined
-  registerWecomApi({ register: (route: { handler: typeof handler }) => { handler = route.handler; return () => {} } } as never, controller as never, origin)
+  registerWecomApi({ register: (route: { handler: typeof handler }) => { handler = route.handler; return () => {} } } as never, controller as never, updates, origin)
   return async (method: string, url: string, headers: Record<string, string> = {}) => {
     let status = 0
     let body = ''
@@ -23,6 +25,16 @@ describe('WeCom status API', () => {
     const request = fixture({ getStatus: () => online, restart })
     expect(await request('GET', '/dsh-wecom/api/status')).toMatchObject({ status: 200, payload: { restarting: false } })
     expect(await request('POST', '/dsh-wecom/api/restart', { origin: ORIGIN, 'sec-fetch-site': 'same-origin' })).toMatchObject({ status: 200, payload: { restarting: false } })
+  })
+
+  it('checks and applies WeCom CLI updates while protecting the mutation', async () => {
+    const updates = { check: vi.fn(async () => currentUpdate), update: vi.fn(async () => ({ ...currentUpdate, updated: true })) }
+    const request = fixture({ getStatus: () => online, restart: async () => online }, ORIGIN, updates)
+    expect(await request('GET', '/dsh-wecom/api/wecom-cli-update')).toMatchObject({ status: 200, payload: { state: 'current', installed: '1.2.0' } })
+    expect(await request('POST', '/dsh-wecom/api/wecom-cli-update')).toMatchObject({ status: 403, payload: { code: 'ORIGIN_DENIED' } })
+    expect(await request('POST', '/dsh-wecom/api/wecom-cli-update', { origin: ORIGIN, 'sec-fetch-site': 'same-origin' })).toMatchObject({ status: 200, payload: { updated: true } })
+    expect(updates.check).toHaveBeenCalledOnce()
+    expect(updates.update).toHaveBeenCalledOnce()
   })
 
   it.each([

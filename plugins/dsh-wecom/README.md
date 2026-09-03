@@ -147,13 +147,20 @@ always dropped, even at `debug`. Only identity and metadata are emitted.
 no roots configured, only `defaultCwd` (or `process.cwd()`) and its descendants
 are available.
 
-## Connection status and plugin restart
+## Connection status, WeCom CLI update, and plugin restart
 
 Use the WeCom connection button in the DSH sidebar to open the plugin panel.
 It updates automatically and shows `unconfigured`, `connecting`, `online`,
 `reconnecting`, `offline`, or `error`, together with safe timestamps,
 diagnostics, a redacted bot identity, and the plugin version. `online` is shown
 only after WeCom authentication succeeds.
+
+The panel can also compare the installed `wecom-cli` version with the latest
+official `@wecom/cli` release on npm. When an update is available, the Update
+button runs the official global installation command (`npm install -g
+@wecom/cli@latest`) and verifies the installed version afterwards. Updating the
+standalone CLI does not require a DSH restart. The fixed package name and
+arguments are not derived from browser input.
 
 The panel's Restart action rebuilds only the `dsh-wecom` bridge and long
 connection. It first asks for confirmation because process-local WeCom
@@ -380,7 +387,7 @@ pnpm --filter @dsh-plugins/dsh-wecom pack:check
 pnpm --filter @dsh-plugins/dsh-wecom release:check
 ```
 
-The validation target for this feature release is `@dsh-plugins/dsh-wecom@0.3.3`.
+The validation target for this feature release is `@dsh-plugins/dsh-wecom@0.4.0`.
 
 The test suite uses fakes for DSH and the WeCom SDK. It does not perform a live
 WeCom credential, network, or production-profile end-to-end test.

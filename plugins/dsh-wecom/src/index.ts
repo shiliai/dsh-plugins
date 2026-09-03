@@ -30,6 +30,7 @@ import { registerWecomTools } from './tools.ts'
 import { registerWecomApi } from './http-api.ts'
 import { WecomLifecycleController } from './lifecycle.ts'
 import { PLUGIN_VERSION } from './version.ts'
+import { CliUpdateManager } from './cli-update.ts'
 import { resolveWatchdogConfig, type AuthWatchdogConfig } from './watchdog.ts'
 
 export const name = 'dsh-wecom'
@@ -1182,7 +1183,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     logLevel: normalized.logLevel,
   })
   const controller = new WecomLifecycleController(ctx, normalized, PLUGIN_VERSION)
-  ctx.effect(() => registerWecomApi(ctx.webServer, controller, normalized.managementOrigin!), 'dsh-wecom.status-api')
+  const updates = new CliUpdateManager()
+  ctx.effect(() => registerWecomApi(ctx.webServer, controller, updates, normalized.managementOrigin!), 'dsh-wecom.status-api')
   registerWecomTools(ctx, controller, normalized.outboundAllowChats)
   const initial = await controller.start()
   if (initial.state === 'unconfigured') log.warn('missing bot credentials; status remains available in the plugin UI')
