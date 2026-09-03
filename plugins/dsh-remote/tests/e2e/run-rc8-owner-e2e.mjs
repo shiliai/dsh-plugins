@@ -63,18 +63,7 @@ try {
   await page.waitForURL(`${remoteOrigin}/`, { timeout: 30_000 })
   await settleFirstRun(page)
 
-  const settingsButton = page.getByRole('button').filter({ hasText: /Settings|设置/u }).first()
-  await settingsButton.waitFor({ state: 'visible', timeout: 20_000 })
-  await settingsButton.click()
-  const settingsDialog = page.getByRole('dialog', { name: /Settings|设置/u })
-  await settingsDialog.waitFor({ state: 'visible' })
-  const modelsNavigation = settingsDialog.getByRole('button', { name: /Models|模型目录/u })
-  await modelsNavigation.click()
-  await page.waitForFunction(element => element.getAttribute('aria-current') === 'true', await modelsNavigation.elementHandle())
-  const unavailable = settingsDialog.getByText(/settings are unavailable|设置不可用/iu)
-  if (await unavailable.count() !== 0 && await unavailable.first().isVisible()) {
-    throw new Error('rc.8 Models screen reported unavailable settings.')
-  }
+  await openModels(page, 'owner')
 
   const described = await rpc(page, 'settings.describe', {})
   const namespaces = described.result?.value?.namespaces
@@ -100,6 +89,21 @@ try {
   await openAndCloseSocket(page, '/api/events.host')
 
   const state = JSON.parse(await readFile(env.DSH_REMOTE_STATE_FILE, 'utf8'))
+  const privateContext = await browser.newContext({ ignoreHTTPSErrors: true })
+  try {
+    const privatePage = await privateContext.newPage()
+    await privatePage.goto(`${remoteOrigin}/#/access/${state.token}`)
+    await privatePage.waitForURL(`${remoteOrigin}/`, { timeout: 30_000 })
+    await settleFirstRun(privatePage)
+    await openModels(privatePage, 'private')
+    const privateDescription = await rpc(privatePage, 'settings.describe', {})
+    if (!privateDescription.result?.ok) {
+      throw new Error(`private settings.describe failed in browser: ${JSON.stringify(privateDescription)}`)
+    }
+  } finally {
+    await privateContext.close()
+  }
+
   const privateApi = await playwrightRequest.newContext({ baseURL: remoteOrigin, ignoreHTTPSErrors: true })
   try {
     const exchange = await privateApi.post('/__dsh_remote/session', {
@@ -108,6 +112,13 @@ try {
     })
     if (exchange.status() !== 204) throw new Error(`private session exchange returned ${exchange.status()}`)
     for (const method of ['settings.describe', 'credentials.describe', 'llm.discoverModels']) {
+      const allowed = await privateApi.post(`/api/${method}`, {
+        headers: { origin: remoteOrigin, 'content-type': 'application/json' },
+        data: envelope(method, {}),
+      })
+      if (allowed.status() !== 200) throw new Error(`private ${method} expected 200, observed ${allowed.status()}`)
+    }
+    for (const method of ['agentPreset.read', 'host.openPath']) {
       const denied = await privateApi.post(`/api/${method}`, {
         headers: { origin: remoteOrigin, 'content-type': 'application/json' },
         data: envelope(method, {}),
@@ -118,7 +129,7 @@ try {
     await privateApi.dispose()
   }
 
-  process.stdout.write(`rc.8 owner E2E passed commit=${commit} package_sha256=${archiveSha} owner_models=true settings_write=true credentials_metadata=true model_discovery=true reload=true reconnect=true private_denial=true origin=${remoteOrigin}\n`)
+  process.stdout.write(`rc.8 owner E2E passed commit=${commit} package_sha256=${archiveSha} owner_models=true settings_write=true credentials_metadata=true model_discovery=true reload=true reconnect=true private_models_ui=true private_model_configuration=true non_model_denial=true origin=${remoteOrigin}\n`)
 } finally {
   if (browser !== undefined) await browser.close()
   if (dsh !== undefined) await stop(dsh)
@@ -207,6 +218,21 @@ async function settleFirstRun(page) {
   const configureLater = page.getByRole('button', { name: /configure later/i })
   if (await configureLater.waitFor({ state: 'visible', timeout: 3_000 }).then(() => true).catch(() => false)) {
     await configureLater.click()
+  }
+}
+
+async function openModels(page, sessionKind) {
+  const settingsButton = page.getByRole('button').filter({ hasText: /Settings|设置/u }).first()
+  await settingsButton.waitFor({ state: 'visible', timeout: 20_000 })
+  await settingsButton.click()
+  const settingsDialog = page.getByRole('dialog', { name: /Settings|设置/u })
+  await settingsDialog.waitFor({ state: 'visible' })
+  const modelsNavigation = settingsDialog.getByRole('button', { name: /Models|模型目录/u })
+  await modelsNavigation.click()
+  await page.waitForFunction(element => element.getAttribute('aria-current') === 'true', await modelsNavigation.elementHandle())
+  const unavailable = settingsDialog.getByText(/settings are unavailable|设置不可用/iu)
+  if (await unavailable.count() !== 0 && await unavailable.first().isVisible()) {
+    throw new Error(`rc.8 Models screen reported unavailable settings for ${sessionKind} session.`)
   }
 }
 

@@ -36,19 +36,24 @@ export function clearAccessFragment(location: BrowserLocation, history: BrowserH
   return true
 }
 
-export function enableOwnerConfigurationPlane(
-  cookieHeader: string,
+export function enableRemoteConfigurationPlane(
   settingsScope: SettingsScopeCompatibility,
 ): boolean {
-  const enabled = cookieHeader.split(';').some(part => part.trim() === `${OWNER_UI_COOKIE}=1`)
-  if (!enabled) return false
-
   const mirror = settingsScope.describe?.()
   if (mirror !== undefined && mirror.persistence === 'memory') {
     mirror.persistence = 'host'
     void mirror.load?.()
   }
   return true
+}
+
+/** @deprecated Compatibility helper for cached 0.3.1 owner clients. */
+export function enableOwnerConfigurationPlane(
+  cookieHeader: string,
+  settingsScope: SettingsScopeCompatibility,
+): boolean {
+  const enabled = cookieHeader.split(';').some(part => part.trim() === `${OWNER_UI_COOKIE}=1`)
+  return enabled && enableRemoteConfigurationPlane(settingsScope)
 }
 
 interface FooterProps {
@@ -90,8 +95,7 @@ function FooterButton({ wide, open }: FooterProps) {
 
 export function apply(ctx: ClientContext): void {
   clearAccessFragment(window.location, window.history)
-  enableOwnerConfigurationPlane(
-    window.document.cookie,
+  enableRemoteConfigurationPlane(
     ctx.get('settingsScope') as unknown as SettingsScopeCompatibility,
   )
   const disposeWorkspaceSessionReadiness = installWorkspaceSessionReadiness(ctx)

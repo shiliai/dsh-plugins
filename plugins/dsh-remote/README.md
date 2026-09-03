@@ -59,7 +59,7 @@ failure before rename preserves the old link; a failure after rename reports the
 already committed replacement. Successful rotation closes earlier authenticated
 WebSockets before reporting success.
 
-## Remote Host Owner Launch
+## Remote Model Configuration And Owner Launch
 
 A Remote Host owner launch exchanges its one-time ticket through Agent IPC for
 one expiring, HTTP-only owner grant. Only the grant digest and expiry are stored
@@ -68,15 +68,17 @@ across DSH/Gateway restart and private-link rotation. Each grant expires after
 eight hours, closes its active WebSockets at the expiry deadline, and is
 validated on every HTTP request and WebSocket reconnect.
 
-Only a live owner grant can proxy the remote configuration methods
-`settings.*`, `credentials.*`, and `llm.discoverModels` with loopback authority.
-Ordinary private-link sessions remain denied for those methods and every other
-loopback-only RPC. Caller-supplied `x-dsh-remote-*` headers are removed before
-proxying. A separate readable owner UI cookie lets the DSH rc.8 Settings mirror
-request its redacted configuration view; it is only a display hint and is never
-accepted as authorization by the gateway. No plaintext grant or credential
-value is written to persistent state, a URL, browser-readable storage, response
-body, or log.
+Every authenticated private-link or owner session can proxy the model
+configuration methods `settings.*`, `credentials.*`, and `llm.discoverModels`
+with loopback authority. Other loopback-only RPCs, including agent-preset reads
+and host filesystem operations, remain denied remotely. Caller-supplied
+`x-dsh-remote-*` headers are removed before proxying. The dsh-remote client
+enables the DSH rc.8 Settings mirror after the authenticated application loads;
+this is only presentation state and is never accepted as authorization by the
+gateway. The HTTP-only private or owner session cookie remains the authorization
+fact. The legacy readable owner UI cookie remains for cached 0.3.1 clients and
+carries no secret. No plaintext grant or credential value is written to persistent
+state, a URL, browser-readable storage, response body, or log.
 
 ## Edge Operations
 
@@ -179,15 +181,16 @@ package; it does not deploy or modify a VPS edge.
 For a multi-node release, update one node at a time in the order Mac, x570, then
 shilidev. Before each update, retain the currently installed package archive and
 record the plugin version and service state. After restarting only that node's
-DSH service, require all of the following before continuing: version `0.2.1`,
-healthy public HTTP, a fresh owner launch that loads Settings -> Models through
-reload and reconnect, ordinary private-link configuration denial, and unchanged
-health on nodes not yet updated.
+DSH service, require all of the following before continuing: version `0.3.2`,
+healthy public HTTP, a private link and fresh owner launch that load Settings ->
+Models through reload and reconnect, continued denial of non-model loopback
+RPCs, and unchanged health on nodes not yet updated.
 
-If a node fails a gate, stop the rollout. Restore its retained `0.2.0` archive
+If a node fails a gate, stop the rollout. Restore its retained `0.3.1` archive
 through `dsh plugin` (never by editing the profile manifest or lockfile), restart
 only that node's DSH service, and verify the prior version, public HTTP health,
-owner launch, and private-link denial before leaving the other nodes untouched.
+owner launch, private-link model configuration, and non-model RPC denial before
+leaving the other nodes untouched.
 The retained archive must be an immutable local path recorded before rollout;
 do not rely on a GitHub downgrade, because the updater rejects a lower version.
 
