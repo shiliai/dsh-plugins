@@ -130,7 +130,17 @@ describe('RemoteGateway', () => {
       host: new URL(upstreamOrigin).host, ownerMarker: null,
     })
 
-    for (const method of [...PRIVILEGED_METHODS, ...NON_CONFIGURATION_LOOPBACK_METHODS]) {
+    for (const method of MODEL_CONFIGURATION_METHODS) {
+      const allowed = await fetch(`${baseUrl}/api/${method}`, {
+        method: 'POST',
+        headers: { cookie: `${cookie}`, origin: 'https://zsh.onlyservice.io', 'x-dsh-remote-owner': 'ignored' },
+      })
+      expect(allowed.status, method).toBe(200)
+      expect(await allowed.json()).toMatchObject({
+        cookie: '', host: new URL(upstreamOrigin).host, origin: upstreamOrigin, ownerMarker: null,
+      })
+    }
+    for (const method of NON_CONFIGURATION_LOOPBACK_METHODS) {
       const denied = await fetch(`${baseUrl}/api/${method}`, {
         method: 'POST',
         headers: { cookie: `${cookie}`, origin: 'https://zsh.onlyservice.io', 'x-dsh-remote-owner': 'owner' },
@@ -184,7 +194,7 @@ describe('RemoteGateway', () => {
     expect((await fetch(`${baseUrl}/after-rotation`, { headers: { cookie: replacement } })).status).toBe(200)
   })
 
-  it('redeems a Host launch once and gives only its expiring owner grant the configuration plane', async () => {
+  it('redeems a Host launch once and gives its expiring owner grant the configuration plane', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-remote-agent-ipc-'))
     roots.push(root)
     const socketPath = join(root, 'agent.sock')
@@ -225,7 +235,7 @@ describe('RemoteGateway', () => {
     const proxied = await fetch(`${baseUrl}/host-session`, { headers: { cookie: `${cookie}; __Host-dsh_remote_owner_ui=1; dsh=preserved` } })
     expect(proxied.status).toBe(200)
     expect((await proxied.json()).cookie).toBe('dsh=preserved')
-    for (const method of PRIVILEGED_METHODS) {
+    for (const method of MODEL_CONFIGURATION_METHODS) {
       const allowed = await fetch(`${baseUrl}/api/${method}`, {
         method: 'POST', headers: { cookie, origin: 'https://zsh.onlyservice.io', 'x-dsh-remote-owner': 'ignored' },
       })
@@ -370,7 +380,7 @@ async function issueHostSession(baseUrl: string, launchTicket: string): Promise<
   return cookie
 }
 
-const PRIVILEGED_METHODS = [
+const MODEL_CONFIGURATION_METHODS = [
   'settings.describe', 'settings.openDocument', 'settings.update', 'settings.replace', 'settings.mutate',
   'credentials.describe', 'credentials.set', 'credentials.unset', 'llm.discoverModels',
 ] as const

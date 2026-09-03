@@ -14,7 +14,7 @@ const KEEP_ALIVE_TIMEOUT_MS = 60_000
 const absorbLateSocketError = (): void => {}
 const HOST_SESSION_TTL_MS = 8 * 60 * 60 * 1000
 const ALLOWED_UPGRADE_PATHS = new Set(['/api/events.mux', '/api/events.host'])
-const OWNER_CONFIGURATION_METHODS = new Set([
+const MODEL_CONFIGURATION_METHODS = new Set([
   'settings.describe',
   'settings.openDocument',
   'settings.update',
@@ -26,7 +26,7 @@ const OWNER_CONFIGURATION_METHODS = new Set([
   'llm.discoverModels',
 ])
 const LOOPBACK_ONLY_METHODS = new Set([
-  ...OWNER_CONFIGURATION_METHODS,
+  ...MODEL_CONFIGURATION_METHODS,
   'agentPreset.read',
   'agentPreset.copy',
   'agentPreset.openDocument',
@@ -164,14 +164,14 @@ export class RemoteGateway {
       return
     }
     const loopbackOnly = rpcMethod(path, LOOPBACK_ONLY_METHODS)
-    const ownerConfiguration = rpcMethod(path, OWNER_CONFIGURATION_METHODS) && session.kind === 'owner'
-    if (loopbackOnly && !ownerConfiguration) {
+    const modelConfiguration = rpcMethod(path, MODEL_CONFIGURATION_METHODS)
+    if (loopbackOnly && !modelConfiguration) {
       send(response, 403, 'Access denied.')
       return
     }
     this.proxy.web(request, response, {
       target: this.target(),
-      headers: upstreamHeaders(request.headers, this.target(), ownerConfiguration),
+      headers: upstreamHeaders(request.headers, this.target(), modelConfiguration),
     })
   }
 
