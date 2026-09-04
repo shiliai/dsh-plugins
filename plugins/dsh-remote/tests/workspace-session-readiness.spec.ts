@@ -188,6 +188,26 @@ describe('workspace session readiness', () => {
     await disposeProvider()
   })
 
+  it('disposes the provider fiber once and exposes a handled cleanup rejection', async () => {
+    const { sessions, workspaces } = fixture()
+    const cleanupError = new Error('cleanup failed')
+    const disposeFiber = vi.fn(() => Promise.reject(cleanupError))
+    const ctx = {
+      sessions: { list: sessions },
+      workspaces: { list: workspaces },
+      modelDirectories: { directoryFor: () => ({ load: async () => {} }) },
+      inject: () => ({ dispose: disposeFiber }),
+    } as unknown as ClientContext
+    const dispose = installWorkspaceSessionReadiness(ctx)
+
+    const first = dispose()
+    const second = dispose()
+
+    expect(second).toBe(first)
+    await expect(first).rejects.toBe(cleanupError)
+    expect(disposeFiber).toHaveBeenCalledOnce()
+  })
+
   it('leaves the client usable when neither workspace navigation service exposes connectWorkspace', async () => {
     const { ctx } = createClientContext()
 

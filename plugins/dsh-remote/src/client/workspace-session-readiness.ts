@@ -98,7 +98,7 @@ function addReadinessOwner(connector: WorkspaceConnector, owner: ReadinessOwner)
   }
 }
 
-export function installWorkspaceSessionReadiness(ctx: ClientContext): () => void | Promise<void> {
+export function installWorkspaceSessionReadiness(ctx: ClientContext): () => Promise<void> {
   const localModelDirectories = (ctx as ClientContext & { modelDirectories: ModelDirectories }).modelDirectories
   const modelDirectories = (ctx.root?.get('modelDirectories') as ModelDirectories | undefined)
     ?? localModelDirectories
@@ -119,8 +119,18 @@ export function installWorkspaceSessionReadiness(ctx: ClientContext): () => void
     return addReadinessOwner(connector, owner)
   })
 
+  let disposePromise: Promise<void> | undefined
   return () => {
+    if (disposePromise !== undefined) return disposePromise
     disposeLegacy()
-    return uiWorkspaceFiber.dispose()
+    try {
+      disposePromise = Promise.resolve(uiWorkspaceFiber.dispose())
+    } catch (error) {
+      disposePromise = Promise.reject(error)
+    }
+    // Mark the rejection handled even for legacy fire-and-forget callers. Callers
+    // that await the original promise still observe the cleanup failure.
+    void disposePromise.catch(() => {})
+    return disposePromise
   }
 }

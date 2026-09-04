@@ -130,6 +130,6 @@ export function apply(ctx: ClientContext): void {
     close()
     disposeMobileSidebarButton()
     disposeMobileCompatibility()
-    disposeWorkspaceSessionReadiness()
+    return disposeWorkspaceSessionReadiness()
   }, 'dsh-remote: client surfaces')
 }
