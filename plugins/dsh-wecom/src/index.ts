@@ -899,7 +899,10 @@ export class WecomAgentBridge {
       const state = pending.chatKey === undefined ? undefined : this.states.get(pending.chatKey)
       if (state?.handle?.agent !== pending.agent) return
     }
-    const option = resolveSelection(event.eventKey, pending.question)
+    const submittedOptionId = event.selectedItems
+      ?.find(item => item.questionKey === pending.question.id)
+      ?.optionIds[0]
+    const option = resolveSelection(submittedOptionId ?? event.eventKey, pending.question)
     if (!option) return
     clearTimeout(pending.timer)
     this.pendingQuestions.delete(event.taskId)

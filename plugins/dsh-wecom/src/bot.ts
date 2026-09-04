@@ -43,6 +43,8 @@ export interface InboundCardEvent {
   taskId: string
   /** opaque element key WeCom reports for the interaction */
   eventKey?: string | undefined
+  /** Dropdown selections submitted by a multiple-interaction card. */
+  selectedItems?: Array<{ questionKey: string; optionIds: string[] }> | undefined
   /** unique event id for dedup */
   msgId: string
   /** raw event frame for replying/updating */
@@ -184,13 +186,40 @@ export class WecomBot {
     })
     this.client.on('event.template_card_event', (frame: WsFrame) => {
       const body = frame?.body ?? {}
-      const event = (body.event ?? {}) as { event_key?: string; task_id?: string }
+      const envelope = (body.event ?? {}) as {
+        event_key?: string
+        task_id?: string
+        template_card_event?: unknown
+      }
+      const event = (typeof envelope.template_card_event === 'object' && envelope.template_card_event !== null
+        ? envelope.template_card_event
+        : envelope) as {
+          event_key?: string
+          task_id?: string
+          selected_items?: { selected_item?: unknown }
+        }
+      const rawItems = event.selected_items?.selected_item
+      const selectedItems = (Array.isArray(rawItems) ? rawItems : rawItems === undefined ? [] : [rawItems])
+        .flatMap((item): Array<{ questionKey: string; optionIds: string[] }> => {
+          if (typeof item !== 'object' || item === null) return []
+          const questionKey = Reflect.get(item, 'question_key')
+          const optionIdsContainer = Reflect.get(item, 'option_ids')
+          const rawOptionIds = typeof optionIdsContainer === 'object' && optionIdsContainer !== null
+            ? Reflect.get(optionIdsContainer, 'option_id')
+            : undefined
+          const optionIds = (Array.isArray(rawOptionIds) ? rawOptionIds : rawOptionIds === undefined ? [] : [rawOptionIds])
+            .filter((id): id is string => typeof id === 'string' && id !== '')
+          return typeof questionKey === 'string' && questionKey !== '' && optionIds.length > 0
+            ? [{ questionKey, optionIds }]
+            : []
+        })
       const evt: InboundCardEvent = {
         chatId: (body.chatid ?? body.from?.userid ?? '') as string,
         chatType: (body.chattype ?? '') as string,
         senderId: (body.from?.userid ?? undefined) as string | undefined,
         taskId: (event.task_id ?? '') as string,
         eventKey: event.event_key,
+        ...(selectedItems.length === 0 ? {} : { selectedItems }),
         msgId: (body.msgid ?? '') as string,
         frame,
       }
@@ -201,6 +230,7 @@ export class WecomBot {
         msgId: evt.msgId === '' ? undefined : evt.msgId,
         taskId: evt.taskId,
         hasEventKey: Boolean(evt.eventKey),
+        selectedItems: evt.selectedItems?.length ?? 0,
       })
       for (const listener of this.cardEventListeners) {
         void Promise.resolve().then(() => listener(evt)).catch((error: unknown) => this.handleMessageFailure(frame, error))

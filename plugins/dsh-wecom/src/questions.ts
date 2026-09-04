@@ -209,11 +209,10 @@ export function buildQuestionCard(q: CardQuestion): TemplateCard {
 }
 
 /**
- * Resolve the option selected by a template-card event. WeCom encodes a
- * `multiple_interaction` submission in `event_key` as
- * `<question_key>::<option_id>`; we accept that shape and, defensively, a bare
- * option id or label. Returns `undefined` when the event does not reference a
- * known option of this question.
+ * Resolve an option id or legacy compound event key from a template-card
+ * event. Current `multiple_interaction` callbacks carry option ids in
+ * `selected_items`; the compound and label forms remain compatibility inputs.
+ * Returns `undefined` when the value references no known option.
  */
 export function resolveSelection(eventKey: string | undefined, q: CardQuestion): CardOption | undefined {
   if (!eventKey) return undefined

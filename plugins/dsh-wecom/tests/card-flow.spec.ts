@@ -43,6 +43,13 @@ function cardEvent(taskId: string, eventKey: string): InboundCardEvent {
   }
 }
 
+function submittedCardEvent(taskId: string, optionId: string): InboundCardEvent {
+  return {
+    ...cardEvent(taskId, 'submit'),
+    selectedItems: [{ questionKey: QUESTION.id, optionIds: [optionId] }],
+  }
+}
+
 const QUESTION = { id: 'q1', question: '请问需要哪种部署方式？', options: [{ label: '快速部署' }, { label: '标准部署' }] }
 
 function installLiveState(bridge: WecomAgentBridge, agent: object, senderId = 'user-1'): void {
@@ -162,7 +169,7 @@ describe('question card flow: template_card_event → session injection', () => 
       expect(card.task_id).toBeTruthy()
 
       // user taps the second option
-      await bridge.onCardSelection(cardEvent(card.task_id, `${QUESTION.id}::2`))
+      await bridge.onCardSelection(submittedCardEvent(card.task_id, '2'))
       const answer = await pending
 
       // the selection is delivered back into the same session as the answer

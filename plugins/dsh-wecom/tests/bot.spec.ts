@@ -130,7 +130,16 @@ describe('WecomBot inbound boundary', () => {
     bot.onCardEvent(received)
     await bot.start(() => undefined)
     bot.client.emit('event.template_card_event', {
-      body: { chatid: 'chat-1', chattype: 'single', msgid: 'cevt-1', from: { userid: 'user-1' }, event: { event_key: 'q1::2', task_id: 'task-9' } },
+      body: {
+        chatid: 'chat-1', chattype: 'single', msgid: 'cevt-1', from: { userid: 'user-1' },
+        event: {
+          eventtype: 'template_card_event',
+          template_card_event: {
+            event_key: 'submit', task_id: 'task-9',
+            selected_items: { selected_item: [{ question_key: 'q1', option_ids: { option_id: ['2'] } }] },
+          },
+        },
+      },
       headers: { req_id: 'req-cevt' },
     } as never)
     bot.client.emit('event.template_card_event', {
@@ -144,7 +153,8 @@ describe('WecomBot inbound boundary', () => {
       chatType: 'single',
       senderId: 'user-1',
       taskId: 'task-9',
-      eventKey: 'q1::2',
+      eventKey: 'submit',
+      selectedItems: [{ questionKey: 'q1', optionIds: ['2'] }],
     })
   })
 
