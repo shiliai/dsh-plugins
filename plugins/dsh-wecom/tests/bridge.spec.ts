@@ -2,12 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdtemp, mkdir, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
-import { WecomAgentBridge, isInboundAuthorized } from '../src/index.ts'
+import { interactionRouteOf, WecomAgentBridge, isInboundAuthorized } from '../src/index.ts'
 import type { InboundMessage } from '../src/bot.ts'
 
 // ---- fakes ----
 interface FakeAgent {
   session: { seq: number; events: Array<unknown> }
+  messages: unknown[]
   followup: (msg: unknown) => void
   whenIdle: () => Promise<void>
 }
@@ -16,7 +17,10 @@ function makeAgent(prefix: string): FakeAgent {
   const events: Array<unknown> = []
   return {
     session: { seq: 0, events },
+    messages: [],
     followup(msg) {
+      // DSH validates the durable inbox event and returns a cloned message.
+      this.messages.push(structuredClone(msg))
       const seq = events.length
       events.push({ seq, type: 'turn/start', data: {} })
       events.push({
@@ -165,7 +169,7 @@ function msg(chatId: string, text: string): InboundMessage {
 
 describe('WecomAgentBridge', () => {
   it('replies with the agent output', async () => {
-    const { mockCtx } = baseContext()
+    const { mockCtx, agents } = baseContext()
     const bot = fakeBot()
     const bridge = new WecomAgentBridge(mockCtx as never, bot as never, { botId: 'b', botSecret: 's' })
     const res = await bridge.enqueue(msg('u1', '你好'))
@@ -175,6 +179,8 @@ describe('WecomAgentBridge', () => {
     expect(bot.finishReply).toHaveBeenCalledTimes(1)
     expect(bot.finishReply.mock.calls[0]![2]).toContain('你好')
     expect(bot.replyText).not.toHaveBeenCalled()
+    expect(interactionRouteOf(agents[0]!.messages[0] as object))
+      .toEqual({ channel: 'wecom', destination: 'single:u1' })
   })
 
   it('keeps conversation memory per chat (followup accumulates on same agent)', async () => {

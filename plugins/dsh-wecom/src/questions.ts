@@ -50,6 +50,77 @@ export interface AskUserQuestionAnswer {
   answers: AskUserQuestionAnswerItem[]
 }
 
+/** Trusted host-authored destination for one agent turn. */
+export type InteractionRoute =
+  | { channel: 'web'; destination: string }
+  | { channel: 'wecom'; destination: string }
+
+const INTERACTION_ROUTE_REGISTRY_KEY = Symbol.for('@deepseek-ai/dsh-user-questions/interaction-route-registry')
+
+interface InteractionRouteRegistry {
+  readonly objects: WeakMap<object, InteractionRoute>
+  readonly messageIds: Map<string, InteractionRoute>
+}
+
+const MAX_ROUTED_MESSAGE_IDS = 4096
+
+function registryHost(): object {
+  const processHost: unknown = Reflect.get(globalThis, 'process')
+  return typeof processHost === 'object' && processHost !== null ? processHost : globalThis
+}
+
+function interactionRouteRegistry(): InteractionRouteRegistry {
+  const host = registryHost()
+  const existing: unknown = Reflect.get(host, INTERACTION_ROUTE_REGISTRY_KEY)
+  if (typeof existing === 'object' && existing !== null
+    && Reflect.get(existing, 'objects') !== undefined
+    && Reflect.get(existing, 'messageIds') !== undefined) {
+    return existing as InteractionRouteRegistry
+  }
+  const registry: InteractionRouteRegistry = {
+    objects: new WeakMap<object, InteractionRoute>(),
+    messageIds: new Map<string, InteractionRoute>(),
+  }
+  Reflect.set(host, INTERACTION_ROUTE_REGISTRY_KEY, registry)
+  return registry
+}
+
+function messageIdOf(message: object): string | undefined {
+  const id: unknown = Reflect.get(message, 'id')
+  return typeof id === 'string' && id !== '' ? id : undefined
+}
+
+/** Associate a trusted route with an immutable message without serializing it. */
+export function routeUserMessage<T extends object>(message: T, route: InteractionRoute): T {
+  const registry = interactionRouteRegistry()
+  const frozen = Object.freeze({ ...route })
+  registry.objects.set(message, frozen)
+  const messageId = messageIdOf(message)
+  if (messageId !== undefined) {
+    registry.messageIds.delete(messageId)
+    registry.messageIds.set(messageId, frozen)
+    while (registry.messageIds.size > MAX_ROUTED_MESSAGE_IDS) {
+      const oldest = registry.messageIds.keys().next().value
+      if (oldest === undefined) break
+      registry.messageIds.delete(oldest)
+    }
+  }
+  return message
+}
+
+/** Read a route associated through either the plugin or routing-capable DSH. */
+export function interactionRouteOf(message: object | undefined): InteractionRoute | undefined {
+  if (message === undefined) return undefined
+  const registry = interactionRouteRegistry()
+  const direct = registry.objects.get(message)
+  if (direct !== undefined) return direct
+  const messageId = messageIdOf(message)
+  if (messageId === undefined) return undefined
+  const route = registry.messageIds.get(messageId)
+  if (route !== undefined) registry.objects.set(message, route)
+  return route
+}
+
 /** The `userQuestions.ask` request the plugin's provider receives. */
 export interface AskUserQuestionRequest {
   /** Questions to display. */
@@ -58,6 +129,8 @@ export interface AskUserQuestionRequest {
   agent?: unknown
   /** Abort signal for the owning tool/step. */
   signal?: AbortSignal
+  /** Route copied from the trusted message that opened the current turn. */
+  route?: InteractionRoute
 }
 
 /** Structured error thrown when an interactive question cannot be completed. */
@@ -136,11 +209,10 @@ export function buildQuestionCard(q: CardQuestion): TemplateCard {
 }
 
 /**
- * Resolve the option selected by a template-card event. WeCom encodes a
- * `multiple_interaction` submission in `event_key` as
- * `<question_key>::<option_id>`; we accept that shape and, defensively, a bare
- * option id or label. Returns `undefined` when the event does not reference a
- * known option of this question.
+ * Resolve an option id or legacy compound event key from a template-card
+ * event. Current `multiple_interaction` callbacks carry option ids in
+ * `selected_items`; the compound and label forms remain compatibility inputs.
+ * Returns `undefined` when the value references no known option.
  */
 export function resolveSelection(eventKey: string | undefined, q: CardQuestion): CardOption | undefined {
   if (!eventKey) return undefined
@@ -148,12 +220,22 @@ export function resolveSelection(eventKey: string | undefined, q: CardQuestion):
   return q.options.find(option => option.id === tail || option.label === tail)
 }
 
-/** The card shown after a selection so the user sees their choice. */
-export function buildSelectionCard(q: CardQuestion, label: string): TemplateCard {
+/** The disabled card shown after a selection so the user sees their choice. */
+export function buildSelectionCard(q: CardQuestion, selected: CardOption): TemplateCard {
   return {
-    card_type: TemplateCardType.TextNotice,
-    main_title: { title: '已选择' },
-    sub_title_text: `${q.question}\n✅ ${label}`,
+    card_type: TemplateCardType.MultipleInteraction,
+    source: { desc: '已提交选择', desc_color: 3 },
+    main_title: { title: q.question.slice(0, 26) },
+    select_list: [
+      {
+        question_key: q.id,
+        title: q.question,
+        disable: true,
+        selected_id: selected.id,
+        option_list: q.options.map(option => ({ id: option.id, text: option.label })),
+      },
+    ],
+    submit_button: { text: '已提交', key: 'submitted' },
     task_id: q.taskId,
   }
 }

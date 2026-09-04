@@ -340,7 +340,7 @@ bridges the agent's `ask_user_question` tool to an interactive
 
 When an agent asks a single-select question with up to **5** options, the bridge:
 
-1. Registers itself as the `ctx.userQuestions` provider and renders the question
+1. Registers channel `wecom` on the routed `ctx.userQuestions` service and renders the question
    as a `multiple_interaction` card (a dropdown of options plus a submit button).
 2. `WecomBot` normalizes the resulting `event.template_card_event` and routes it
    to the bridge, which matches the card by its `task_id` and calls
@@ -354,30 +354,29 @@ Fallbacks, per the issue acceptance criteria:
 - A question with **no options**, **more than 5 options**, or a **multi-select**
   layout cannot be card-rendered. The bridge sends it as readable numbered text
   so it is still visible, then releases the turn.
-- If another UI (e.g. the DSH browser) has already registered the only
-  `userQuestions` provider, the WeCom bot defers and questions fall back to the
-  agent's own plain-text reply.
+- DSH versions without routed providers keep the bot connected and report the
+  question capability as `unsupported`; they never turn this optional feature
+  into a connection failure.
 - The existing plain-text/stream reply path is unchanged for every non-question
   turn.
 
 ### Coexistence with the DSH browser
 
-`ctx.userQuestions` allows a single active provider, and the DSH web profile's
-host api-proxy plugin registers the browser's provider when this plugin shares a
-process with the web UI. To avoid racing the host during bootstrap (which would
-crash the whole plugin tree with a `DUPLICATE_PROVIDER` error), the bridge waits
-up to `questionHostWaitMs` (default **15000 ms**) after the WeCom connection is
-established for the browser host (`apiProxy` service) to surface:
+The browser registers channel `web` and this plugin registers channel `wecom`,
+so both providers remain active in one process. The host writes a trusted route
+onto the message that opens each turn. `ask_user_question` copies that route into
+its internal request without exposing it in the model tool schema. Web-origin
+turns therefore ask only in Web; WeCom-origin turns ask only in their originating
+authorized chat, including when both channels successively use one bound session.
+Route-less legacy requests use Web, while an explicit route whose provider is
+unavailable fails without crossing channels.
 
-- if a browser host appears, WeCom defers to it and questions fall back to plain
-  text (the documented behavior above);
-- if none appears within the window — a standalone WeCom deployment — the bridge
-  registers itself as the provider so interactive cards render.
-
-The registration uses `ctx.get('userQuestions')` (never listed in the plugin's
-`inject` array) so the optional seam is safe on hosts without it, and a late
-`DUPLICATE_PROVIDER` from `registerProvider` is caught and treated as the same
-plain-text fallback rather than failing startup.
+The WeCom provider verifies the route destination, exact live agent, originating
+sender, card task id, and pending-question ownership before accepting a tap. The
+first valid answer claims the pending question; duplicates, stale cards,
+wrong-chat and wrong-sender events are ignored. Abort, timeout, provider disposal,
+and plugin unload each settle pending questions once. Optional provider or
+bindings failures are exposed independently from connection startup.
 
 ## Verification
 
@@ -387,7 +386,7 @@ pnpm --filter @dsh-plugins/dsh-wecom pack:check
 pnpm --filter @dsh-plugins/dsh-wecom release:check
 ```
 
-The validation target for this feature release is `@dsh-plugins/dsh-wecom@0.4.0`.
+The validation target for this feature release is `@dsh-plugins/dsh-wecom@0.5.0`.
 
 The test suite uses fakes for DSH and the WeCom SDK. It does not perform a live
 WeCom credential, network, or production-profile end-to-end test.

@@ -36,7 +36,7 @@ import type { Logger } from './log.ts'
 
 /** What kind of degradation the watchdog currently believes it is seeing. */
 export type WatchdogDegradedKind = 'auth' | 'connection' | 'unknown'
-export type WatchdogState = 'healthy' | 'degraded' | 'disabled'
+export type WatchdogState = 'initializing' | 'healthy' | 'degraded' | 'disabled'
 
 /** Raw user-facing watchdoog settings. Every field is optional; see resolveWatchdogConfig. */
 export interface AuthWatchdogConfig {
@@ -190,7 +190,8 @@ export function renderWatchdogAlert(alert: WatchdogAlert): { summary: string; bo
 
 export class AuthWatchdog {
   private degradedSince: number | undefined
-  private lastHealthyAt: number
+  private lastHealthyAt: number | undefined
+  private healthyObserved = false
   private lastAlertAt: number | undefined
   private alertCount = 0
   private kind: WatchdogDegradedKind | undefined
@@ -202,7 +203,6 @@ export class AuthWatchdog {
   constructor(private readonly options: WatchdogOptions) {
     this.now = options.now ?? Date.now
     this.log = options.log
-    this.lastHealthyAt = this.now()
   }
 
   observe(event: WecomLifecycleEvent): void {
@@ -225,10 +225,13 @@ export class AuthWatchdog {
   }
 
   private heal(): void {
-    if (this.degradedSince === undefined && this.kind === undefined) return
-    this.log.info('watchdog: authorization healthy', { kind: this.kind, code: this.code })
+    if (this.degradedSince !== undefined || this.kind !== undefined) {
+      this.log.info('watchdog: authorization healthy', { kind: this.kind, code: this.code })
+    }
     this.degradedSince = undefined
     this.kind = undefined
+    this.code = undefined
+    this.healthyObserved = true
     this.lastHealthyAt = this.now()
   }
 
@@ -305,7 +308,11 @@ export class AuthWatchdog {
     const enabled = this.options.config.enabled
     return {
       enabled,
-      state: !enabled ? 'disabled' : this.degradedSince !== undefined ? 'degraded' : 'healthy',
+      state: !enabled
+        ? 'disabled'
+        : this.degradedSince !== undefined
+          ? 'degraded'
+          : this.healthyObserved ? 'healthy' : 'initializing',
       degradedSince: this.degradedSince,
       lastHealthyAt: this.lastHealthyAt,
       lastAlertAt: this.lastAlertAt,

@@ -16,6 +16,7 @@ import {
   buildQuestionCard,
   buildSelectionCard,
   generateTaskId,
+  routeUserMessage,
   QuestionError,
   renderQuestionText,
   resolveSelection,
@@ -25,6 +26,7 @@ import {
   type AskUserQuestionItem,
   type AskUserQuestionRequest,
   type CardQuestion,
+  type InteractionRoute,
 } from './questions.ts'
 import { registerWecomTools } from './tools.ts'
 import { registerWecomApi } from './http-api.ts'
@@ -119,12 +121,7 @@ export interface Config {
    * `AuthWatchdogConfig` and the README "授权监控" section.
    */
   authWatchdog?: AuthWatchdogConfig
-  /**
-   * How long (ms) to wait for a browser host (api-proxy) to surface before
-   * declaring this a standalone WeCom deployment and registering ourselves as
-   * the `userQuestions` provider. Used to defer to the DSH browser when this
-   * plugin shares a process with it. Defaults to 15000.
-   */
+  /** @deprecated Routing-capable DSH versions do not need provider startup ordering. */
   questionHostWaitMs?: number
 }
 
@@ -202,20 +199,29 @@ interface ChatState {
   bindingHydrated: boolean
   /** Resolved action-workspace directory (`/new` starts a fresh session here). */
   workspace: string
+  /** Authorized sender whose message opened the active turn. */
+  activeSenderId: string | undefined
 }
 
 /** An unanswered interactive question card waiting for a user tap. */
 interface PendingQuestion {
   chatId: string
+  chatKey?: string
+  senderId?: string
+  agent?: Agent
   question: CardQuestion
   timer: ReturnType<typeof setTimeout>
+  signal?: AbortSignal
+  onAbort?: () => void
   resolve: (answer: AskUserQuestionAnswer) => void
   reject: (error: unknown) => void
 }
 
 /** Structural subset of the `userQuestions` service used to answer agent questions. */
 interface UserQuestionServiceLike {
+  readonly supportsRouting?: boolean
   registerProvider(provider: { ask(request: AskUserQuestionRequest): Promise<AskUserQuestionAnswer> }): () => void
+  registerProvider(channel: 'wecom', provider: { ask(request: AskUserQuestionRequest): Promise<AskUserQuestionAnswer> }): () => void
 }
 
 /** How long an unanswered question card stays live before the agent turn is released. */
@@ -275,9 +281,12 @@ export class WecomAgentBridge {
   private accepting = true
   private readonly pendingQuestions = new Map<string, PendingQuestion>()
   private disposeUserQuestions: (() => void) | undefined
+  private questionCapability: 'unknown' | 'active' | 'unsupported' | 'degraded' = 'unknown'
+  private bindingsCapability: 'unknown' | 'active' | 'disabled' | 'degraded'
 
   constructor(private ctx: Context, private bot: WecomBot, config: Config) {
     this.config = config
+    this.bindingsCapability = this.bindingsPath() === undefined ? 'disabled' : 'unknown'
     this.log = makeLogger(config.logLevel ?? 'info')
     // Observe the global session/event firehose so browser-driven writes to a
     // bound shared session (where the browser owns the live agent) still reach
@@ -290,48 +299,28 @@ export class WecomAgentBridge {
     this.idleSweep.unref?.()
   }
 
-  /**
-   * Register ourselves as the `ctx.userQuestions` provider so an agent's
-   * `ask_user_question` tool renders an interactive template card and the
-   * user's tap is fed back into the same session as the tool result. A provider
-   * may already be registered by another UI (e.g. the DSH browser); in that case
-   * we defer and questions fall back to plain text via the agent's own reply.
-   *
-   * The host api-proxy plugin (which provides the DSH browser's provider) is
-   * applied by the loader LATER than this plugin's `bot.start` completes, so we
-   * cannot simply register at connection time: that would steal the single
-   * `userQuestions` slot and make the host's `registerProvider` throw
-   * DUPLICATE_PROVIDER during bootstrap, failing the whole plugin tree. Instead
-   * we WAIT (up to a window) for the browser host's `apiProxy` service to appear
-   * and, when it does, defer to it (plain-text fallback). If no browser host is
-   * present within the window — a standalone WeCom deployment — we win the slot
-   * and render interactive cards. This mirrors the documented design: "if another
-   * UI (e.g. the DSH browser) has already registered ... the WeCom bot defers and
-   * questions fall back to the agent's own plain-text reply."
-   */
-  async registerUserQuestionsProvider(): Promise<void> {
+  /** Register the WeCom channel without competing with the Web provider. */
+  async registerUserQuestionsProvider(): Promise<'active' | 'unsupported' | 'degraded'> {
     const service = this.ctx.get('userQuestions') as UserQuestionServiceLike | undefined
-    if (!service) return
-    const hostAvailable = await this.waitForHost()
-    if (hostAvailable) {
-      this.log.warn('questions: the DSH browser owns the user-questions provider; WeCom questions fall back to plain text')
-      return
+    if (!service || service.supportsRouting !== true) {
+      this.log.warn('questions: installed DSH does not support routed user-question providers')
+      return (this.questionCapability = 'unsupported')
     }
     try {
-      this.disposeUserQuestions = service.registerProvider({ ask: request => this.askUserQuestion(request) })
+      this.disposeUserQuestions = service.registerProvider('wecom', { ask: request => this.askUserQuestion(request) })
+      return (this.questionCapability = 'active')
     } catch (error) {
-      this.log.warn('questions: a user-questions provider is already registered; WeCom questions fall back to plain text', { error: safeErrorKind(error) })
+      this.log.warn('questions: WeCom provider registration failed', { error: safeErrorKind(error) })
+      return (this.questionCapability = 'degraded')
     }
   }
 
-  /** True when the DSH browser host (api-proxy) has surfaced within the wait window. */
-  private async waitForHost(): Promise<boolean> {
-    const deadline = Date.now() + (this.config.questionHostWaitMs ?? 15_000)
-    for (;;) {
-      if (this.ctx.get('apiProxy') !== undefined) return true
-      if (Date.now() >= deadline) return false
-      await new Promise(resolve => setTimeout(resolve, 250))
-    }
+  /** Current optional-capability states for the status endpoint. */
+  getCapabilityStatus(): {
+    questions: 'unknown' | 'active' | 'unsupported' | 'degraded'
+    bindings: 'unknown' | 'active' | 'disabled' | 'degraded'
+  } {
+    return { questions: this.questionCapability, bindings: this.bindingsCapability }
   }
 
   private chatState(message: Pick<InboundMessage, 'chatId' | 'chatType'>): ChatState {
@@ -353,6 +342,7 @@ export class WecomAgentBridge {
         boundFresh: false,
         bindingHydrated: false,
         workspace: this.workspaceDir(),
+        activeSenderId: undefined,
       }
       this.states.set(key, state)
     }
@@ -478,9 +468,13 @@ export class WecomAgentBridge {
         for (const [key, value] of Object.entries(json)) {
           if (typeof value === 'string' && value) map.set(key, value)
         }
+        this.bindingsCapability = 'active'
       } catch (error) {
-        // Missing file or corrupt content are both treated as "no bindings yet".
-        if (safeErrorKind(error) !== 'ENOENT') this.log.warn('bindings load failed', { path, error: safeErrorKind(error) })
+        if ((error as { code?: unknown }).code === 'ENOENT') this.bindingsCapability = 'active'
+        else {
+          this.bindingsCapability = 'degraded'
+          this.log.warn('bindings load failed', { path, error: safeErrorKind(error) })
+        }
       }
     }
     this.cachedBindings = map
@@ -499,7 +493,9 @@ export class WecomAgentBridge {
       try {
         await mkdir(dirname(path), { recursive: true })
         await writeFile(path, JSON.stringify(Object.fromEntries(map), null, 2), 'utf8')
+        this.bindingsCapability = 'active'
       } catch (error) {
+        this.bindingsCapability = 'degraded'
         this.log.warn('bindings persist failed', { key, error: safeErrorKind(error) })
       }
     }).catch(() => undefined)
@@ -750,14 +746,23 @@ export class WecomAgentBridge {
       seq: firstSeq,
       bytes: Buffer.byteLength(message.text, 'utf8'),
     })
-    const userMessage = createUserMessage({ content: [{ type: 'text', text: message.text }], source: { kind: 'user' } })
+    st.activeSenderId = message.senderId
+    const interactionRoute: InteractionRoute = { channel: 'wecom', destination: chatKey(st.chatType, st.chatId) }
+    const userMessage = routeUserMessage(createUserMessage({
+      content: [{ type: 'text', text: message.text }],
+      source: { kind: 'user' },
+    }), interactionRoute)
     // Tag this forward BEFORE it commits so the web->wecom mirror cannot relay
     // the plugin's own wecom->web write back into WeCom (no echo loop).
     if (st.boundSessionId) this.tagSelfUserMessage(st, userMessage.id)
-    agent.followup(userMessage)
-    await agent.whenIdle()
-    if (sessions) await sessions.flush(agent.session)
-    return summarizeTurn(agent.session.events, firstSeq)
+    try {
+      agent.followup(userMessage)
+      await agent.whenIdle()
+      if (sessions) await sessions.flush(agent.session)
+      return summarizeTurn(agent.session.events, firstSeq)
+    } finally {
+      st.activeSenderId = undefined
+    }
   }
 
   /**
@@ -790,16 +795,32 @@ export class WecomAgentBridge {
    * delivered into the exact conversation that asked it.
    */
   private async askUserQuestion(request: AskUserQuestionRequest): Promise<AskUserQuestionAnswer> {
-    const state = this.stateForAgent(request.agent)
-    if (!state) throw new QuestionError('dsh-wecom: no live WeCom chat for the calling agent', 'WECOM_CALLER_NOT_LIVE')
-    const [first, ...rest] = request.questions
-    if (!first) throw new QuestionError('dsh-wecom: ask_user_question requires at least one question', 'EMPTY_QUESTIONS')
-    // WeCom cards render a single question cleanly; surface any extras as text
-    // so they are still visible while we wait for the primary card.
-    if (rest.length > 0) {
-      void this.bot.sendText(state.chatId, rest.map(renderQuestionText).join('\n\n')).catch(() => undefined)
+    if (request.route?.channel !== 'wecom') {
+      throw new QuestionError('dsh-wecom: request was not routed to WeCom', 'WECOM_ROUTE_MISMATCH')
     }
-    return this.openQuestion(state.chatId, first)
+    const state = this.states.get(request.route.destination)
+    const handle = state?.handle
+    if (!state || !handle || handle.agent !== request.agent || this.stateForAgent(request.agent) !== state) {
+      throw new QuestionError('dsh-wecom: no exact live WeCom chat owns the calling agent', 'WECOM_CALLER_NOT_LIVE')
+    }
+    if (!state.activeSenderId) {
+      throw new QuestionError('dsh-wecom: active turn has no authorized sender', 'WECOM_SENDER_UNAVAILABLE')
+    }
+    const liveAgent = handle.agent
+    if (request.questions.length === 0) {
+      throw new QuestionError('dsh-wecom: ask_user_question requires at least one question', 'EMPTY_QUESTIONS')
+    }
+    const answers: AskUserQuestionAnswer['answers'] = []
+    for (const question of request.questions) {
+      const answer = await this.openQuestion(state.chatId, question, {
+        chatKey: request.route.destination,
+        senderId: state.activeSenderId,
+        agent: liveAgent,
+        ...(request.signal === undefined ? {} : { signal: request.signal }),
+      })
+      answers.push(...answer.answers)
+    }
+    return { answers }
   }
 
   /**
@@ -811,7 +832,11 @@ export class WecomAgentBridge {
    * Public so the question→card→selection flow can be unit-tested directly; the
    * `userQuestions` provider calls it after resolving the caller's chat.
    */
-  openQuestion(chatId: string, item: AskUserQuestionItem): Promise<AskUserQuestionAnswer> {
+  openQuestion(
+    chatId: string,
+    item: AskUserQuestionItem,
+    ownership: { chatKey: string; senderId: string; agent: Agent; signal?: AbortSignal } | undefined = undefined,
+  ): Promise<AskUserQuestionAnswer> {
     const taskId = generateTaskId()
     const question = toCardQuestion(item, taskId)
     if (!question || !this.bot.isReady()) {
@@ -819,15 +844,45 @@ export class WecomAgentBridge {
         throw new QuestionError('dsh-wecom: question has no cardable options or the connection is unavailable; shown to the user as text', 'WECOM_CARD_UNRENDERABLE')
       })
     }
-    return this.bot.sendTemplateCard(chatId, buildQuestionCard(question)).then(() => new Promise<AskUserQuestionAnswer>((resolve, reject) => {
+    return new Promise<AskUserQuestionAnswer>((resolve, reject) => {
+      let pending: PendingQuestion
+      const claim = (): boolean => {
+        if (this.pendingQuestions.get(taskId) !== pending) return false
+        this.pendingQuestions.delete(taskId)
+        clearTimeout(pending.timer)
+        if (pending.signal !== undefined && pending.onAbort !== undefined) {
+          pending.signal.removeEventListener('abort', pending.onAbort)
+        }
+        return true
+      }
       const timer = setTimeout(() => {
-        if (this.pendingQuestions.delete(taskId)) {
+        if (claim()) {
           reject(new QuestionError('dsh-wecom: question timed out waiting for a selection', 'WECOM_ASK_TIMEOUT'))
         }
       }, QUESTION_TIMEOUT_MS)
       timer.unref?.()
-      this.pendingQuestions.set(taskId, { chatId, question, timer, resolve, reject })
-    }))
+      const onAbort = (): void => {
+        if (claim()) reject(new QuestionError('dsh-wecom: question was aborted', 'ASK_ABORTED'))
+      }
+      pending = {
+        chatId, question, timer, resolve, reject,
+        ...(ownership === undefined ? {} : {
+          chatKey: ownership.chatKey,
+          senderId: ownership.senderId,
+          agent: ownership.agent,
+          ...(ownership.signal === undefined ? {} : { signal: ownership.signal, onAbort }),
+        }),
+      }
+      this.pendingQuestions.set(taskId, pending)
+      ownership?.signal?.addEventListener('abort', onAbort, { once: true })
+      if (ownership?.signal?.aborted) {
+        onAbort()
+        return
+      }
+      void this.bot.sendTemplateCard(chatId, buildQuestionCard(question)).catch((error: unknown) => {
+        if (claim()) reject(error)
+      })
+    })
   }
 
   /**
@@ -838,16 +893,28 @@ export class WecomAgentBridge {
   async onCardSelection(event: InboundCardEvent): Promise<void> {
     const pending = this.pendingQuestions.get(event.taskId)
     if (!pending) return
-    const option = resolveSelection(event.eventKey, pending.question)
+    if (pending.chatKey !== undefined && pending.chatKey !== chatKey(event.chatType, event.chatId)) return
+    if (pending.senderId !== undefined && pending.senderId !== event.senderId) return
+    if (pending.agent !== undefined) {
+      const state = pending.chatKey === undefined ? undefined : this.states.get(pending.chatKey)
+      if (state?.handle?.agent !== pending.agent) return
+    }
+    const submittedOptionId = event.selectedItems
+      ?.find(item => item.questionKey === pending.question.id)
+      ?.optionIds[0]
+    const option = resolveSelection(submittedOptionId ?? event.eventKey, pending.question)
     if (!option) return
     clearTimeout(pending.timer)
     this.pendingQuestions.delete(event.taskId)
+    if (pending.signal !== undefined && pending.onAbort !== undefined) {
+      pending.signal.removeEventListener('abort', pending.onAbort)
+    }
+    pending.resolve(toAnswer(pending.question, option))
     try {
-      await this.bot.updateTemplateCard(event.frame, buildSelectionCard(pending.question, option.label), event.senderId ? [event.senderId] : undefined)
+      await this.bot.updateTemplateCard(event.frame, buildSelectionCard(pending.question, option), event.senderId ? [event.senderId] : undefined)
     } catch (error) {
       this.log.warn('questions: reflecting the selection on the card failed', { error: safeErrorKind(error) })
     }
-    pending.resolve(toAnswer(pending.question, option))
   }
 
   private async handleCommand(message: InboundMessage): Promise<TurnResult | null> {
@@ -1147,6 +1214,9 @@ export class WecomAgentBridge {
     this.disposeUserQuestions?.()
     for (const pending of this.pendingQuestions.values()) {
       clearTimeout(pending.timer)
+      if (pending.signal !== undefined && pending.onAbort !== undefined) {
+        pending.signal.removeEventListener('abort', pending.onAbort)
+      }
       pending.reject(new QuestionError('dsh-wecom: bridge shut down before the question was answered', 'WECOM_DISPOSED'))
     }
     this.pendingQuestions.clear()
@@ -1197,7 +1267,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 export { WecomBot } from './bot.ts'
 export type { InboundCardEvent, InboundMessage, WecomLifecycleEvent } from './bot.ts'
 export { WecomLifecycleController } from './lifecycle.ts'
-export type { WecomStatus, WecomConnectionState } from './lifecycle.ts'
+export type { WecomStatus, WecomBindingsCapability, WecomConnectionState, WecomQuestionCapability, WecomStartupStage } from './lifecycle.ts'
 export { AuthWatchdog, resolveWatchdogConfig, renderWatchdogAlert, extractWatchdogCode } from './watchdog.ts'
 export type { AuthWatchdogConfig, WatchdogStatus, WatchdogAlert, WatchdogDegradedKind, WatchdogState } from './watchdog.ts'
 export { parseCommand, resolveWorkingDir, renderHelp, COMMANDS } from './commands.ts'
@@ -1206,6 +1276,8 @@ export {
   buildQuestionCard,
   buildSelectionCard,
   generateTaskId,
+  interactionRouteOf,
+  routeUserMessage,
   MAX_CARD_OPTIONS,
   QuestionError,
   renderQuestionText,
@@ -1221,4 +1293,5 @@ export type {
   AskUserQuestionRequest,
   CardOption,
   CardQuestion,
+  InteractionRoute,
 } from './questions.ts'
