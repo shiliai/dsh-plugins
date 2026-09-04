@@ -19,7 +19,8 @@ function makeAgent(prefix: string): FakeAgent {
     session: { seq: 0, events },
     messages: [],
     followup(msg) {
-      this.messages.push(msg)
+      // DSH validates the durable inbox event and returns a cloned message.
+      this.messages.push(structuredClone(msg))
       const seq = events.length
       events.push({ seq, type: 'turn/start', data: {} })
       events.push({

@@ -57,23 +57,68 @@ export type InteractionRoute =
 
 const INTERACTION_ROUTE_REGISTRY_KEY = Symbol.for('@deepseek-ai/dsh-user-questions/interaction-route-registry')
 
-function interactionRouteRegistry(): WeakMap<object, InteractionRoute> {
-  const existing: unknown = Reflect.get(globalThis, INTERACTION_ROUTE_REGISTRY_KEY)
-  if (existing instanceof WeakMap) return existing as WeakMap<object, InteractionRoute>
-  const registry = new WeakMap<object, InteractionRoute>()
-  Reflect.set(globalThis, INTERACTION_ROUTE_REGISTRY_KEY, registry)
+interface InteractionRouteRegistry {
+  readonly objects: WeakMap<object, InteractionRoute>
+  readonly messageIds: Map<string, InteractionRoute>
+}
+
+const MAX_ROUTED_MESSAGE_IDS = 4096
+
+function registryHost(): object {
+  const processHost: unknown = Reflect.get(globalThis, 'process')
+  return typeof processHost === 'object' && processHost !== null ? processHost : globalThis
+}
+
+function interactionRouteRegistry(): InteractionRouteRegistry {
+  const host = registryHost()
+  const existing: unknown = Reflect.get(host, INTERACTION_ROUTE_REGISTRY_KEY)
+  if (typeof existing === 'object' && existing !== null
+    && Reflect.get(existing, 'objects') !== undefined
+    && Reflect.get(existing, 'messageIds') !== undefined) {
+    return existing as InteractionRouteRegistry
+  }
+  const registry: InteractionRouteRegistry = {
+    objects: new WeakMap<object, InteractionRoute>(),
+    messageIds: new Map<string, InteractionRoute>(),
+  }
+  Reflect.set(host, INTERACTION_ROUTE_REGISTRY_KEY, registry)
   return registry
+}
+
+function messageIdOf(message: object): string | undefined {
+  const id: unknown = Reflect.get(message, 'id')
+  return typeof id === 'string' && id !== '' ? id : undefined
 }
 
 /** Associate a trusted route with an immutable message without serializing it. */
 export function routeUserMessage<T extends object>(message: T, route: InteractionRoute): T {
-  interactionRouteRegistry().set(message, Object.freeze({ ...route }))
+  const registry = interactionRouteRegistry()
+  const frozen = Object.freeze({ ...route })
+  registry.objects.set(message, frozen)
+  const messageId = messageIdOf(message)
+  if (messageId !== undefined) {
+    registry.messageIds.delete(messageId)
+    registry.messageIds.set(messageId, frozen)
+    while (registry.messageIds.size > MAX_ROUTED_MESSAGE_IDS) {
+      const oldest = registry.messageIds.keys().next().value
+      if (oldest === undefined) break
+      registry.messageIds.delete(oldest)
+    }
+  }
   return message
 }
 
 /** Read a route associated through either the plugin or routing-capable DSH. */
 export function interactionRouteOf(message: object | undefined): InteractionRoute | undefined {
-  return message === undefined ? undefined : interactionRouteRegistry().get(message)
+  if (message === undefined) return undefined
+  const registry = interactionRouteRegistry()
+  const direct = registry.objects.get(message)
+  if (direct !== undefined) return direct
+  const messageId = messageIdOf(message)
+  if (messageId === undefined) return undefined
+  const route = registry.messageIds.get(messageId)
+  if (route !== undefined) registry.objects.set(message, route)
+  return route
 }
 
 /** The `userQuestions.ask` request the plugin's provider receives. */
