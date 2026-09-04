@@ -53,6 +53,46 @@ describe('WecomLifecycleController', () => {
     expect(JSON.stringify(controller.getStatus())).not.toContain('token-value')
   })
 
+  it('reports the exact startup stage with a stable secret-free code', async () => {
+    const bot = new FakeBot()
+    bot.start = async () => { throw new Error('credential secret-value must not leak') }
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const controller = new WecomLifecycleController(
+      {} as never, config(), '0.5.0', () => bot as never,
+      () => ({ dispose: async () => {} }) as never,
+    )
+
+    try {
+      const status = await controller.start()
+      expect(status).toMatchObject({
+        state: 'error', startupStage: 'connect', diagnosticCode: 'STARTUP_CONNECT',
+      })
+      expect(JSON.stringify(status)).not.toContain('secret-value')
+      expect(logged.mock.calls.flat().join('\n')).not.toContain('secret-value')
+      expect(logged.mock.calls.flat().join('\n')).toContain('[redacted]')
+    } finally {
+      logged.mockRestore()
+    }
+  })
+
+  it('keeps connection startup available when optional question setup fails', async () => {
+    const bot = new FakeBot()
+    const controller = new WecomLifecycleController(
+      {} as never, config(), '0.5.0', () => bot as never,
+      () => ({
+        registerUserQuestionsProvider: async () => { throw new Error('optional failure') },
+        dispose: async () => {},
+      }) as never,
+    )
+
+    const status = await controller.start()
+
+    expect(bot.starts).toBe(1)
+    expect(status).toMatchObject({
+      state: 'connecting', startupStage: 'connect', questionCapability: 'degraded',
+    })
+  })
+
   it('serializes repeated restarts and returns completed snapshots with restarting false', async () => {
     const bots: FakeBot[] = []
     const bridges: Array<{ dispose: ReturnType<typeof vi.fn> }> = []
@@ -124,7 +164,7 @@ describe('WecomLifecycleController', () => {
     const bot = new FakeBot()
     const controller = new WecomLifecycleController({} as never, config(), '0.2.0', () => bot as never, () => ({ dispose: async () => {} }) as never)
     await controller.start()
-    expect(controller.getStatus().watchdog).toMatchObject({ enabled: true, state: 'healthy' })
+    expect(controller.getStatus().watchdog).toMatchObject({ enabled: true, state: 'initializing' })
     bot.emit({ type: 'error', error: new Error('Authentication failed (code: 853004)') })
     expect(controller.getStatus().watchdog).toMatchObject({ state: 'degraded', kind: 'auth', code: '853004' })
     // Healthy events heal the watchdog.

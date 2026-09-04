@@ -61,11 +61,12 @@ describe('renderWatchdogAlert', () => {
 })
 
 describe('AuthWatchdog state machine and alerting', () => {
-  it('starts healthy, heals on authenticated, and surfaces degraded after an auth error', async () => {
+  it('starts initializing, becomes healthy on authenticated, and surfaces degraded after an auth error', async () => {
     const { watchdog, now } = makeWatchdog()
-    expect(watchdog.status()).toMatchObject({ enabled: true, state: 'healthy', alertCount: 0 })
+    expect(watchdog.status()).toMatchObject({ enabled: true, state: 'initializing', alertCount: 0 })
+    expect(watchdog.status().lastHealthyAt).toBeUndefined()
     watchdog.observe({ type: 'authenticated' })
-    expect(watchdog.status()).toMatchObject({ state: 'healthy' })
+    expect(watchdog.status()).toMatchObject({ state: 'healthy', lastHealthyAt: now() })
     watchdog.observe({ type: 'error', error: authExhausted })
     expect(watchdog.status()).toMatchObject({ state: 'degraded', kind: 'auth', code: 'WS_AUTH_FAILURE_EXHAUSTED', degradedSince: expect.any(Number) })
     // Below the alert threshold we do not alert yet.

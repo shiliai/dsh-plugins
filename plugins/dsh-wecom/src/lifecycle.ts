@@ -7,6 +7,9 @@ import type { InboundMessage } from './bot.ts'
 import { AuthWatchdog, resolveWatchdogConfig, renderWatchdogAlert, type WatchdogAlert, type WatchdogStatus } from './watchdog.ts'
 
 export type WecomConnectionState = 'unconfigured' | 'connecting' | 'online' | 'reconnecting' | 'offline' | 'error'
+export type WecomStartupStage = 'create-bot' | 'create-bridge' | 'optional-capabilities' | 'connect'
+export type WecomQuestionCapability = 'unknown' | 'active' | 'unsupported' | 'degraded'
+export type WecomBindingsCapability = 'unknown' | 'active' | 'disabled' | 'degraded'
 
 /** The complete browser-facing contract. It deliberately has no secret or frame fields. */
 export interface WecomStatus {
@@ -20,6 +23,14 @@ export interface WecomStatus {
   version: string
   /** Authorization watchdog state. */
   watchdog?: WatchdogStatus | undefined
+  /** Last startup stage entered, retained when startup fails. */
+  startupStage?: WecomStartupStage | undefined
+  /** Stable secret-free diagnostic code for the current failure. */
+  diagnosticCode?: string | undefined
+  /** Optional routed-question provider state; never controls core connectivity. */
+  questionCapability?: WecomQuestionCapability | undefined
+  /** Persistent chat-binding capability state. */
+  bindingsCapability?: WecomBindingsCapability | undefined
 }
 
 type Snapshot = Omit<WecomStatus, 'restarting'>
@@ -32,6 +43,16 @@ const DIAGNOSTIC = {
   connection: 'Connection failure. Check credentials and network, then restart.',
   cleanup: 'Cleanup failure. Check plugin status and restart once more.',
 } as const
+
+/** Preserve useful startup text and stack locations while removing configured credentials. */
+function safeStartupStack(error: unknown, config: Config): string {
+  if (!(error instanceof Error)) return 'UnknownError'
+  let value = error.stack ?? `${error.name}: ${error.message}`
+  for (const secret of [config.botSecret, config.botId]) {
+    if (secret) value = value.replaceAll(secret, '[redacted]')
+  }
+  return value.slice(0, 4_096)
+}
 
 export class WecomLifecycleController {
   private current: RunningPair | undefined
@@ -77,12 +98,25 @@ export class WecomLifecycleController {
       authenticatedAt: this.snapshot.authenticatedAt,
       disconnectedAt: this.snapshot.disconnectedAt,
       botIdentity: this.snapshot.botIdentity,
+      startupStage: this.snapshot.startupStage,
+      diagnosticCode: this.snapshot.diagnosticCode,
+      questionCapability: this.snapshot.questionCapability,
+      bindingsCapability: this.snapshot.bindingsCapability,
       ...details,
     })
   }
 
   getStatus(): WecomStatus {
-    return { ...this.snapshot, watchdog: this.watchdog.status(), restarting: !this.terminalDispose && this.restartTask !== undefined }
+    const capabilities = this.current?.bridge?.getCapabilityStatus?.()
+    return {
+      ...this.snapshot,
+      ...(capabilities === undefined ? {} : {
+        questionCapability: capabilities.questions,
+        bindingsCapability: capabilities.bindings,
+      }),
+      watchdog: this.watchdog.status(),
+      restarting: !this.terminalDispose && this.restartTask !== undefined,
+    }
   }
 
   async start(): Promise<WecomStatus> {
@@ -100,6 +134,7 @@ export class WecomLifecycleController {
     if (this.terminalDispose) return
     this.update('connecting', { error: undefined, botIdentity: this.redactedIdentity() })
     let bot: WecomBot | undefined
+    let stage: WecomStartupStage = 'create-bot'
     try {
       bot = this.createBot(this.config)
       bot.onLifecycle(event => {
@@ -112,34 +147,47 @@ export class WecomLifecycleController {
         if (event.type === 'error') this.update('error', { error: DIAGNOSTIC.connection })
       })
       this.current = { bot }
+      stage = 'create-bridge'
+      this.update('connecting', { startupStage: stage, diagnosticCode: undefined })
       const bridge = this.createBridge(this.ctx, bot, this.config)
       this.current.bridge = bridge
+      stage = 'optional-capabilities'
+      this.update('connecting', { startupStage: stage })
+      let questionCapability: WecomQuestionCapability = 'unknown'
+      try {
+        if (typeof bridge.registerUserQuestionsProvider === 'function') {
+          questionCapability = await bridge.registerUserQuestionsProvider()
+        }
+        bot.onCardEvent?.(async event => {
+          if (!this.isInboundAuthorized({ chatId: event.chatId, chatType: event.chatType, text: '', frame: event.frame, msgId: event.msgId, senderId: event.senderId })) return
+          try {
+            await bridge.onCardSelection(event)
+          } catch (error) {
+            // eslint-disable-next-line no-console
+            console.error(`[dsh-wecom] card selection handling failed (${safeErrorKind(error)})`)
+          }
+        })
+      } catch (error) {
+        questionCapability = 'degraded'
+        this.log.warn('optional question capability initialization failed', { error: safeErrorKind(error) })
+      }
+      this.update('connecting', { startupStage: stage, questionCapability })
+      stage = 'connect'
+      this.update('connecting', { startupStage: stage })
       await bot.start(async message => {
         if (!this.isInboundAuthorized(message)) return
         await bridge.enqueue(message)
       })
-      // The WeCom long connection is now up. Defer to the browser host if
-      // present (see registerUserQuestionsProvider): wait for the api-proxy host
-      // to surface, and only register our own provider when no browser owns the
-      // single `userQuestions` slot. This avoids racing the host at bootstrap,
-      // which would crash the whole plugin tree with DUPLICATE_PROVIDER.
-      if (typeof bridge.registerUserQuestionsProvider === 'function') await bridge.registerUserQuestionsProvider()
-      // Route user taps on rendered question cards back into the same session.
-      bot.onCardEvent?.(async event => {
-        if (!this.isInboundAuthorized({ chatId: event.chatId, chatType: event.chatType, text: '', frame: event.frame, msgId: event.msgId, senderId: event.senderId })) return
-        try {
-          await bridge.onCardSelection(event)
-        } catch (error) {
-          // eslint-disable-next-line no-console
-          console.error(`[dsh-wecom] card selection handling failed (${safeErrorKind(error)})`)
-        }
-      })
       if (this.terminalDispose) await this.teardownCurrent()
     } catch (startupError) {
       // eslint-disable-next-line no-console
-      console.error(`[dsh-wecom] startup failed: ${startupError && (startupError as Error).stack ? (startupError as Error).stack : String(startupError)}`)
+      console.error(`[dsh-wecom] startup failed: ${safeStartupStack(startupError, this.config)}`)
       await this.teardownCurrent()
-      this.update('error', { error: DIAGNOSTIC.startup })
+      this.update('error', {
+        error: DIAGNOSTIC.startup,
+        startupStage: stage,
+        diagnosticCode: `STARTUP_${stage.replaceAll('-', '_').toUpperCase()}`,
+      })
     }
   }
 

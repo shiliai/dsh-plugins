@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/dsh-wecom",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "WeCom smart-robot long-connection bridge into DeepSeek Harness: resident WebSocket bot on a DSH agent session with conversation memory",
   "license": "MIT",
   "repository": {

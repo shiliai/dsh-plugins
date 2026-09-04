@@ -50,6 +50,32 @@ export interface AskUserQuestionAnswer {
   answers: AskUserQuestionAnswerItem[]
 }
 
+/** Trusted host-authored destination for one agent turn. */
+export type InteractionRoute =
+  | { channel: 'web'; destination: string }
+  | { channel: 'wecom'; destination: string }
+
+const INTERACTION_ROUTE_REGISTRY_KEY = Symbol.for('@deepseek-ai/dsh-user-questions/interaction-route-registry')
+
+function interactionRouteRegistry(): WeakMap<object, InteractionRoute> {
+  const existing: unknown = Reflect.get(globalThis, INTERACTION_ROUTE_REGISTRY_KEY)
+  if (existing instanceof WeakMap) return existing as WeakMap<object, InteractionRoute>
+  const registry = new WeakMap<object, InteractionRoute>()
+  Reflect.set(globalThis, INTERACTION_ROUTE_REGISTRY_KEY, registry)
+  return registry
+}
+
+/** Associate a trusted route with an immutable message without serializing it. */
+export function routeUserMessage<T extends object>(message: T, route: InteractionRoute): T {
+  interactionRouteRegistry().set(message, Object.freeze({ ...route }))
+  return message
+}
+
+/** Read a route associated through either the plugin or routing-capable DSH. */
+export function interactionRouteOf(message: object | undefined): InteractionRoute | undefined {
+  return message === undefined ? undefined : interactionRouteRegistry().get(message)
+}
+
 /** The `userQuestions.ask` request the plugin's provider receives. */
 export interface AskUserQuestionRequest {
   /** Questions to display. */
@@ -58,6 +84,8 @@ export interface AskUserQuestionRequest {
   agent?: unknown
   /** Abort signal for the owning tool/step. */
   signal?: AbortSignal
+  /** Route copied from the trusted message that opened the current turn. */
+  route?: InteractionRoute
 }
 
 /** Structured error thrown when an interactive question cannot be completed. */

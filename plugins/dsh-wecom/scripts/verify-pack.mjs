@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, mkdir, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -25,6 +25,16 @@ try {
   const consumer = await mkdtemp(join(tmpdir(), 'dsh-wecom-consumer-'))
   try {
     execFileSync('tar', ['-xzf', join(destination, archive), '-C', consumer], { stdio: 'inherit' })
+    const serverBundle = await readFile(join(consumer, 'package', 'lib', 'index.js'), 'utf8')
+    for (const compiledBehavior of [
+      'service.supportsRouting !== true',
+      'service.registerProvider("wecom"',
+      'STARTUP_${stage.replaceAll',
+    ]) {
+      if (!serverBundle.includes(compiledBehavior)) {
+        throw new Error(`compiled server bundle is missing routed-question behavior: ${compiledBehavior}`)
+      }
+    }
     await mkdir(join(consumer, 'node_modules', '@dsh-plugins'), { recursive: true })
     await symlink(join(consumer, 'package'), join(consumer, 'node_modules', '@dsh-plugins', 'dsh-wecom'), 'dir')
     await writeFile(join(consumer, 'consumer.ts'), "import { apply } from '@dsh-plugins/dsh-wecom/client'\nvoid apply\n")
