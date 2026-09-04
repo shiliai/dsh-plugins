@@ -34,9 +34,78 @@ function runBootstrap(home, settings, env) {
   assert.equal(result.status, 0, result.stderr)
 }
 
+function invokeFullBootstrap(home, settings, env = {}) {
+  return spawnSync(process.execPath, [
+    bootstrap,
+    'sync',
+    '--yes',
+    '--config', config,
+    '--settings', settings,
+    '--skip-dsh',
+    '--skip-plugins',
+  ], {
+    encoding: 'utf8',
+    env: { ...process.env, ...env, DSH_HOME: home },
+  })
+}
+
 function parseCredentials(path) {
   return parseDocument(readFileSync(path, 'utf8'), { uniqueKeys: true }).toJS()
 }
+
+test('portable template contains the supported providers and GPT roster', () => {
+  const settings = parseDocument(readFileSync(join(scriptDir, 'settings.yaml'), 'utf8')).toJS()
+  const providers = settings['llm-pi-ai'].providers
+  assert.deepEqual(Object.keys(providers), ['kimi', 'glm', 'gpt', 'ds-haitian', 'minimax-relay'])
+  assert.deepEqual(providers.gpt.models.map((model) => model.id), [
+    'gpt-5.6-luna',
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+  ])
+  for (const provider of Object.values(providers)) {
+    if (provider.baseURL !== undefined) assert.match(provider.baseURL, /^credential:[A-Z][A-Z0-9_]*_BASE_URL$/)
+  }
+})
+
+test('stores base URLs as credentials and resolves them into local settings', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-bootstrap-baseurl-'))
+  const home = join(root, 'home')
+  const settings = join(root, 'settings.yaml')
+  const credentials = join(home, '.credentials.yaml')
+  try {
+    writeFileSync(settings, [
+      'llm-pi-ai:',
+      '  providers:',
+      '    fixture:',
+      '      apiKeyEnv: FIXTURE_API_KEY',
+      '      api: openai-completions',
+      '      baseURL: credential:FIXTURE_BASE_URL',
+      '      models:',
+      '        - id: fixture-model',
+      '',
+    ].join('\n'))
+    const result = invokeFullBootstrap(home, settings, {
+      FIXTURE_API_KEY: 'fixture-secret',
+      FIXTURE_BASE_URL: 'https://fixture.example/v1',
+    })
+    assert.equal(result.status, 0, result.stderr)
+    assert.deepEqual(parseCredentials(credentials), {
+      FIXTURE_API_KEY: 'fixture-secret',
+      FIXTURE_BASE_URL: 'https://fixture.example/v1',
+    })
+    const localSettings = readFileSync(join(home, 'settings.yaml'), 'utf8')
+    assert.match(localSettings, /baseURL: 'https:\/\/fixture\.example\/v1'/)
+    assert.doesNotMatch(localSettings, /credential:FIXTURE_BASE_URL/)
+
+    writeFileSync(credentials, "FIXTURE_API_KEY: fixture-secret\nFIXTURE_BASE_URL: https://new.example/v1\n")
+    chmodSync(credentials, 0o600)
+    const rerun = invokeFullBootstrap(home, settings)
+    assert.equal(rerun.status, 0, rerun.stderr)
+    assert.match(readFileSync(join(home, 'settings.yaml'), 'utf8'), /baseURL: 'https:\/\/new\.example\/v1'/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 function writeExecutable(path, source) {
   writeFileSync(path, source)
