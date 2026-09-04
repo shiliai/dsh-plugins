@@ -99,7 +99,9 @@ function addReadinessOwner(connector: WorkspaceConnector, owner: ReadinessOwner)
 }
 
 export function installWorkspaceSessionReadiness(ctx: ClientContext): () => void | Promise<void> {
-  const modelDirectories = (ctx as ClientContext & { modelDirectories: ModelDirectories }).modelDirectories
+  const localModelDirectories = (ctx as ClientContext & { modelDirectories: ModelDirectories }).modelDirectories
+  const modelDirectories = (ctx.root?.get('modelDirectories') as ModelDirectories | undefined)
+    ?? localModelDirectories
   const owner: ReadinessOwner = {
     async wait(workspaceId, sessionId) {
       await Promise.all([
