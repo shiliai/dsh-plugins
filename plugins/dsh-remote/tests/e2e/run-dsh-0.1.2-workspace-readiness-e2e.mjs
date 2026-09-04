@@ -53,8 +53,16 @@ try {
 
   browser = await chromium.launch({ channel: 'chrome' })
   const page = await browser.newPage()
+  const browserErrors = []
+  page.on('console', message => {
+    if (message.type() === 'error') browserErrors.push(`console: ${message.text()}`)
+  })
+  page.on('pageerror', error => { browserErrors.push(`pageerror: ${String(error)}`) })
   await page.goto(launchUrlFromOutput(output))
-  await page.waitForFunction(() => window.__DSH_REMOTE_RC12_E2E__ !== undefined)
+  await page.waitForFunction(() => window.__DSH_REMOTE_RC12_E2E__ !== undefined).catch(async error => {
+    const boot = await page.evaluate(() => window.__DSH_BOOT__)
+    throw new Error(`fixture client did not activate; url=${page.url()} boot=${JSON.stringify(boot)} browser=${JSON.stringify(browserErrors)} dsh=${JSON.stringify(output)}`, { cause: error })
+  })
   await page.evaluate(path => window.__DSH_REMOTE_RC12_E2E__.start(path), workspacePath)
   await page.waitForFunction(() => window.__DSH_REMOTE_RC12_E2E__.snapshot().modelLoadEntered)
 
@@ -90,6 +98,7 @@ async function createFixturePackage(directory) {
       bundle: { patch: './cordis.patch.yml' },
       client: {
         platform: 'web',
+        immediately: true,
         inject: [
           '@dsh-plugins/dsh-remote',
           '@deepseek-ai/dsh-client-ui-workspace',
