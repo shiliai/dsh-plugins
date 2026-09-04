@@ -7,7 +7,15 @@ import { installMobileCompatibility } from './mobile-compat.ts'
 import { installWorkspaceSessionReadiness } from './workspace-session-readiness.ts'
 import css from './styles.module.css?dsh-inline'
 
-export const inject = ['settingsScope', 'slots', 'sessions', 'workspaces', 'modelDirectories']
+export const inject = [
+  'settingsScope',
+  'slots',
+  'sessions',
+  'workspaces',
+  'modelDirectories',
+  'remote',
+  'remote.session',
+]
 const ACCESS_FRAGMENT = /^#\/access\/[A-Za-z0-9_-]{43}$/u
 const OWNER_UI_COOKIE = '__Host-dsh_remote_owner_ui'
 
