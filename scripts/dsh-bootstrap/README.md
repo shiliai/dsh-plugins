@@ -27,22 +27,20 @@ It is safe to run repeatedly — every step detects what is already done and ski
 ## What it does
 
 1. **ensure-dsh** — installs the DSH CLI (`@deepseek-ai/dsh` via npm) only if `dsh` is missing.
-2. **settings** — provisions `$DSH_HOME/settings.yaml` from the portable template. By
-   default it symlinks the template so your custom model config stays single-source and
-   syncs on the next `git pull`. When a provider still carries a placeholder `baseURL`
-   (`https://your-llm-gateway.example.com/v1`), the bootstrap resolves a real per-machine
-   endpoint from a `<KEY>_BASE_URL` environment variable (or an interactive prompt) and
-   materializes a **local** `settings.yaml` — real endpoints stay machine-local and are
-   never committed. Your curated model fields live under `llm-pi-ai.providers`:
-   `contextWindow` (context size), `input: [text, image]` (multimodal),
-   `maxTokens`, and `reasoningEfforts` (thinking effort).
-3. **credentials** — detects every `apiKeyEnv:` referenced by `settings.yaml`, prompts once
-   per machine for the key (or reads it from an environment variable / `env:VAR`), and writes
-   the rc.8 flat credential mapping at `$DSH_HOME/.credentials.yaml` with mode `600`. Legacy
-   bootstrap files using a `version`/`refs` wrapper are migrated immediately, with a protected
-   `.legacy-<timestamp>.bak` rollback copy. Writes use rc.8-compatible YAML parsing, its shared
-   writer-lock convention, and atomic mode-`600` replacement.
-   This file is **never committed**.
+2. **credentials** — detects every `apiKeyEnv:` and `baseURL: credential:NAME` reference,
+   prompts once per machine for each value (or reads it from an environment variable /
+   `env:VAR`), and writes the rc.8 flat mapping at `$DSH_HOME/.credentials.yaml` with mode
+   `600`. Legacy bootstrap files using a `version`/`refs` wrapper are migrated immediately,
+   with a protected `.legacy-<timestamp>.bak` rollback copy. Writes use rc.8-compatible YAML
+   parsing, its shared writer-lock convention, and atomic mode-`600` replacement. This file
+   is **never committed**.
+3. **settings** — provisions `$DSH_HOME/settings.yaml` from the portable template. A provider
+   endpoint is declared as `baseURL: credential:NAME`; bootstrap resolves that reference from
+   `.credentials.yaml` (with the same-named process environment variable taking precedence)
+   and materializes the literal URL currently required by DSH into a local settings document.
+   Real endpoints therefore stay out of the repository. Templates without credential-backed
+   base URLs can still be symlinked. Curated model fields live under `llm-pi-ai.providers`:
+   `contextWindow`, `input`, `maxTokens`, and `reasoningEfforts`.
 4. **plugins** — shows required plugins (auto-installed, e.g. `dsh-better-sidebar`) and lets
    you pick optional ones (Obsidian, remote, WeCom, file-attachment) with an interactive
    **checkbox** (↑/↓ to move, Space to toggle, Enter to confirm; plain number input works
@@ -77,41 +75,29 @@ options:
   --yes                non-interactive: accept each prompt's default; install all optionals
   --skip-dsh           skip DSH install check
   --skip-settings      skip provisioning the settings.yaml
-  --skip-baseurl       skip resolving per-machine base URL placeholders
+  --skip-baseurl       skip resolving credential-backed base URLs
   --skip-credentials   skip credentials
   --skip-plugins       skip plugins
   -h, --help           show help
 ```
 
-## Per-machine base URLs (via environment variables)
+## Per-machine base URLs
 
-DSH reads `apiKeyEnv` through its credentials seam at request time, but `baseURL` is a
-plain config value that DSH does **not** expand against the environment on its own. So
-dsh-bootstrap resolves a provider's real endpoint at setup time from an env var whose name
-is derived from that provider's `apiKeyEnv` — strip a trailing `_API_KEY` / `_KEY` /
-`_TOKEN` and append `_BASE_URL`:
+DSH reads `apiKeyEnv` through its credentials seam at request time, but currently requires
+`baseURL` to be a literal settings value. The portable bootstrap template therefore uses an
+explicit credential reference:
 
-| `apiKeyEnv`           | base URL env var        |
-| --------------------- | ----------------------- |
-| `GB10_CLUSTER_API_KEY`| `GB10_CLUSTER_BASE_URL` |
-| `KIMI_API_KEY`        | `KIMI_BASE_URL`         |
-| `GLM_API_KEY`         | `GLM_BASE_URL`          |
-| `GPT_API_KEY`         | `GPT_BASE_URL`          |
-| `ZAI_CODING_CN_API_KEY`| `ZAI_CODING_CN_BASE_URL`|
-| `DS_HAITIAN_API_KEY`  | `DS_HAITIAN_BASE_URL`   |
-| `MINIMAX_RELAY_API_KEY`| `MINIMAX_RELAY_BASE_URL`|
-| `DSH_TOKYO_API_KEY`   | `DSH_TOKYO_BASE_URL`    |
+```yaml
+gpt:
+  apiKeyEnv: GPT_API_KEY
+  baseURL: credential:GPT_BASE_URL
+```
 
-When at least one such env var is set (or you're on an interactive terminal), the bootstrap
-materializes a **local** `$DSH_HOME/settings.yaml` from the template and fills each
-placeholder `baseURL` from its env var (prompting interactively otherwise). Providers whose
-env var is unset keep the placeholder and warn. This makes the real endpoint machine-local
-and never committed — the trade-off is that once materialized, the file is no longer a
-symlink, so re-run the bootstrap after `git pull` to fold in template model changes while
-your env vars keep supplying the real endpoints.
-
-Unset all `*_BASE_URL` env vars and run non-interactively (e.g. `--yes`) and the bootstrap
-keeps the portable **symlink** so model config syncs on `git pull`.
+Bootstrap stores both `GPT_API_KEY` and `GPT_BASE_URL` in `.credentials.yaml`, then renders
+the local DSH settings file with the resolved URL. Each base URL reference is explicit; it
+is not derived from the API-key name. In non-interactive `--yes` mode, same-named environment
+variables are imported into the credential file. An unresolved reference remains visible in
+the generated settings with a warning rather than silently falling back to a shared endpoint.
 
 ## Making it yours
 
@@ -127,9 +113,9 @@ keeps the portable **symlink** so model config syncs on `git pull`.
 
 ## What is intentionally NOT synced
 
-- `$DSH_HOME/.credentials.yaml` — secrets, written per machine.
-- Real per-machine `baseURL` values — resolved from `*_BASE_URL` env vars and written into a
-  local `settings.yaml` (not the committed template).
+- `$DSH_HOME/.credentials.yaml` — API keys and provider base URLs, written per machine.
+- Resolved per-machine `baseURL` values in the generated local `settings.yaml`; the portable
+  template contains credential references only.
 - `$DSH_HOME/profiles/<name>/cordis.patch.yml` — machine-local per-profile config (vault
   paths, bot secrets via env, allowed paths), by DSH design.
 

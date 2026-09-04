@@ -1,12 +1,13 @@
 # Portable DeepSeek Harness settings for dsh-bootstrap — FULL baseline.
 #
-# This file is symlinked into $DSH_HOME/settings.yaml on every machine. Edit it
-# here (single source of truth), then `git pull` on the other machines to sync —
-# the symlink picks up the change automatically.
+# This is the portable source template. When it contains credential-backed base
+# URLs, dsh-bootstrap renders a marked machine-local $DSH_HOME/settings.yaml and
+# safely refreshes that generated file on later runs.
 #
-# IMPORTANT — no secrets live here. Every provider references its key by env name
-# (`apiKeyEnv`); the actual secrets go into $DSH_HOME/.credentials.yaml, which
-# dsh-bootstrap creates per machine and which must NEVER be committed.
+# IMPORTANT — no secrets or private endpoints live here. Every provider references
+# its API key with `apiKeyEnv` and its endpoint with `baseURL: credential:NAME`.
+# dsh-bootstrap stores both values in $DSH_HOME/.credentials.yaml and renders a
+# machine-local settings.yaml for DSH. The credentials file must NEVER be committed.
 #
 # Keep this in sync with whatever machine you curate on: when you add a custom
 # model (contextWindow, `input: [text, image]` for multimodal, `reasoningEfforts`
@@ -16,34 +17,10 @@ ui-onboarding:
   welcomeNoticeVersion: 2026-08-13.1
 llm-pi-ai:
   providers:
-    gb10-cluster:
-      apiKeyEnv: GB10_CLUSTER_API_KEY
-      api: openai-completions
-      baseURL: https://your-llm-gateway.example.com/v1
-      compat:
-        thinkingFormat: openai
-        supportsReasoningEffort: true
-      reasoning: high
-      models:
-        - id: deepseek-v4-flash-0731
-          contextWindow: 1000000
-          reasoningEfforts:
-            off: null
-            high: high
-            max: max
-        - id: qwen3.8-27b
-          name: qwen3.8-27b-4090
-          contextWindow: 262144
-          input:
-            - text
-            - image
-          reasoningEfforts:
-            off: null
-            low: low
     kimi:
       apiKeyEnv: KIMI_API_KEY
       api: anthropic-messages
-      baseURL: https://your-llm-gateway.example.com/v1
+      baseURL: credential:KIMI_BASE_URL
       reasoning: high
       models:
         - id: k3-256k
@@ -63,7 +40,7 @@ llm-pi-ai:
     glm:
       apiKeyEnv: GLM_API_KEY
       api: anthropic-messages
-      baseURL: https://your-llm-gateway.example.com/v1
+      baseURL: credential:GLM_BASE_URL
       reasoning: high
       models:
         - id: glm-5.3
@@ -81,112 +58,9 @@ llm-pi-ai:
     gpt:
       apiKeyEnv: GPT_API_KEY
       api: openai-responses
-      baseURL: https://your-llm-gateway.example.com/v1
+      baseURL: credential:GPT_BASE_URL
       reasoning: high
       models:
-        - id: codex-auto-review
-          name: codex-auto-review
-        - id: gpt-4o-audio-preview
-          name: gpt-4o-audio-preview
-        - id: gpt-4o-realtime-preview
-          name: gpt-4o-realtime-preview
-        - id: gpt-5.2
-          input: [ text, image ]
-          name: gpt-5.2
-          reasoningEfforts:
-            off:
-            minimal: minimal
-            low: low
-            medium: medium
-            high: high
-        - id: gpt-5.2-2025-12-11
-          input: [ text, image ]
-          name: gpt-5.2-2025-12-11
-          reasoningEfforts:
-            off:
-            minimal: minimal
-            low: low
-            medium: medium
-            high: high
-        - id: gpt-5.2-chat-latest
-          input: [ text, image ]
-          name: gpt-5.2-chat-latest
-          reasoningEfforts:
-            off:
-            minimal: minimal
-            low: low
-            medium: medium
-            high: high
-        - id: gpt-5.2-pro
-          input: [ text, image ]
-          name: gpt-5.2-pro
-          reasoningEfforts:
-            off:
-            minimal: minimal
-            low: low
-            medium: medium
-            high: high
-        - id: gpt-5.2-pro-2025-12-11
-          input: [ text, image ]
-          name: gpt-5.2-pro-2025-12-11
-          reasoningEfforts:
-            off:
-            minimal: minimal
-            low: low
-            medium: medium
-            high: high
-        - id: gpt-5.3-codex
-          name: gpt-5.3-codex
-          reasoningEfforts:
-            off:
-            minimal: minimal
-            low: low
-            medium: medium
-            high: high
-        - id: gpt-5.3-codex-spark
-          name: gpt-5.3-codex-spark
-          reasoningEfforts:
-            off:
-            minimal: minimal
-            low: low
-            medium: medium
-            high: high
-        - id: gpt-5.4
-          input: [ text, image ]
-          name: gpt-5.4
-          reasoningEfforts:
-            off:
-            minimal: minimal
-            low: low
-            medium: medium
-            high: high
-        - id: gpt-5.4-2026-03-05
-          input: [ text, image ]
-          name: gpt-5.4-2026-03-05
-          reasoningEfforts:
-            off:
-            minimal: minimal
-            low: low
-            medium: medium
-            high: high
-        - id: gpt-5.4-mini
-          input: [ text, image ]
-          name: gpt-5.4-mini
-          reasoningEfforts:
-            off:
-            minimal: minimal
-            low: low
-            medium: medium
-            high: high
-        - id: gpt-5.5
-          input: [ text, image ]
-          name: gpt-5.5
-          reasoningEfforts:
-            off:
-            minimal: minimal
-            low: low
-            medium: medium
-            high: high
         - id: gpt-5.6-luna
           input: [ text, image ]
           name: gpt-5.6-luna
@@ -217,48 +91,10 @@ llm-pi-ai:
             medium: medium
             high: high
             xhigh: xhigh
-        - id: gpt-image-1
-          name: gpt-image-1
-        - id: gpt-image-1.5
-          name: gpt-image-1.5
-        - id: gpt-image-2
-          name: gpt-image-2
-    zai-coding-cn:
-      models:
-        - id: glm-4.5-air
-          name: GLM-4.5-Air
-          contextWindow: 131072
-          maxTokens: 98304
-        - id: glm-4.7
-          name: GLM-4.7
-          contextWindow: 204800
-          maxTokens: 131072
-        - id: glm-5-turbo
-          name: GLM-5-Turbo
-          contextWindow: 200000
-          maxTokens: 131072
-        - id: glm-5.1
-          name: GLM-5.1
-          contextWindow: 200000
-          maxTokens: 131072
-        - id: glm-5.2
-          name: GLM-5.2
-          contextWindow: 1000000
-          maxTokens: 131072
-        - id: glm-5v-turbo
-          input: [ text, image ]
-          name: GLM-5V-Turbo
-          contextWindow: 200000
-          maxTokens: 131072
-        - id: glm-5.3
-          name: GLM-5.3
-          contextWindow: 1000000
-          maxTokens: 131072
-      apiKeyEnv: ZAI_CODING_CN_API_KEY
     ds-haitian:
       apiKeyEnv: DS_HAITIAN_API_KEY
       api: openai-completions
-      baseURL: https://your-llm-gateway.example.com/v1
+      baseURL: credential:DS_HAITIAN_BASE_URL
       compat:
         thinkingFormat: openai
         supportsReasoningEffort: true
@@ -282,28 +118,12 @@ llm-pi-ai:
     minimax-relay:
       apiKeyEnv: MINIMAX_RELAY_API_KEY
       api: anthropic-messages
-      baseURL: https://your-llm-gateway.example.com/v1
+      baseURL: credential:MINIMAX_RELAY_BASE_URL
       models:
         - id: MiniMax-M3
           input: [ text, image ]
           name: M3
           contextWindow: 1000000
-    dsh-tokyo:
-      apiKeyEnv: DSH_TOKYO_API_KEY
-      api: openai-completions
-      baseURL: https://your-llm-gateway.example.com/v1
-      compat:
-        thinkingFormat: openai
-        supportsReasoningEffort: true
-      models:
-        - id: deepseek-v4-flash-0731
-        - id: qwen3.8-27b
-          name: qwen3.8-27b-4090
-          input: [ text, image ]
-          contextWindow: 262144
-          reasoningEfforts:
-            off:
-            low: low
 ui-theme:
   preference: light
 locale:
