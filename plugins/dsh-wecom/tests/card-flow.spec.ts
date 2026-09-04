@@ -192,7 +192,12 @@ describe('question card flow: template_card_event → session injection', () => 
       const update = bot.updates[0]!
       expect(update.card.task_id).toBe(taskId)
       expect(update.userids).toEqual(['user-1'])
-      expect(update.card.sub_title_text).toContain('快速部署')
+      expect(update.card).toMatchObject({
+        card_type: 'multiple_interaction',
+        source: { desc: '已提交选择', desc_color: 3 },
+        select_list: [{ question_key: 'q1', disable: true, selected_id: '1' }],
+        submit_button: { text: '已提交', key: 'submitted' },
+      })
     } finally {
       await bridge.dispose()
     }

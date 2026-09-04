@@ -220,12 +220,22 @@ export function resolveSelection(eventKey: string | undefined, q: CardQuestion):
   return q.options.find(option => option.id === tail || option.label === tail)
 }
 
-/** The card shown after a selection so the user sees their choice. */
-export function buildSelectionCard(q: CardQuestion, label: string): TemplateCard {
+/** The disabled card shown after a selection so the user sees their choice. */
+export function buildSelectionCard(q: CardQuestion, selected: CardOption): TemplateCard {
   return {
-    card_type: TemplateCardType.TextNotice,
-    main_title: { title: '已选择' },
-    sub_title_text: `${q.question}\n✅ ${label}`,
+    card_type: TemplateCardType.MultipleInteraction,
+    source: { desc: '已提交选择', desc_color: 3 },
+    main_title: { title: q.question.slice(0, 26) },
+    select_list: [
+      {
+        question_key: q.id,
+        title: q.question,
+        disable: true,
+        selected_id: selected.id,
+        option_list: q.options.map(option => ({ id: option.id, text: option.label })),
+      },
+    ],
+    submit_button: { text: '已提交', key: 'submitted' },
     task_id: q.taskId,
   }
 }

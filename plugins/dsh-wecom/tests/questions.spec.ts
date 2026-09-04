@@ -122,11 +122,25 @@ describe('toAnswer / buildSelectionCard (selection fed back into the session)', 
     expect(answer.answers).toEqual([{ id: 'q1', selected: ['标准部署'] }])
   })
 
-  it('builds a text_notice card reflecting the choice', () => {
+  it('builds a disabled multiple_interaction card reflecting the choice', () => {
     const q = toCardQuestion(item(), 'task-1')!
-    const card = buildSelectionCard(q, '标准部署')
-    expect(card.card_type).toBe(TemplateCardType.TextNotice)
+    const card = buildSelectionCard(q, q.options[1]!)
+    expect(card.card_type).toBe(TemplateCardType.MultipleInteraction)
     expect(card.task_id).toBe('task-1')
-    expect(card.sub_title_text).toContain('标准部署')
+    expect(card.source).toEqual({ desc: '已提交选择', desc_color: 3 })
+    expect(card.select_list).toEqual([
+      {
+        question_key: 'q1',
+        title: '请问需要哪种部署方式？',
+        disable: true,
+        selected_id: '2',
+        option_list: [
+          { id: '1', text: '快速部署' },
+          { id: '2', text: '标准部署' },
+          { id: '3', text: '自定义部署' },
+        ],
+      },
+    ])
+    expect(card.submit_button).toEqual({ text: '已提交', key: 'submitted' })
   })
 })

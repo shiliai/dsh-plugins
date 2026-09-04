@@ -911,7 +911,7 @@ export class WecomAgentBridge {
     }
     pending.resolve(toAnswer(pending.question, option))
     try {
-      await this.bot.updateTemplateCard(event.frame, buildSelectionCard(pending.question, option.label), event.senderId ? [event.senderId] : undefined)
+      await this.bot.updateTemplateCard(event.frame, buildSelectionCard(pending.question, option), event.senderId ? [event.senderId] : undefined)
     } catch (error) {
       this.log.warn('questions: reflecting the selection on the card failed', { error: safeErrorKind(error) })
     }
