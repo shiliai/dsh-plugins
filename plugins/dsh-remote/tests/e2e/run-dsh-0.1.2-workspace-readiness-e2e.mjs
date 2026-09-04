@@ -43,7 +43,7 @@ try {
 
   runDsh(['plugin', '--profile', 'web', 'add', remoteArchive], temp, env)
   runDsh(['plugin', '--profile', 'web', 'add', fixtureArchive], temp, env)
-  dsh = spawn('pnpm', [`--package=@deepseek-ai/dsh@${DSH_VERSION}`, 'dlx', 'dsh', 'web', '--host', '127.0.0.1', '--port', String(port)], {
+  dsh = spawn('pnpm', [`--package=@deepseek-ai/dsh@${DSH_VERSION}`, 'dlx', 'dsh', 'web', '--host', '127.0.0.1', '--port', String(port), '--no-open'], {
     cwd: temp,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -53,7 +53,7 @@ try {
 
   browser = await chromium.launch({ channel: 'chrome' })
   const page = await browser.newPage()
-  await page.goto(origin)
+  await page.goto(launchUrlFromOutput(output))
   await page.waitForFunction(() => window.__DSH_REMOTE_RC12_E2E__ !== undefined)
   await page.evaluate(path => window.__DSH_REMOTE_RC12_E2E__.start(path), workspacePath)
   await page.waitForFunction(() => window.__DSH_REMOTE_RC12_E2E__.snapshot().modelLoadEntered)
@@ -210,12 +210,18 @@ function collectOutput(child, lines) {
   child.stderr.on('data', chunk => { lines.push(chunk.toString()) })
 }
 
+function launchUrlFromOutput(lines) {
+  const match = lines.join('').match(/dsh web: (http:\/\/[^\s]+\?token=[A-Za-z0-9_-]+)/u)
+  if (match?.[1] === undefined) throw new Error(`DSH ${DSH_VERSION} did not report an authenticated launch URL.`)
+  return match[1]
+}
+
 async function waitForReady(baseUrl, child, lines) {
   for (let attempt = 0; attempt < 120; attempt += 1) {
     if (child.exitCode !== null) throw new Error(`DSH ${DSH_VERSION} exited early (${child.exitCode}):\n${lines.join('')}`)
     try {
       const response = await fetch(baseUrl)
-      if (response.ok) return
+      if (response.status >= 100) return
     } catch {}
     await new Promise(resolve => setTimeout(resolve, 500))
   }
