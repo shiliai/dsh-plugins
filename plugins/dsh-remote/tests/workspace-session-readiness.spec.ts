@@ -1,4 +1,5 @@
 import type { ClientContext, SessionId, WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import {
   installWorkspaceSessionReadiness,
@@ -32,6 +33,28 @@ function fixture() {
     items: [{ workspaceId, path: '/project', sessionIds: [] as SessionId[] }],
   })
   return { sessions, workspaces }
+}
+
+function createClientContext() {
+  const { sessions, workspaces } = fixture()
+  sessions.set({ byId: { [sessionId]: { id: sessionId, cwd: '/project' } } })
+  workspaces.set({ items: [{ workspaceId, path: '/project', sessionIds: [sessionId] }] })
+  const ctx = new Context()
+  ctx.provide('sessions', { list: sessions })
+  ctx.provide('workspaces', { list: workspaces })
+  ctx.provide('modelDirectories', { directoryFor: () => ({ load: async () => {} }) })
+  return { ctx: ctx as unknown as ClientContext, sessions, workspaces }
+}
+
+function connector(result = sessionId) {
+  return {
+    marker: result,
+    calls: 0,
+    async connectWorkspace(this: { marker: SessionId; calls: number }, _workspaceId: WorkspaceId) {
+      this.calls += 1
+      return this.marker
+    },
+  }
 }
 
 describe('workspace session readiness', () => {
@@ -69,27 +92,23 @@ describe('workspace session readiness', () => {
     await expect(waiting).resolves.toBeUndefined()
   })
 
-  it.each([
-    ['legacy workspaces service', false],
-    ['DSH 0.1.2 uiWorkspace service', true],
-  ] as const)('does not release connectWorkspace on the %s until membership and model projection are ready', async (_name, modern) => {
+  it('does not release the legacy connector until membership and model projection are ready', async () => {
     const { sessions, workspaces } = fixture()
     let resolveModel: () => void = () => {}
     const modelReady = new Promise<void>(resolve => { resolveModel = resolve })
     const load = vi.fn(() => modelReady)
-    const original = vi.fn(async (_workspaceId: WorkspaceId) => sessionId)
-    const workspaceService = { list: workspaces, ...(modern ? {} : { connectWorkspace: original }) }
-    const uiWorkspace = modern ? { connectWorkspace: original } : undefined
+    const workspaceConnector = connector()
+    const original = workspaceConnector.connectWorkspace
+    const workspaceService = { list: workspaces, ...workspaceConnector }
     const ctx = {
       sessions: { list: sessions },
       workspaces: workspaceService,
       modelDirectories: { directoryFor: () => ({ load }) },
-      get: (name: string) => name === 'uiWorkspace' ? uiWorkspace : undefined,
+      inject: () => ({ dispose: async () => {} }),
     } as unknown as ClientContext & { modelDirectories: { directoryFor(id: SessionId): { load(): Promise<void> } } }
     const dispose = installWorkspaceSessionReadiness(ctx)
 
-    const connector = modern ? uiWorkspace! : workspaceService as typeof workspaceService & { connectWorkspace: typeof original }
-    const connected = connector.connectWorkspace(workspaceId)
+    const connected = workspaceService.connectWorkspace(workspaceId)
     let resolved = false
     void connected.then(() => { resolved = true })
     await Promise.resolve()
@@ -103,20 +122,78 @@ describe('workspace session readiness', () => {
 
     resolveModel()
     await expect(connected).resolves.toBe(sessionId)
-    dispose()
-    expect(connector.connectWorkspace).toBe(original)
+    await dispose()
+    expect(workspaceService.calls).toBe(1)
+    expect(workspaceService.connectWorkspace).toBe(original)
   })
 
-  it('leaves the client usable when neither workspace navigation service exposes connectWorkspace', () => {
-    const { sessions, workspaces } = fixture()
-    const ctx = {
-      sessions: { list: sessions },
-      workspaces: { list: workspaces },
-      modelDirectories: { directoryFor: () => ({ load: async () => {} }) },
-      get: () => undefined,
-    } as unknown as ClientContext
+  it('patches a modern provider that activates after installation and restores it on unload', async () => {
+    const { ctx } = createClientContext()
+    const modern = connector()
+    const original = modern.connectWorkspace
+    const disposeInstall = installWorkspaceSessionReadiness(ctx)
 
-    expect(() => installWorkspaceSessionReadiness(ctx)).not.toThrow()
+    expect(modern.connectWorkspace).toBe(original)
+    const disposeProvider = (ctx as unknown as Context).provide('uiWorkspace', modern)
+    await Promise.resolve()
+    expect(modern.connectWorkspace).not.toBe(original)
+    await modern.connectWorkspace(workspaceId)
+    expect(modern.calls).toBe(1)
+
+    await disposeProvider()
+    expect(modern.connectWorkspace).toBe(original)
+    await disposeInstall()
+  })
+
+  it('moves the guard when the modern provider is replaced', async () => {
+    const { ctx } = createClientContext()
+    const first = connector()
+    const second = connector()
+    const firstOriginal = first.connectWorkspace
+    const secondOriginal = second.connectWorkspace
+    const disposeInstall = installWorkspaceSessionReadiness(ctx)
+    const disposeFirst = (ctx as unknown as Context).provide('uiWorkspace', first)
+    await Promise.resolve()
+    expect(first.connectWorkspace).not.toBe(firstOriginal)
+
+    await disposeFirst()
+    expect(first.connectWorkspace).toBe(firstOriginal)
+    const disposeSecond = (ctx as unknown as Context).provide('uiWorkspace', second)
+    await Promise.resolve()
+    expect(second.connectWorkspace).not.toBe(secondOriginal)
+
+    await disposeSecond()
+    expect(second.connectWorkspace).toBe(secondOriginal)
+    await disposeInstall()
+  })
+
+  it('keeps overlapping installs stack-safe when the older owner disposes first', async () => {
+    const { ctx } = createClientContext()
+    const modern = connector()
+    const original = modern.connectWorkspace
+    const disposeProvider = (ctx as unknown as Context).provide('uiWorkspace', modern)
+    const disposeA = installWorkspaceSessionReadiness(ctx)
+    const disposeB = installWorkspaceSessionReadiness(ctx)
+    await Promise.resolve()
+    const guarded = modern.connectWorkspace
+    expect(guarded).not.toBe(original)
+
+    await disposeA()
+    expect(modern.connectWorkspace).toBe(guarded)
+    await modern.connectWorkspace(workspaceId)
+    expect(modern.calls).toBe(1)
+
+    await disposeB()
+    expect(modern.connectWorkspace).toBe(original)
+    await disposeProvider()
+  })
+
+  it('leaves the client usable when neither workspace navigation service exposes connectWorkspace', async () => {
+    const { ctx } = createClientContext()
+
+    let dispose: ReturnType<typeof installWorkspaceSessionReadiness> | undefined
+    expect(() => { dispose = installWorkspaceSessionReadiness(ctx) }).not.toThrow()
+    await dispose?.()
   })
 
   it('rejects instead of opening an unassociated session after the bounded wait', async () => {
