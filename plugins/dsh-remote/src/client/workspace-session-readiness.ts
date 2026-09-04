@@ -8,6 +8,14 @@ interface ModelDirectories {
   directoryFor(sessionId: SessionId): ModelDirectory
 }
 
+interface WorkspaceConnector {
+  connectWorkspace(workspaceId: WorkspaceId): Promise<SessionId>
+}
+
+interface ClientContextWithUiWorkspace extends ClientContext {
+  get(name: 'uiWorkspace'): WorkspaceConnector | undefined
+}
+
 const DEFAULT_TIMEOUT_MS = 15_000
 
 export function waitForWorkspaceSession(
@@ -54,8 +62,11 @@ export function waitForWorkspaceSession(
 export function installWorkspaceSessionReadiness(ctx: ClientContext): () => void {
   const workspaces = ctx.workspaces
   const modelDirectories = (ctx as ClientContext & { modelDirectories: ModelDirectories }).modelDirectories
-  const originalMethod = workspaces.connectWorkspace
-  const original = originalMethod.bind(workspaces)
+  const legacyConnector = workspaces as typeof workspaces & Partial<WorkspaceConnector>
+  const connector = (ctx as ClientContextWithUiWorkspace).get('uiWorkspace') ?? legacyConnector
+  const originalMethod = connector.connectWorkspace
+  if (originalMethod === undefined) return () => {}
+  const original = originalMethod.bind(connector)
   const guarded = async (workspaceId: WorkspaceId): Promise<SessionId> => {
     const sessionId = await original(workspaceId)
     await Promise.all([
@@ -64,9 +75,9 @@ export function installWorkspaceSessionReadiness(ctx: ClientContext): () => void
     ])
     return sessionId
   }
-  workspaces.connectWorkspace = guarded
+  connector.connectWorkspace = guarded
 
   return () => {
-    if (workspaces.connectWorkspace === guarded) workspaces.connectWorkspace = originalMethod
+    if (connector.connectWorkspace === guarded) connector.connectWorkspace = originalMethod
   }
 }

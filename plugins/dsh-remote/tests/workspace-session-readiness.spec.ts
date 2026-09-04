@@ -69,21 +69,27 @@ describe('workspace session readiness', () => {
     await expect(waiting).resolves.toBeUndefined()
   })
 
-  it('does not release connectWorkspace until membership and model projection are ready', async () => {
+  it.each([
+    ['legacy workspaces service', false],
+    ['DSH 0.1.2 uiWorkspace service', true],
+  ] as const)('does not release connectWorkspace on the %s until membership and model projection are ready', async (_name, modern) => {
     const { sessions, workspaces } = fixture()
     let resolveModel: () => void = () => {}
     const modelReady = new Promise<void>(resolve => { resolveModel = resolve })
     const load = vi.fn(() => modelReady)
-    const original = vi.fn(async () => sessionId)
-    const workspaceService = { list: workspaces, connectWorkspace: original }
+    const original = vi.fn(async (_workspaceId: WorkspaceId) => sessionId)
+    const workspaceService = { list: workspaces, ...(modern ? {} : { connectWorkspace: original }) }
+    const uiWorkspace = modern ? { connectWorkspace: original } : undefined
     const ctx = {
       sessions: { list: sessions },
       workspaces: workspaceService,
       modelDirectories: { directoryFor: () => ({ load }) },
+      get: (name: string) => name === 'uiWorkspace' ? uiWorkspace : undefined,
     } as unknown as ClientContext & { modelDirectories: { directoryFor(id: SessionId): { load(): Promise<void> } } }
     const dispose = installWorkspaceSessionReadiness(ctx)
 
-    const connected = ctx.workspaces.connectWorkspace(workspaceId)
+    const connector = modern ? uiWorkspace! : workspaceService as typeof workspaceService & { connectWorkspace: typeof original }
+    const connected = connector.connectWorkspace(workspaceId)
     let resolved = false
     void connected.then(() => { resolved = true })
     await Promise.resolve()
@@ -98,7 +104,19 @@ describe('workspace session readiness', () => {
     resolveModel()
     await expect(connected).resolves.toBe(sessionId)
     dispose()
-    expect(workspaceService.connectWorkspace).toBe(original)
+    expect(connector.connectWorkspace).toBe(original)
+  })
+
+  it('leaves the client usable when neither workspace navigation service exposes connectWorkspace', () => {
+    const { sessions, workspaces } = fixture()
+    const ctx = {
+      sessions: { list: sessions },
+      workspaces: { list: workspaces },
+      modelDirectories: { directoryFor: () => ({ load: async () => {} }) },
+      get: () => undefined,
+    } as unknown as ClientContext
+
+    expect(() => installWorkspaceSessionReadiness(ctx)).not.toThrow()
   })
 
   it('rejects instead of opening an unassociated session after the bounded wait', async () => {
