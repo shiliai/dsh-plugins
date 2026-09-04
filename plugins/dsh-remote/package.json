@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/dsh-remote",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Private remote-access gateway for DeepSeek Harness",
   "license": "MIT",
   "repository": {
@@ -49,7 +49,8 @@
     "test:hub-admin": "node tests/e2e/run-hub-admin-browser.mjs",
     "e2e:rc6": "node tests/e2e/run-rc6-fixture-e2e.mjs",
     "e2e:rc8": "node tests/e2e/run-rc8-owner-e2e.mjs",
-    "release:check": "pnpm run check && pnpm run pack:check && pnpm run e2e:rc6 && pnpm run e2e:rc8",
+    "e2e:dsh-0.1.2": "node tests/e2e/run-dsh-0.1.2-workspace-readiness-e2e.mjs",
+    "release:check": "pnpm run check && pnpm run pack:check && pnpm run e2e:rc6 && pnpm run e2e:rc8 && pnpm run e2e:dsh-0.1.2",
     "prepare": "pnpm run build",
     "prepack": "pnpm run build"
   },

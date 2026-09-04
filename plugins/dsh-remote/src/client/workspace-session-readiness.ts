@@ -8,6 +8,23 @@ interface ModelDirectories {
   directoryFor(sessionId: SessionId): ModelDirectory
 }
 
+interface WorkspaceConnector {
+  connectWorkspace(workspaceId: WorkspaceId): Promise<SessionId>
+}
+
+interface ReadinessOwner {
+  wait(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>
+}
+
+interface ConnectorPatch {
+  originalMethod: WorkspaceConnector['connectWorkspace']
+  original: WorkspaceConnector['connectWorkspace']
+  owners: ReadinessOwner[]
+  guarded: WorkspaceConnector['connectWorkspace']
+}
+
+const connectorPatches = new WeakMap<WorkspaceConnector, ConnectorPatch>()
+
 const DEFAULT_TIMEOUT_MS = 15_000
 
 export function waitForWorkspaceSession(
@@ -51,22 +68,69 @@ export function waitForWorkspaceSession(
   })
 }
 
-export function installWorkspaceSessionReadiness(ctx: ClientContext): () => void {
-  const workspaces = ctx.workspaces
-  const modelDirectories = (ctx as ClientContext & { modelDirectories: ModelDirectories }).modelDirectories
-  const originalMethod = workspaces.connectWorkspace
-  const original = originalMethod.bind(workspaces)
-  const guarded = async (workspaceId: WorkspaceId): Promise<SessionId> => {
-    const sessionId = await original(workspaceId)
-    await Promise.all([
-      waitForWorkspaceSession(ctx, workspaceId, sessionId),
-      modelDirectories.directoryFor(sessionId).load(),
-    ])
-    return sessionId
+function addReadinessOwner(connector: WorkspaceConnector, owner: ReadinessOwner): () => void {
+  let patch = connectorPatches.get(connector)
+  if (patch === undefined || connector.connectWorkspace !== patch.guarded) {
+    const originalMethod = connector.connectWorkspace
+    const original = originalMethod.bind(connector)
+    const owners: ReadinessOwner[] = []
+    const guarded = async (workspaceId: WorkspaceId): Promise<SessionId> => {
+      const sessionId = await original(workspaceId)
+      const activeOwner = owners.at(-1)
+      if (activeOwner !== undefined) await activeOwner.wait(workspaceId, sessionId)
+      return sessionId
+    }
+    patch = { originalMethod, original, owners, guarded }
+    connectorPatches.set(connector, patch)
+    connector.connectWorkspace = guarded
   }
-  workspaces.connectWorkspace = guarded
+  patch.owners.push(owner)
 
+  let disposed = false
   return () => {
-    if (workspaces.connectWorkspace === guarded) workspaces.connectWorkspace = originalMethod
+    if (disposed) return
+    disposed = true
+    const index = patch.owners.indexOf(owner)
+    if (index !== -1) patch.owners.splice(index, 1)
+    if (patch.owners.length !== 0) return
+    if (connector.connectWorkspace === patch.guarded) connector.connectWorkspace = patch.originalMethod
+    if (connectorPatches.get(connector) === patch) connectorPatches.delete(connector)
+  }
+}
+
+export function installWorkspaceSessionReadiness(ctx: ClientContext): () => Promise<void> {
+  const localModelDirectories = (ctx as ClientContext & { modelDirectories: ModelDirectories }).modelDirectories
+  const modelDirectories = (ctx.root?.get('modelDirectories') as ModelDirectories | undefined)
+    ?? localModelDirectories
+  const owner: ReadinessOwner = {
+    async wait(workspaceId, sessionId) {
+      await Promise.all([
+        waitForWorkspaceSession(ctx, workspaceId, sessionId),
+        modelDirectories.directoryFor(sessionId).load(),
+      ])
+    },
+  }
+  const legacyConnector = ctx.workspaces as typeof ctx.workspaces & Partial<WorkspaceConnector>
+  const disposeLegacy = legacyConnector.connectWorkspace === undefined
+    ? () => {}
+    : addReadinessOwner(legacyConnector as WorkspaceConnector, owner)
+  const uiWorkspaceFiber = ctx.inject(['uiWorkspace'], scope => {
+    const connector = scope.get('uiWorkspace') as WorkspaceConnector
+    return addReadinessOwner(connector, owner)
+  })
+
+  let disposePromise: Promise<void> | undefined
+  return () => {
+    if (disposePromise !== undefined) return disposePromise
+    disposeLegacy()
+    try {
+      disposePromise = Promise.resolve(uiWorkspaceFiber.dispose())
+    } catch (error) {
+      disposePromise = Promise.reject(error)
+    }
+    // Mark the rejection handled even for legacy fire-and-forget callers. Callers
+    // that await the original promise still observe the cleanup failure.
+    void disposePromise.catch(() => {})
+    return disposePromise
   }
 }
