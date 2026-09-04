@@ -64,11 +64,11 @@ try {
     throw new Error(`fixture client did not activate; url=${page.url()} boot=${JSON.stringify(boot)} browser=${JSON.stringify(browserErrors)} dsh=${JSON.stringify(output)}`, { cause: error })
   })
   await page.evaluate(path => window.__DSH_REMOTE_RC12_E2E__.start(path), workspacePath)
-  await page.waitForFunction(() => window.__DSH_REMOTE_RC12_E2E__.snapshot().modelLoadEntered)
+  await page.waitForFunction(() => window.__DSH_REMOTE_RC12_E2E__.snapshot().workspaceReadinessHeld)
 
   const blocked = await page.evaluate(() => window.__DSH_REMOTE_RC12_E2E__.snapshot())
   if (blocked.resolved || blocked.sessionId === undefined || blocked.current === blocked.sessionId) {
-    throw new Error(`workspace navigation was not held before model readiness: ${JSON.stringify(blocked)}`)
+    throw new Error(`workspace navigation was not held before membership readiness: ${JSON.stringify(blocked)}`)
   }
 
   await page.evaluate(() => window.__DSH_REMOTE_RC12_E2E__.release())
@@ -77,7 +77,7 @@ try {
     throw new Error(`workspace navigation did not complete after readiness: ${JSON.stringify(completed)}`)
   }
 
-  process.stdout.write(`DSH ${DSH_VERSION} workspace readiness E2E passed commit=${commit} package_sha256=${archiveSha} blocked_before_model_ready=true opened_after_release=true workspace=${completed.workspaceId} session=${completed.sessionId}\n`)
+  process.stdout.write(`DSH ${DSH_VERSION} workspace readiness E2E passed commit=${commit} package_sha256=${archiveSha} blocked_before_membership_ready=true opened_after_release=true workspace=${completed.workspaceId} session=${completed.sessionId}\n`)
 } finally {
   if (browser !== undefined) await browser.close()
   if (dsh !== undefined) await stop(dsh)
@@ -113,37 +113,46 @@ async function createFixturePackage(directory) {
   id: '@dsh-plugins/dsh-remote-rc12-fixture',
   factory: () => {
     const module = { exports: {} }
-    const inject = ['workspaces', 'sessions', 'uiWorkspace', 'modelDirectories']
+    const inject = ['workspaces', 'sessions', 'uiWorkspace']
     function apply(ctx) {
       let run
       window.__DSH_REMOTE_RC12_E2E__ = {
         async start(path) {
           if (run !== undefined) throw new Error('fixture navigation already started')
           const workspace = await ctx.workspaces.create({ path })
-          let releaseGate
-          const gate = new Promise(resolve => { releaseGate = resolve })
           const state = {
             workspaceId: workspace.workspaceId,
             sessionId: undefined,
-            modelLoadEntered: false,
+            workspaceReadinessHeld: false,
             resolved: false,
             error: undefined,
           }
-          const resolver = ctx.modelDirectories
-          const originalDirectoryFor = resolver.directoryFor
-          const gatedDirectoryFor = function (id) {
-            const directory = originalDirectoryFor.call(this, id)
-            const originalLoad = directory.load.bind(directory)
+          const source = ctx.workspaces.list
+          const originalGetSnapshot = source.getSnapshot
+          const originalSubscribe = source.subscribe
+          const localListeners = new Set()
+          let held = true
+          source.getSnapshot = function () {
+            const snapshot = originalGetSnapshot.call(this)
+            const target = snapshot.items.find(item => item.workspaceId === workspace.workspaceId)
+            if (!held || target === undefined || target.sessionIds.length === 0) return snapshot
+            state.sessionId = target.sessionIds[0]
+            state.workspaceReadinessHeld = true
             return {
-              load: async () => {
-                state.sessionId = id
-                state.modelLoadEntered = true
-                await gate
-                return await originalLoad()
-              },
+              ...snapshot,
+              items: snapshot.items.map(item => item.workspaceId === workspace.workspaceId
+                ? { ...item, sessionIds: [] }
+                : item),
             }
           }
-          resolver.directoryFor = gatedDirectoryFor
+          source.subscribe = function (listener) {
+            localListeners.add(listener)
+            const stop = originalSubscribe.call(this, listener)
+            return () => {
+              localListeners.delete(listener)
+              stop()
+            }
+          }
           const navigation = ctx.uiWorkspace.connectWorkspace(workspace.workspaceId).then(id => {
             state.sessionId = id
             state.resolved = true
@@ -155,10 +164,14 @@ async function createFixturePackage(directory) {
           })
           run = {
             state,
-            release: releaseGate,
+            release() {
+              held = false
+              for (const listener of localListeners) listener()
+            },
             navigation,
             restore() {
-              if (resolver.directoryFor === gatedDirectoryFor) resolver.directoryFor = originalDirectoryFor
+              if (source.getSnapshot !== originalGetSnapshot) source.getSnapshot = originalGetSnapshot
+              if (source.subscribe !== originalSubscribe) source.subscribe = originalSubscribe
             },
           }
         },
