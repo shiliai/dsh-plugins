@@ -183,6 +183,18 @@ describe('WecomAgentBridge', () => {
       .toEqual({ channel: 'wecom', destination: 'single:u1' })
   })
 
+  it('falls back to a direct message when the thinking stream cannot be finalized', async () => {
+    const { mockCtx } = baseContext()
+    const bot = fakeBot()
+    bot.finishReply.mockRejectedValueOnce(new Error('stream unavailable'))
+    const bridge = new WecomAgentBridge(mockCtx as never, bot as never, { botId: 'b', botSecret: 's' })
+
+    await bridge.enqueue(msg('u1', '你好'))
+
+    expect(bot.sendText).toHaveBeenCalledTimes(1)
+    expect(bot.sendText.mock.calls[0]).toEqual(['u1', expect.stringContaining('你好')])
+  })
+
   it('keeps conversation memory per chat (followup accumulates on same agent)', async () => {
     const { mockCtx, agents } = baseContext()
     const bridge = new WecomAgentBridge(mockCtx as never, fakeBot() as never, { botId: 'b', botSecret: 's' })
