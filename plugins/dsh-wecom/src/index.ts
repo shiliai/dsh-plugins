@@ -1148,7 +1148,15 @@ export class WecomAgentBridge {
   private async finishReply(message: InboundMessage, streamId: string | undefined, text: string | undefined): Promise<void> {
     const final = truncateUtf8((text ?? '').trim())
     if (streamId) {
-      await this.bot.finishReply(message.frame, streamId, final || '✅ 完成。')
+      const content = final || '✅ 完成。'
+      try {
+        await this.bot.finishReply(message.frame, streamId, content)
+      } catch (error) {
+        // Some WeCom clients acknowledge the stream without rendering its final
+        // frame. Keep the completed answer visible through a normal message.
+        console.error(`[dsh-wecom] stream finalization failed (${safeErrorKind(error)}); sending direct reply`)
+        await this.bot.sendText(message.chatId, content)
+      }
       return
     }
     if (final) await this.bot.replyText(message.frame, final)
