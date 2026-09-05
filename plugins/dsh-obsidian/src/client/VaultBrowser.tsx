@@ -169,7 +169,7 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
         {newPath !== null && (
           <form className={css.newNote} onSubmit={(event) => {
             event.preventDefault()
-            if (newPath.trim() !== '') void store.createNote(newPath)
+            if (newPath.trim() !== '') void store.createNote(newPath).then(path => { if (path !== null) setFeedback({ kind: 'success', text: `Created ${path}` }) })
             setNewPath(null)
           }}>
             <input autoFocus value={newPath} placeholder="Folder/Note.md" aria-label="New note path" onChange={event => { setNewPath(event.target.value) }} />
@@ -205,7 +205,7 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
           </div>
         )}
 
-        {feedback !== null && <div className={feedback.kind === 'success' ? css.inlineSuccess : css.inlineError} role={feedback.kind === 'success' ? 'status' : 'alert'}>{feedback.text}</div>}
+        {feedback !== null && <div className={feedback.kind === 'success' ? css.inlineSuccess : css.inlineError} role={feedback.kind === 'success' ? 'status' : 'alert'}>{feedback.kind === 'success' ? <button className={css.noteLink} type="button" onClick={() => { const path = feedback.text.replace(/^Created /u, ''); void store.openNote(path) }}>{feedback.text}</button> : feedback.text}</div>}
         {state.error !== null && <div className={css.inlineError} role="alert">{state.error}</div>}
 
         <div

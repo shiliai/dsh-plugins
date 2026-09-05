@@ -266,6 +266,7 @@
   color: var(--dsw-alias-state-success-secondary, #24755a);
   font-size: 13px;
 }
+.noteLink { border: 0; padding: 0; background: transparent; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
 
 .skillList {
   flex: 1;
@@ -351,6 +352,29 @@
   color: var(--dsw-alias-state-warn-secondary, #d19819);
   font-weight: 600;
 }
+
+/* Four-pane workbench overlay. The host conversation remains the right pane;
+   these fixed panes occupy the space exposed by the anchor margin. */
+.workbenchRoot { position: fixed; inset: 0; z-index: 15; pointer-events: none; }
+.workbenchPane { position: fixed; display: flex; flex-direction: column; min-width: 0; overflow: hidden; pointer-events: auto; border: 1px solid var(--dsw-alias-border-l2, #d9dedb); border-radius: 6px; background: var(--dsw-alias-bg-layer-1, #fff); box-shadow: 0 2px 12px rgba(21, 31, 26, .08); }
+.workbenchHeader { flex: 0 0 34px; display: flex; align-items: center; gap: 8px; padding: 0 9px; border-bottom: 1px solid var(--dsw-alias-border-l2, #d9dedb); color: var(--dsw-alias-label-primary, #1d2420); font-size: 12px; font-weight: 600; }
+.workbenchHeader > span:first-child { flex: 1; }
+.workbenchLive { color: var(--dsw-alias-label-secondary, #66706a); font-size: 10px; font-weight: 400; }
+.workbenchTree, .workbenchEditor { flex: 1; min-height: 0; overflow: hidden; }
+.workbenchPane > .preview { flex: 1; min-height: 0; overflow: auto; }
+.workbenchTree > section { height: 100%; border: 0; border-radius: 0; }
+.workbenchTree .browser { min-height: 100%; }
+.workbenchEditor { display: flex; flex-direction: column; }
+.workbenchTabs { flex: 0 0 31px; display: flex; align-items: center; gap: 2px; overflow-x: auto; padding: 3px 5px; border-bottom: 1px solid var(--dsw-alias-border-l2, #d9dedb); }
+.workbenchTab { min-width: 0; max-width: 170px; height: 25px; display: inline-flex; align-items: center; gap: 6px; padding: 0 7px; border: 0; border-radius: 4px; background: transparent; color: var(--dsw-alias-label-secondary, #66706a); font: inherit; font-size: 11px; }
+.workbenchTab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workbenchTab:hover, .workbenchTab.selected { background: var(--dsw-alias-interactive-bg-hover, #edf1ef); color: var(--dsw-alias-label-primary, #1d2420); }
+.workbenchResize { position: absolute; z-index: 2; top: 0; right: -5px; bottom: 0; width: 10px; cursor: col-resize; pointer-events: auto; }
+.workbenchChatResize { position: fixed; z-index: 2; width: 10px; cursor: col-resize; pointer-events: auto; }
+.workbenchChrome { position: fixed; top: 7px; right: 8px; display: flex; gap: 3px; pointer-events: auto; }
+.workbenchChrome .iconButton { background: var(--dsw-alias-bg-layer-1, #fff); border: 1px solid var(--dsw-alias-border-l2, #d9dedb); }
+.workbenchRoot .modalOverlay { pointer-events: auto; z-index: 60; }
+.workbenchUnavailable { position: fixed; left: 12px; bottom: 12px; z-index: 16; padding: 7px 10px; border: 1px solid var(--dsw-alias-border-l2, #d9dedb); border-radius: 6px; background: var(--dsw-alias-bg-layer-1, #fff); color: var(--dsw-alias-label-secondary, #66706a); font-size: 12px; pointer-events: auto; }
 .skillDiagnostic { display: flex; flex-direction: column; gap: 1px; margin-top: 5px; }
 .skillDiagnostic code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
 
@@ -376,6 +400,17 @@
   border: 1px solid var(--dsw-alias-border-l2, #d9dedb);
   box-shadow: 0 16px 48px rgba(0, 0, 0, .18);
 }
+
+.skillSettingsShell {
+  width: min(720px, 100%);
+  height: min(640px, 90vh);
+  overflow: hidden;
+  border: 1px solid var(--dsw-alias-border-l2, #d9dedb);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1, #fff);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, .18);
+}
+.skillSettingsShell > .browser { height: 100%; border: 0; border-radius: 0; }
 
 .modalHeader {
   display: flex;
