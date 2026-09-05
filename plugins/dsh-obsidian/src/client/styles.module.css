@@ -359,7 +359,8 @@
 .workbenchHeader { flex: 0 0 34px; display: flex; align-items: center; gap: 8px; padding: 0 9px; border-bottom: 1px solid var(--dsw-alias-border-l2, #d9dedb); color: var(--dsw-alias-label-primary, #1d2420); font-size: 12px; font-weight: 600; }
 .workbenchHeader > span:first-child { flex: 1; }
 .workbenchLive { color: var(--dsw-alias-label-secondary, #66706a); font-size: 10px; font-weight: 400; }
-.workbenchTree, .workbenchEditor, .workbenchPane > .preview { flex: 1; min-height: 0; overflow: hidden; }
+.workbenchTree, .workbenchEditor { flex: 1; min-height: 0; overflow: hidden; }
+.workbenchPane > .preview { flex: 1; min-height: 0; overflow: auto; }
 .workbenchTree > section { height: 100%; border: 0; border-radius: 0; }
 .workbenchTree .browser { min-height: 100%; }
 .workbenchEditor { display: flex; flex-direction: column; }
