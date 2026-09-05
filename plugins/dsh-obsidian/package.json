@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/dsh-obsidian",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Obsidian vault browser, tags, chat context, note tools, and vault-scoped skills for DeepSeek Harness",
   "license": "MIT",
   "repository": {
