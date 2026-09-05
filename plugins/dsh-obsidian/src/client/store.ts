@@ -295,9 +295,9 @@ export class VaultStore {
     }
   }
 
-  async createNote(path: string): Promise<void> {
+  async createNote(path: string): Promise<string | null> {
     const normalized = path.trim().endsWith('.md') ? path.trim() : `${path.trim()}.md`
-    if (normalized === '.md') return
+    if (normalized === '.md') return null
     try {
       this.noteGeneration++
       this.invalidateSave()
@@ -307,8 +307,10 @@ export class VaultStore {
       if (this.snapshot.view === 'tags') await this.refreshTags()
       await this.openNote(normalized)
       this.setMode('edit')
+      return normalized
     } catch (error) {
       this.update({ error: message(error) })
+      return null
     }
   }
 

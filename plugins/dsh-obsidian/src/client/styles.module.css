@@ -266,6 +266,7 @@
   color: var(--dsw-alias-state-success-secondary, #24755a);
   font-size: 13px;
 }
+.noteLink { border: 0; padding: 0; background: transparent; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
 
 .skillList {
   flex: 1;
@@ -369,6 +370,7 @@
 .workbenchTab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workbenchTab:hover, .workbenchTab.selected { background: var(--dsw-alias-interactive-bg-hover, #edf1ef); color: var(--dsw-alias-label-primary, #1d2420); }
 .workbenchResize { position: absolute; z-index: 2; top: 0; right: -5px; bottom: 0; width: 10px; cursor: col-resize; pointer-events: auto; }
+.workbenchChatResize { position: fixed; z-index: 2; width: 10px; cursor: col-resize; pointer-events: auto; }
 .workbenchChrome { position: fixed; top: 7px; right: 8px; display: flex; gap: 3px; pointer-events: auto; }
 .workbenchChrome .iconButton { background: var(--dsw-alias-bg-layer-1, #fff); border: 1px solid var(--dsw-alias-border-l2, #d9dedb); }
 .workbenchRoot .modalOverlay { pointer-events: auto; z-index: 60; }

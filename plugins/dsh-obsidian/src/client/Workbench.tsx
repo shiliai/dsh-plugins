@@ -102,7 +102,7 @@ export function Workbench({ store, close, addContextToChat }: Props) {
   const moveResize = (event: React.PointerEvent) => {
     const current = drag.current
     if (current === null) return
-    const minimum = current.key === 'tree' ? 180 : 240
+    const minimum = current.key === 'tree' ? 180 : current.key === 'chat' ? 280 : 240
     setWidths(value => ({ ...value, [current.key]: Math.max(minimum, current.start + event.clientX - current.startX) }))
   }
   const finishResize = () => { drag.current = null }
@@ -124,6 +124,7 @@ export function Workbench({ store, close, addContextToChat }: Props) {
       <footer className={css.statusBar}><span>{state.active === null ? '' : `${state.draft.split(/\r?\n/u).length} lines`}</span><span>{store.dirty ? 'Modified' : 'Saved'}</span></footer>
     </div>)}
     {pane('preview', 'Preview', <article className={css.preview}>{state.active === null ? <div className={css.panelLoading}>Preview follows the selected note.</div> : <MarkdownPreview content={state.draft} notePath={state.active.path} notePaths={notePaths} openNote={openTab} />}</article>)}
+    {!compact && <div className={css.workbenchChatResize} role="separator" aria-label="Resize chat pane" onPointerDown={event => beginResize('chat', event)} onPointerMove={moveResize} onPointerUp={finishResize} style={{ left: layout.chat.left - 5, top: rect.top, height: rect.bottom - rect.top }} />}
     <div className={css.workbenchChrome}><button className={css.iconButton} type="button" title="Settings and skills" aria-label="Settings and skills" onClick={() => setSkillsOpen(true)}><Settings size={15} /></button><button className={css.iconButton} type="button" title="Close workbench" aria-label="Close workbench" onClick={close}><X size={16} /></button></div>
     {skillsOpen && <div className={css.modalOverlay} role="dialog" aria-modal="true" aria-label="dsh-obsidian settings"><section className={css.skillSettingsShell}><SkillBrowser store={store} root={state.vaultRoot} closeBrowser={() => setSkillsOpen(false)} wide expandSidebar={() => undefined} /></section></div>}
   </div>, document.body)
