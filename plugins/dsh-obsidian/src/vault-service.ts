@@ -8,6 +8,7 @@ import { isObsidianTag, normalizeTag, parseObsidianTags, tagAncestors } from './
 
 const HIDDEN_DIRECTORIES = new Set(['.git', '.obsidian', 'node_modules'])
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif'])
+const TAG_INDEX_TTL_MS = 15_000
 
 export class VaultError extends Error {
   constructor(
@@ -46,6 +47,10 @@ export class VaultService {
   ) {
     this.root = root
   }
+
+  private tagIndexCache: { builtAt: number; index: Map<string, { name: string; paths: Set<string> }> } | null = null
+  private tagIndexPromise: Promise<Map<string, { name: string; paths: Set<string> }>> | null = null
+  private tagIndexGeneration = 0
 
   static async create(root: string, maxNoteBytes: number, searchResultLimit: number): Promise<VaultService> {
     if (!Number.isSafeInteger(maxNoteBytes) || maxNoteBytes < 1) {
@@ -144,7 +149,9 @@ export class VaultService {
           if (!isNodeError(error, 'ENOENT')) throw error
         })
       }
-      return this.readNote(normalized)
+      const note = await this.readNote(normalized)
+      this.invalidateTagIndex()
+      return note
     })
   }
 
@@ -167,13 +174,16 @@ export class VaultService {
         await unlink(target).catch(() => undefined)
         throw error
       }
-      return this.readNote(targetPath)
+      const note = await this.readNote(targetPath)
+      this.invalidateTagIndex()
+      return note
     })
   }
 
   async deleteNote(path: string): Promise<void> {
     await this.mutate(async () => {
       await unlink(await this.existingPath(path, 'note'))
+      this.invalidateTagIndex()
     })
   }
 
@@ -360,18 +370,36 @@ export class VaultService {
   }
 
   private async buildTagIndex(): Promise<Map<string, { name: string; paths: Set<string> }>> {
-    const index = new Map<string, { name: string; paths: Set<string> }>()
-    for (const path of await this.listNotePaths()) {
-      for (const explicitTag of await this.tagsForNote(path)) {
-        for (const displayName of tagAncestors(explicitTag)) {
-          const normalized = normalizeTag(displayName)
-          const tag = index.get(normalized) ?? { name: displayName, paths: new Set<string>() }
-          tag.paths.add(path)
-          index.set(normalized, tag)
+    const cached = this.tagIndexCache
+    if (cached !== null && Date.now() - cached.builtAt < TAG_INDEX_TTL_MS) return cached.index
+    if (this.tagIndexPromise !== null) return this.tagIndexPromise
+    const generation = this.tagIndexGeneration
+    const pending = (async () => {
+      const index = new Map<string, { name: string; paths: Set<string> }>()
+      for (const path of await this.listNotePaths()) {
+        for (const explicitTag of await this.tagsForNote(path)) {
+          for (const displayName of tagAncestors(explicitTag)) {
+            const normalized = normalizeTag(displayName)
+            const tag = index.get(normalized) ?? { name: displayName, paths: new Set<string>() }
+            tag.paths.add(path)
+            index.set(normalized, tag)
+          }
         }
       }
+      if (generation === this.tagIndexGeneration) this.tagIndexCache = { builtAt: Date.now(), index }
+      return index
+    })()
+    this.tagIndexPromise = pending
+    try {
+      return await pending
+    } finally {
+      if (this.tagIndexPromise === pending) this.tagIndexPromise = null
     }
-    return index
+  }
+
+  private invalidateTagIndex(): void {
+    this.tagIndexGeneration++
+    this.tagIndexCache = null
   }
 
   private async walk(absoluteDirectory: string, relativeDirectory: string): Promise<VaultTreeNode[]> {
