@@ -7,6 +7,7 @@ import { SkillCoordinator } from './skill-coordinator.ts'
 import { SkillStore } from './skill-store.ts'
 import { ObsidianSkillProvider } from './skills.ts'
 import { VaultManager } from './vault-manager.ts'
+import { ThoughtService } from './thought-service.ts'
 
 export const name = 'dsh-obsidian'
 export const inject = ['webServer', 'tools', 'skills']
@@ -24,6 +25,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     throw new Error('dsh-obsidian: vaultRoot and mutationOrigin are required')
   }
   const relativeSkillsDir = config.skillRoot ?? '.agents/skills'
+  const thoughts = new ThoughtService(config.vaultRoot)
 
   // Mutable references, reassigned on vault switch; closures capture the binding.
   let skillsStore: SkillStore
@@ -54,7 +56,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     return provider
   }), 'dsh-obsidian: vault-scoped skill provider')
 
-  ctx.effect(() => registerVaultApi(ctx.webServer, vault, config.mutationOrigin, coordinator), 'dsh-obsidian: vault HTTP API')
+  ctx.effect(() => registerVaultApi(ctx.webServer, vault, config.mutationOrigin, coordinator, thoughts), 'dsh-obsidian: vault HTTP API')
   registerNoteTools(ctx, vault)
 }
 
@@ -67,3 +69,4 @@ export type {
 export { isObsidianTag, normalizeTag, parseObsidianTags } from './tags.ts'
 export { SkillStore } from './skill-store.ts'
 export { ObsidianSkillProvider } from './skills.ts'
+export { ThoughtService } from './thought-service.ts'

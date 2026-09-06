@@ -90,3 +90,6 @@ export interface AgentSkillListResult {
   skills: AgentSkillDocument[]
   diagnostics: AgentSkillDiagnostic[]
 }
+
+export type ThoughtStatus = 'inbox' | 'next' | 'done'
+export interface Thought { id: string; date: string; text: string; status: ThoughtStatus; created: string; file: string; archived?: boolean; deletedAt?: string }

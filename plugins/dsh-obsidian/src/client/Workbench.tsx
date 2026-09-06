@@ -9,6 +9,7 @@ import PanelLeftOpen from 'lucide-react/dist/esm/icons/panel-left-open'
 import { MarkdownPreview } from './MarkdownPreview.tsx'
 import { VaultBrowser } from './VaultBrowser.tsx'
 import { SkillBrowser } from './SkillBrowser.tsx'
+import { ThoughtsPanel } from './ThoughtsPanel.tsx'
 import type { VaultStore } from './store.ts'
 import type { VaultContextKind, VaultTreeNode } from '../contracts.ts'
 import { calculateWorkbenchLayout, type WorkbenchPaneKey, type WorkbenchRect, type WorkbenchVisibility } from './workbench-geometry.ts'
@@ -34,6 +35,7 @@ export function Workbench({ store, close, addContextToChat }: Props) {
   const [visibility, setVisibility] = useState<WorkbenchVisibility>(() => loadVisibility())
   const [tabs, setTabs] = useState<string[]>([])
   const [skillsOpen, setSkillsOpen] = useState(false)
+  const [thoughtsOpen, setThoughtsOpen] = useState(false)
   const [paneMenuOpen, setPaneMenuOpen] = useState(false)
   const draftCache = useRef(new Map<string, string>())
   const originalMargin = useRef<{ element: HTMLElement; left: string; top: string; visibility: string } | null>(null)
@@ -153,6 +155,7 @@ export function Workbench({ store, close, addContextToChat }: Props) {
     {!compact && visibility.chat && <div className={css.workbenchChatResize} role="separator" aria-label="Resize chat pane" onPointerDown={event => beginResize('chat', event)} onPointerMove={moveResize} onPointerUp={finishResize} style={{ left: layout.chat.left - 5, top: rect.top, height: rect.bottom - rect.top }} />}
     <div className={css.workbenchChrome}><button className={css.iconButton} type="button" title="Show or hide panes" aria-label="Show or hide panes" aria-expanded={paneMenuOpen} onClick={() => setPaneMenuOpen(value => !value)}><PanelLeftOpen size={15} /></button><button className={css.iconButton} type="button" title="Settings and skills" aria-label="Settings and skills" onClick={() => setSkillsOpen(true)}><Settings size={15} /></button><button className={css.iconButton} type="button" title="Close workbench" aria-label="Close workbench" onClick={close}><X size={16} /></button>{paneMenuOpen && <div className={css.workbenchPaneMenu} role="menu" aria-label="Workbench panes">{(Object.keys(PANE_LABELS) as WorkbenchPaneKey[]).map(key => <label key={key} className={css.workbenchPaneMenuItem}><input type="checkbox" checked={visibility[key]} onChange={event => setPaneVisibility(key, event.target.checked)} /> <span>{PANE_LABELS[key]}</span></label>)}</div>}</div>
     {skillsOpen && <div className={css.modalOverlay} role="dialog" aria-modal="true" aria-label="dsh-obsidian settings"><section className={css.skillSettingsShell}><SkillBrowser store={store} root={state.vaultRoot} closeBrowser={() => setSkillsOpen(false)} wide expandSidebar={() => undefined} /></section></div>}
+    {thoughtsOpen && <div className={css.modalOverlay}><ThoughtsPanel close={() => setThoughtsOpen(false)} /></div>}
   </div>, document.body)
 }
 

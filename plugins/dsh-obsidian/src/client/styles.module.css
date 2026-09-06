@@ -383,6 +383,15 @@
 .workbenchUnavailable { position: fixed; left: 12px; bottom: 12px; z-index: 16; padding: 7px 10px; border: 1px solid var(--dsw-alias-border-l2, #d9dedb); border-radius: 6px; background: var(--dsw-alias-bg-layer-1, #fff); color: var(--dsw-alias-label-secondary, #66706a); font-size: 12px; pointer-events: auto; }
 .skillDiagnostic { display: flex; flex-direction: column; gap: 1px; margin-top: 5px; }
 .skillDiagnostic code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
+.thoughtsPanel { width: min(560px, calc(100vw - 32px)); max-height: min(720px, calc(100vh - 48px)); display: flex; flex-direction: column; background: var(--dsw-alias-bg-layer-1, #fff); border: 1px solid var(--dsw-alias-border-l2, #d9dedb); border-radius: 6px; box-shadow: 0 12px 36px rgba(21,31,26,.2); }
+.thoughtsToolbar { display: flex; gap: 6px; padding: 8px; border-bottom: 1px solid var(--dsw-alias-border-l2, #d9dedb); }
+.thoughtsToolbar input { min-width: 0; flex: 1; height: 30px; padding: 0 8px; border: 1px solid var(--dsw-alias-border-l2, #d9dedb); border-radius: 4px; font: inherit; font-size: 12px; }
+.thoughtList { overflow: auto; margin: 0; padding: 6px 8px; list-style: none; }
+.thoughtList li { display: flex; align-items: center; gap: 8px; min-height: 34px; border-bottom: 1px solid var(--dsw-alias-border-l3, #eef1ef); font-size: 12px; }
+.thoughtList li button { width: 22px; border: 0; background: transparent; cursor: pointer; }
+.thoughtList li span { flex: 1; }
+.thoughtList li small { color: var(--dsw-alias-label-secondary, #66706a); }
+.thoughtDone span { text-decoration: line-through; color: var(--dsw-alias-label-secondary, #66706a); }
 
 /* ── Modal overlay (skills) ─────────────────────────────────────── */
 

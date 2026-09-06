@@ -1,4 +1,4 @@
-import type { AgentSkillDocument, AgentSkillInput, AgentSkillListResult, ApiErrorPayload, DirectoryListing, NoteDocument, NoteSearchResult, VaultContextKind, VaultContextReference, VaultTag, VaultTreeNode } from '../contracts.ts'
+import type { AgentSkillDocument, AgentSkillInput, AgentSkillListResult, ApiErrorPayload, DirectoryListing, NoteDocument, NoteSearchResult, Thought, VaultContextKind, VaultContextReference, VaultTag, VaultTreeNode } from '../contracts.ts'
 
 const API = '/dsh-obsidian/api'
 
@@ -44,6 +44,10 @@ export const vaultApi = {
   }),
   delete: (path: string) => request<void>(`/note?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
   assetUrl: (path: string) => `${API}/asset?path=${encodeURIComponent(path)}`,
+  thoughts: (query?: string) => request<{ thoughts: Thought[] }>(`/thoughts${query === undefined ? '' : `?q=${encodeURIComponent(query)}`}`),
+  createThought: (text: string) => request<{ thought: Thought }>('/thoughts', { method: 'POST', body: JSON.stringify({ text }) }),
+  updateThought: (id: string, status: Thought['status'], text?: string) => request<{ thought: Thought }>('/thoughts', { method: 'PATCH', body: JSON.stringify({ id, status, ...(text === undefined ? {} : { text }) }) }),
+  deleteThought: (id: string) => request<{ thought: Thought }>('/thoughts', { method: 'DELETE', body: JSON.stringify({ id }) }),
 
   skillList: () => request<{ result: AgentSkillListResult }>('/skills'),
   skillGet: (name: string) => request<AgentSkillDocument>(`/skill?name=${encodeURIComponent(name)}`),
