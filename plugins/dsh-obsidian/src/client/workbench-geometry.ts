@@ -57,17 +57,12 @@ export function calculateWorkbenchLayout(rect: WorkbenchRect, widths: WorkbenchW
   const available = Math.max(0, total - Math.max(0, keys.length - 1) * gap)
   const preferred = keys.map(key => Math.max(minimums[key], widths[key]))
   const preferredTotal = preferred.reduce((sum, width) => sum + width, 0)
-  const scale = 1
-  const sizes = new Map<WorkbenchPaneKey, number>(keys.map((key, index) => [key, (preferred[index] ?? minimums[key]) * scale]))
+  const sizes = new Map<WorkbenchPaneKey, number>(keys.map((key, index) => [key, preferred[index] ?? minimums[key]]))
   if (keys.length > 0 && preferredTotal < available) {
     const last = keys.at(-1)
     if (last !== undefined) sizes.set(last, (sizes.get(last) ?? 0) + available - preferredTotal)
   }
   const size = (key: WorkbenchPaneKey): number => sizes.get(key) ?? 0
-  const tree = size('tree')
-  const editor = size('editor')
-  const preview = size('preview')
-  const chat = size('chat')
   let cursor = rect.left
   const rectFor = (key: WorkbenchPaneKey): WorkbenchRect => {
     const left = cursor
