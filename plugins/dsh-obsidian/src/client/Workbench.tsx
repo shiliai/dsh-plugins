@@ -3,12 +3,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import X from 'lucide-react/dist/esm/icons/x'
 import Plus from 'lucide-react/dist/esm/icons/plus'
 import Save from 'lucide-react/dist/esm/icons/save'
-import Settings from 'lucide-react/dist/esm/icons/settings'
 import PanelLeftClose from 'lucide-react/dist/esm/icons/panel-left-close'
 import PanelLeftOpen from 'lucide-react/dist/esm/icons/panel-left-open'
 import { MarkdownPreview } from './MarkdownPreview.tsx'
 import { VaultBrowser } from './VaultBrowser.tsx'
-import { SkillBrowser } from './SkillBrowser.tsx'
 import { ThoughtsPanel } from './ThoughtsPanel.tsx'
 import type { VaultStore } from './store.ts'
 import type { VaultContextKind, VaultTreeNode } from '../contracts.ts'
@@ -34,7 +32,6 @@ export function Workbench({ store, close, addContextToChat }: Props) {
   const [widths, setWidths] = useState<Widths>(() => loadWidths())
   const [visibility, setVisibility] = useState<WorkbenchVisibility>(() => loadVisibility())
   const [tabs, setTabs] = useState<string[]>([])
-  const [skillsOpen, setSkillsOpen] = useState(false)
   const [thoughtsOpen, setThoughtsOpen] = useState(false)
   const [paneMenuOpen, setPaneMenuOpen] = useState(false)
   const draftCache = useRef(new Map<string, string>())
@@ -153,8 +150,7 @@ export function Workbench({ store, close, addContextToChat }: Props) {
     {pane('preview', 'Preview', <article className={css.preview}>{state.active === null ? <div className={css.panelLoading}>Preview follows the selected note.</div> : <MarkdownPreview content={state.draft} notePath={state.active.path} notePaths={notePaths} openNote={openTab} />}</article>)}
     {!visibility.tree && !visibility.editor && !visibility.preview && <div className={css.workbenchEmpty} role="status">All workbench panes are hidden. Use the pane menu to restore one.</div>}
     {!compact && visibility.chat && <div className={css.workbenchChatResize} role="separator" aria-label="Resize chat pane" onPointerDown={event => beginResize('chat', event)} onPointerMove={moveResize} onPointerUp={finishResize} style={{ left: layout.chat.left - 5, top: rect.top, height: rect.bottom - rect.top }} />}
-    <div className={css.workbenchChrome}><button className={css.iconButton} type="button" title="Show or hide panes" aria-label="Show or hide panes" aria-expanded={paneMenuOpen} onClick={() => setPaneMenuOpen(value => !value)}><PanelLeftOpen size={15} /></button><button className={css.iconButton} type="button" title="Settings and skills" aria-label="Settings and skills" onClick={() => setSkillsOpen(true)}><Settings size={15} /></button><button className={css.iconButton} type="button" title="Close workbench" aria-label="Close workbench" onClick={close}><X size={16} /></button>{paneMenuOpen && <div className={css.workbenchPaneMenu} role="menu" aria-label="Workbench panes">{(Object.keys(PANE_LABELS) as WorkbenchPaneKey[]).map(key => <label key={key} className={css.workbenchPaneMenuItem}><input type="checkbox" checked={visibility[key]} onChange={event => setPaneVisibility(key, event.target.checked)} /> <span>{PANE_LABELS[key]}</span></label>)}</div>}</div>
-    {skillsOpen && <div className={css.modalOverlay} role="dialog" aria-modal="true" aria-label="dsh-obsidian settings"><section className={css.skillSettingsShell}><SkillBrowser store={store} root={state.vaultRoot} closeBrowser={() => setSkillsOpen(false)} wide expandSidebar={() => undefined} /></section></div>}
+    <div className={css.workbenchChrome}><button className={css.iconButton} type="button" title="Show or hide panes" aria-label="Show or hide panes" aria-expanded={paneMenuOpen} onClick={() => setPaneMenuOpen(value => !value)}><PanelLeftOpen size={15} /></button><button className={css.iconButton} type="button" title="Close workbench" aria-label="Close workbench" onClick={close}><X size={16} /></button>{paneMenuOpen && <div className={css.workbenchPaneMenu} role="menu" aria-label="Workbench panes">{(Object.keys(PANE_LABELS) as WorkbenchPaneKey[]).map(key => <label key={key} className={css.workbenchPaneMenuItem}><input type="checkbox" checked={visibility[key]} onChange={event => setPaneVisibility(key, event.target.checked)} /> <span>{PANE_LABELS[key]}</span></label>)}</div>}</div>
     {thoughtsOpen && <div className={css.modalOverlay}><ThoughtsPanel close={() => setThoughtsOpen(false)} /></div>}
   </div>, document.body)
 }
