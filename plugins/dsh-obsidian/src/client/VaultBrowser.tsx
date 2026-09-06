@@ -3,6 +3,7 @@ import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import ArrowLeft from 'lucide-react/dist/esm/icons/arrow-left'
 import ArrowUp from 'lucide-react/dist/esm/icons/arrow-up'
 import Check from 'lucide-react/dist/esm/icons/check'
+import ChevronsDownUp from 'lucide-react/dist/esm/icons/chevrons-down-up'
 import ChevronDown from 'lucide-react/dist/esm/icons/chevron-down'
 import ChevronRight from 'lucide-react/dist/esm/icons/chevron-right'
 import FilePlus2 from 'lucide-react/dist/esm/icons/file-plus-2'
@@ -38,12 +39,20 @@ interface ContextMenuState extends ContextTarget {
   y: number
 }
 
+interface TreePreferences {
+  defaultExpanded: boolean
+  expandedPaths: Record<string, boolean>
+}
+
+const TREE_PREFERENCES_KEY = 'dsh-obsidian.vault.tree-preferences'
+
 export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addContextToChat }: Props) {
   const state = store.useSnapshot()
   const directoryListing = state.directoryListing
   const [newPath, setNewPath] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
+  const [treePreferences, setTreePreferences] = useState<TreePreferences>(() => loadTreePreferences())
 
   useEffect(() => {
     void store.initialize()
@@ -76,6 +85,10 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
       window.removeEventListener('keydown', closeOnEscape)
     }
   }, [contextMenu])
+
+  useEffect(() => {
+    try { localStorage.setItem(TREE_PREFERENCES_KEY, JSON.stringify(treePreferences)) } catch { /* storage is optional */ }
+  }, [treePreferences])
 
   const filteredTags = useMemo(() => {
     const query = state.query.trim().toLocaleLowerCase().replace(/^#/u, '')
@@ -135,6 +148,16 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
           onClick={() => { void store.openVaultChooser() }}
         >
           <FolderCog size={16} />
+        </button>
+        <button
+          className={css.iconButton}
+          type="button"
+          title={treePreferences.defaultExpanded ? 'Folders start expanded' : 'Folders start collapsed'}
+          aria-label={treePreferences.defaultExpanded ? 'Folders start expanded' : 'Folders start collapsed'}
+          aria-pressed={treePreferences.defaultExpanded}
+          onClick={() => { setTreePreferences(value => ({ ...value, defaultExpanded: !value.defaultExpanded })) }}
+        >
+          <ChevronsDownUp size={16} />
         </button>
         <button className={css.iconButton} type="button" title="New note" aria-label="New note" onClick={() => { setNewPath('') }}>
           <FilePlus2 size={16} />
@@ -223,7 +246,18 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
           }}
         >
           {state.view === 'notes' && state.query.trim() === '' && state.tree.map(node => (
-            <TreeNode key={node.path} node={node} activePath={state.active?.path} open={path => { void store.openNote(path) }} openMenu={openContextMenu} add={target => { void addContext(target) }} create={createInFolder} />
+            <TreeNode
+              key={node.path}
+              node={node}
+              activePath={state.active?.path}
+              defaultExpanded={treePreferences.defaultExpanded}
+              expandedPaths={treePreferences.expandedPaths}
+              open={path => { void store.openNote(path) }}
+              openMenu={openContextMenu}
+              add={target => { void addContext(target) }}
+              setExpanded={(path, expanded) => { setTreePreferences(value => ({ ...value, expandedPaths: { ...value.expandedPaths, [path]: expanded } })) }}
+              create={createInFolder}
+            />
           ))}
 
           {state.view === 'notes' && state.query.trim() !== '' && state.searchResults.map(result => {
@@ -287,16 +321,19 @@ function ContextRow({ target, openMenu, add, children }: {
   )
 }
 
-function TreeNode({ node, activePath, open, openMenu, add, create }: {
+function TreeNode({ node, activePath, defaultExpanded, expandedPaths, open, openMenu, add, setExpanded, create }: {
   node: VaultTreeNode
   activePath: string | undefined
+  defaultExpanded: boolean
+  expandedPaths: Record<string, boolean>
   open(path: string): void
   openMenu(event: ReactMouseEvent, target: ContextTarget): void
   add(target: ContextTarget): void
+  setExpanded(path: string, expanded: boolean): void
   create(target: ContextTarget): void
 }) {
-  const [expanded, setExpanded] = useState(true)
   const childCount = useMemo(() => node.children?.length ?? 0, [node.children])
+  const expanded = expandedPaths[node.path] ?? defaultExpanded
   const target = { kind: node.type === 'note' ? 'note' as const : 'directory' as const, value: node.path, label: node.path }
   if (node.type === 'note') {
     return (
@@ -312,13 +349,28 @@ function TreeNode({ node, activePath, open, openMenu, add, create }: {
   return (
     <div role="treeitem" aria-expanded={expanded}>
       <ContextRow target={target} openMenu={openMenu} add={add}>
-        <button className={css.treeRow} type="button" onClick={() => { setExpanded(value => !value) }}>
+        <button className={css.treeRow} type="button" onClick={() => { setExpanded(node.path, !expanded) }}>
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           {expanded ? <FolderOpen size={14} /> : <Folder size={14} />}
           <span>{node.name}</span><small>{childCount}</small>
         </button>
       </ContextRow>
-      {expanded && <div className={css.treeChildren} role="group">{node.children?.map(child => <TreeNode key={child.path} node={child} activePath={activePath} open={open} openMenu={openMenu} add={add} create={create} />)}</div>}
-    </div>
+      {expanded && <div className={css.treeChildren} role="group">{node.children?.map(child => <TreeNode key={child.path} node={child} activePath={activePath} defaultExpanded={defaultExpanded} expandedPaths={expandedPaths} open={open} openMenu={openMenu} add={add} setExpanded={setExpanded} create={create} />)}</div>}
+  </div>
   )
+}
+
+function loadTreePreferences(): TreePreferences {
+  const fallback: TreePreferences = { defaultExpanded: true, expandedPaths: {} }
+  if (typeof localStorage === 'undefined') return fallback
+  try {
+    const value = JSON.parse(localStorage.getItem(TREE_PREFERENCES_KEY) ?? '{}') as Partial<TreePreferences>
+    const expandedPaths = value.expandedPaths
+    return {
+      defaultExpanded: typeof value.defaultExpanded === 'boolean' ? value.defaultExpanded : fallback.defaultExpanded,
+      expandedPaths: expandedPaths !== null && typeof expandedPaths === 'object' ? expandedPaths as Record<string, boolean> : fallback.expandedPaths,
+    }
+  } catch {
+    return fallback
+  }
 }
