@@ -40,7 +40,7 @@ cd /absolute/path/to/my-vault
 dsh web
 ```
 
-Open **Obsidian notes** from the sidebar footer. The note browser replaces the session browser until its back button is pressed. Opening a note shows the editor or preview in the conversation area for a blank session, or in the details panel for an active session.
+Open **Obsidian notes** from the sidebar footer to open the four-pane workbench: Vault tree, editor, live preview, and the host chat remain visible together. Notes opened from the tree become editor tabs; the workbench remembers pane widths locally. Use its settings button to manage vault skills. On screens narrower than 720px the workbench keeps the editor as the focused pane and leaves the host layout intact.
 
 ## Configure `vaultRoot`
 
@@ -168,7 +168,7 @@ Use the folder settings button beside the Vault name to browse directories on th
 
 ## Vault-scoped skills
 
-The plugin exposes a **Obsidian skills** panel (sidebar footer) to manage skills
+The workbench settings button opens the **Obsidian skills** panel to manage skills
 that are scoped to the currently selected Vault. Skill packages live under
 `<vaultRoot>/.agents/skills/<name>/SKILL.md` and travel with the Vault; switching
 Vaults switches the skill set. Editing is optimistic-concurrency safe (a

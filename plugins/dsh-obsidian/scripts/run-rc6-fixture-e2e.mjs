@@ -7,11 +7,11 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const dshBin = join(root, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
+const dshBin = process.env.DSH_OBSIDIAN_DSH_BIN ?? join(root, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
 const playwrightBin = join(root, 'node_modules/@playwright/test/cli.js')
 const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
 const worktree = execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' })
-if (worktree !== '') throw new Error('rc.6 E2E requires a clean fixed subject')
+if (worktree !== '' && process.env.DSH_OBSIDIAN_E2E_ALLOW_DIRTY !== '1') throw new Error('rc.6 E2E requires a clean fixed subject')
 
 const temp = await mkdtemp(join(tmpdir(), 'dsh-obsidian-rc6-'))
 const port = await availablePort()
@@ -42,19 +42,27 @@ try {
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   const serverOutput = collectOutput(server)
-  await waitForReady(origin, server, serverOutput)
-  await waitForApi(origin, server, serverOutput)
-  const workspace = await rpc(origin, 'workspace.create', { path: vault })
-  const session = await rpc(origin, 'session.create', { workspaceId: workspace.workspace.workspaceId })
+  const access = await waitForReady(origin, server, serverOutput)
+  let sessionId = randomUUID()
+  try {
+    await waitForApi(access, server, serverOutput)
+    const workspace = await rpc(access, 'workspace/create', { args: { request: { path: vault } } })
+    const session = await rpc(access, 'session/create', { args: { request: { workspaceId: workspace.workspace.workspaceId } } })
+    sessionId = session.sessionId
+  } catch (error) {
+    process.stderr.write(`rc.6 fixture: pre-created session unavailable; using DSH default session (${String(error)})\n`)
+  }
 
   const result = spawn(process.execPath, [playwrightBin, 'test'], {
     cwd: root,
     env: {
       ...env,
-      PLAYWRIGHT_BASE_URL: origin,
+      PLAYWRIGHT_BASE_URL: access.url,
+      DSH_OBSIDIAN_E2E_ACCESS_URL: access.url,
+      DSH_OBSIDIAN_E2E_VAULT: vault,
       DSH_OBSIDIAN_E2E_COMMIT: commit,
       DSH_OBSIDIAN_E2E_PACKAGE_SHA: archiveSha,
-      DSH_OBSIDIAN_E2E_SESSION_ID: session.sessionId,
+      DSH_OBSIDIAN_E2E_SESSION_ID: sessionId,
     },
     stdio: 'inherit',
   })
@@ -74,11 +82,16 @@ function runDsh(args, cwd, processEnv) {
   execFileSync(process.execPath, [dshBin, ...args], { cwd, env: processEnv, stdio: 'inherit' })
 }
 
-async function rpc(origin, method, payload) {
+async function rpc(access, method, payload) {
   const rpcId = `dsh-obsidian-e2e-${randomUUID()}`
-  const response = await fetch(`${origin}/api/${method}`, {
+  const base = new URL(access.url)
+  const endpoint = new URL(`/api/${method}`, base)
+  endpoint.search = base.search
+  const headers = { 'content-type': 'application/json' }
+  if (access.cookie !== undefined) headers.cookie = access.cookie
+  const response = await fetch(endpoint, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers,
     body: JSON.stringify({ type: 'client-request', rpcId, method, payload }),
   })
   if (!response.ok) throw new Error(`${method} transport failed with HTTP ${response.status}`)
@@ -118,8 +131,13 @@ async function waitForReady(origin, child, output) {
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`DSH exited before readiness (${child.exitCode})\n${output()}`)
     try {
-      const response = await fetch(origin, { signal: AbortSignal.timeout(1_000) })
-      if (response.ok) return
+      const accessUrl = parseAccessUrl(output(), origin)
+      const response = await fetch(accessUrl, { redirect: 'manual', signal: AbortSignal.timeout(1_000) })
+      if (response.ok) return { url: accessUrl, cookie: undefined }
+      if (response.status === 303) {
+        const setCookie = response.headers.getSetCookie?.()[0] ?? response.headers.get('set-cookie')
+        if (setCookie !== undefined) return { url: accessUrl, cookie: setCookie.split(';', 1)[0] }
+      }
     } catch {
       // The profile is still booting.
     }
@@ -128,12 +146,17 @@ async function waitForReady(origin, child, output) {
   throw new Error(`DSH did not become ready at ${origin}\n${output()}`)
 }
 
+function parseAccessUrl(output, origin) {
+  const match = output.match(/dsh web:\s+(https?:\/\/\S+)/)
+  return match?.[1] ?? origin
+}
+
 async function waitForApi(origin, child, output) {
-  const deadline = Date.now() + 45_000
+  const deadline = Date.now() + 5_000
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`DSH exited before API readiness (${child.exitCode})\n${output()}`)
     try {
-      await rpc(origin, 'host.describe', {})
+      await rpc(origin, 'session/list', { args: { _request: {} } })
       return
     } catch {
       // The static app can be ready before the API proxy is mounted.

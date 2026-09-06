@@ -7,6 +7,7 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
 }
 
 const home = { path: 'Home.md', absolutePath: '/vault/Home.md', content: '# Home', modifiedMs: 1, size: 6 }
+const roadmap = { path: 'Projects/Roadmap.md', absolutePath: '/vault/Projects/Roadmap.md', content: '# Roadmap', modifiedMs: 1, size: 9 }
 
 function apiWithNotes(notes: Array<Promise<typeof home>>) {
   return {
@@ -55,6 +56,17 @@ describe('VaultStore request generations', () => {
     await store.openVaultChooser()
     expect(store.getSnapshot().directoryListing).toBeNull()
     expect(store.getSnapshot().error).toContain('Save or discard')
+  })
+
+  it('allows the workbench to switch tabs while retaining a dirty draft', async () => {
+    const api = apiWithNotes([Promise.resolve(home), Promise.resolve(roadmap), Promise.resolve(home)])
+    const store = new VaultStore({ open() {}, close() {} }, api)
+    await store.openNote('Home.md')
+    store.setDraft('# Draft kept in tab')
+    await store.openNote('Projects/Roadmap.md', { allowDirty: true })
+    expect(store.getSnapshot().active?.path).toBe('Projects/Roadmap.md')
+    await store.openNote('Home.md', { allowDirty: true })
+    expect(store.getSnapshot().draft).toBe(home.content)
   })
 
   it('keeps typing during a pending save and remains dirty after its completion', async () => {

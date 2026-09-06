@@ -85,6 +85,7 @@ export class VaultStore {
   private treeGeneration = 0
   private tagGeneration = 0
   private directoryGeneration = 0
+  private panelSuppressed = false
 
   constructor(private readonly panel: PanelLifecycle, private readonly api: VaultApi = vaultApi) {}
 
@@ -100,6 +101,11 @@ export class VaultStore {
 
   get dirty(): boolean {
     return this.snapshot.active !== null && this.snapshot.draft !== this.snapshot.active.content
+  }
+
+  setPanelSuppressed(suppressed: boolean): void {
+    this.panelSuppressed = suppressed
+    if (suppressed) this.panel.close()
   }
 
   async initialize(): Promise<void> {
@@ -190,7 +196,7 @@ export class VaultStore {
       this.directoryGeneration++
       this.treeGeneration++
       this.tagGeneration++
-      this.panel.close()
+      if (!this.panelSuppressed) this.panel.close()
       this.update({
         vaultName: info.name,
         vaultRoot: info.root,
@@ -215,14 +221,14 @@ export class VaultStore {
     }
   }
 
-  async openNote(path: string): Promise<void> {
+  async openNote(path: string, options?: { allowDirty?: boolean }): Promise<void> {
     if (this.snapshot.pendingDiscard !== null || this.snapshot.active?.path === path) return
-    if (this.dirty) {
+    if (this.dirty && options?.allowDirty !== true) {
       this.update({ pendingDiscard: { kind: 'open', path } })
       return
     }
     const generation = ++this.noteGeneration
-    this.panel.open()
+    if (!this.panelSuppressed) this.panel.open()
     this.update({ loadingNote: true, error: null })
     try {
       const note = await this.api.note(path)
@@ -244,7 +250,7 @@ export class VaultStore {
     this.draftGeneration++
     this.invalidateSave()
     this.update({ active: null, draft: '', saving: false, error: null })
-    this.panel.close()
+    if (!this.panelSuppressed) this.panel.close()
   }
 
   cancelPendingDiscard(): void {
@@ -289,9 +295,9 @@ export class VaultStore {
     }
   }
 
-  async createNote(path: string): Promise<void> {
+  async createNote(path: string): Promise<string | null> {
     const normalized = path.trim().endsWith('.md') ? path.trim() : `${path.trim()}.md`
-    if (normalized === '.md') return
+    if (normalized === '.md') return null
     try {
       this.noteGeneration++
       this.invalidateSave()
@@ -301,8 +307,10 @@ export class VaultStore {
       if (this.snapshot.view === 'tags') await this.refreshTags()
       await this.openNote(normalized)
       this.setMode('edit')
+      return normalized
     } catch (error) {
       this.update({ error: message(error) })
+      return null
     }
   }
 
@@ -340,7 +348,7 @@ export class VaultStore {
       this.update({ saving: false })
       await this.api.delete(active.path)
       this.update({ active: null, draft: '', error: null })
-      this.panel.close()
+      if (!this.panelSuppressed) this.panel.close()
       await this.refreshTree()
       if (this.snapshot.view === 'tags') await this.refreshTags()
     } catch (error) {
