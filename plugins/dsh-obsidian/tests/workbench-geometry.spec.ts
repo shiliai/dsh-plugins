@@ -17,4 +17,13 @@ describe('workbench geometry', () => {
     expect(layout.chat.left).toBeGreaterThanOrEqual(220)
     expect(layout.tree.right - layout.tree.left).toBeGreaterThanOrEqual(180)
   })
+
+  it('removes hidden panes from the flow and releases the chat margin', () => {
+    const layout = calculateWorkbenchLayout({ left: 0, top: 0, right: 1200, bottom: 700 }, { tree: 240, editor: 360, preview: 360, chat: 360, gap: 8 }, { tree: false, editor: true, preview: true, chat: false })
+    expect(layout.tree.left).toBe(layout.tree.right)
+    expect(layout.editor.left).toBe(0)
+    expect(layout.preview.left).toBe(layout.editor.right + 8)
+    expect(layout.chat.left).toBe(layout.chat.right)
+    expect(layout.chatMarginLeft).toBe(0)
+  })
 })

@@ -4,12 +4,14 @@ import X from 'lucide-react/dist/esm/icons/x'
 import Plus from 'lucide-react/dist/esm/icons/plus'
 import Save from 'lucide-react/dist/esm/icons/save'
 import Settings from 'lucide-react/dist/esm/icons/settings'
+import PanelLeftClose from 'lucide-react/dist/esm/icons/panel-left-close'
+import PanelLeftOpen from 'lucide-react/dist/esm/icons/panel-left-open'
 import { MarkdownPreview } from './MarkdownPreview.tsx'
 import { VaultBrowser } from './VaultBrowser.tsx'
 import { SkillBrowser } from './SkillBrowser.tsx'
 import type { VaultStore } from './store.ts'
 import type { VaultContextKind, VaultTreeNode } from '../contracts.ts'
-import { calculateWorkbenchLayout, type WorkbenchRect } from './workbench-geometry.ts'
+import { calculateWorkbenchLayout, type WorkbenchPaneKey, type WorkbenchRect, type WorkbenchVisibility } from './workbench-geometry.ts'
 import { findConversationAnchor, type ConversationAnchor } from './workbench-anchor.ts'
 import css from './styles.module.css?dsh-inline'
 
@@ -20,16 +22,21 @@ interface Props {
 }
 
 const STORAGE_KEY = 'dsh-obsidian.workbench.widths'
+const VISIBILITY_STORAGE_KEY = 'dsh-obsidian.workbench.visibility'
 type Widths = { tree: number; editor: number; preview: number; chat: number }
+const PANE_LABELS: Record<WorkbenchPaneKey, string> = { tree: 'Vault', editor: 'Note editor', preview: 'Preview', chat: 'Chat' }
+const DEFAULT_VISIBILITY: WorkbenchVisibility = { tree: true, editor: true, preview: true, chat: true }
 
 export function Workbench({ store, close, addContextToChat }: Props) {
   const state = store.useSnapshot()
   const [anchor, setAnchor] = useState<ConversationAnchor | null>(() => findConversationAnchor())
   const [widths, setWidths] = useState<Widths>(() => loadWidths())
+  const [visibility, setVisibility] = useState<WorkbenchVisibility>(() => loadVisibility())
   const [tabs, setTabs] = useState<string[]>([])
   const [skillsOpen, setSkillsOpen] = useState(false)
+  const [paneMenuOpen, setPaneMenuOpen] = useState(false)
   const draftCache = useRef(new Map<string, string>())
-  const originalMargin = useRef<{ element: HTMLElement; left: string; top: string } | null>(null)
+  const originalMargin = useRef<{ element: HTMLElement; left: string; top: string; visibility: string } | null>(null)
   const drag = useRef<{ key: keyof Widths; startX: number; start: number } | null>(null)
 
   useEffect(() => {
@@ -55,17 +62,23 @@ export function Workbench({ store, close, addContextToChat }: Props) {
   }, [state.active?.path, state.draft])
 
   useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(widths)) }, [widths])
+  useEffect(() => { localStorage.setItem(VISIBILITY_STORAGE_KEY, JSON.stringify(visibility)) }, [visibility])
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') close() }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (paneMenuOpen) { setPaneMenuOpen(false); return }
+      close()
+    }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [close])
+  }, [close, paneMenuOpen])
 
   useEffect(() => () => {
     const original = originalMargin.current
     if (original !== null && original.element.isConnected) {
       original.element.style.marginLeft = original.left
       original.element.style.marginTop = original.top
+      original.element.style.visibility = original.visibility
     }
   }, [])
 
@@ -74,13 +87,20 @@ export function Workbench({ store, close, addContextToChat }: Props) {
   const rootRect = anchor.root.getBoundingClientRect()
   const headerRect = anchor.header?.getBoundingClientRect()
   const rect: WorkbenchRect = { left: rootRect.left, top: headerRect?.bottom ?? rootRect.top, right: rootRect.right, bottom: rootRect.bottom }
-  const layout = calculateWorkbenchLayout(rect, { ...widths, gap: 8 })
+  const layout = calculateWorkbenchLayout(rect, { ...widths, gap: 8 }, visibility)
   const compact = window.innerWidth < 720
   if (originalMargin.current?.element !== anchor.viewArea) {
-    originalMargin.current = { element: anchor.viewArea, left: anchor.viewArea.style.marginLeft, top: anchor.viewArea.style.marginTop }
+    const previous = originalMargin.current
+    if (previous !== null && previous.element.isConnected) {
+      previous.element.style.marginLeft = previous.left
+      previous.element.style.marginTop = previous.top
+      previous.element.style.visibility = previous.visibility
+    }
+    originalMargin.current = { element: anchor.viewArea, left: anchor.viewArea.style.marginLeft, top: anchor.viewArea.style.marginTop, visibility: anchor.viewArea.style.visibility }
   }
   anchor.viewArea.style.marginLeft = compact ? '0px' : `${layout.chatMarginLeft}px`
   anchor.viewArea.style.marginTop = '0px'
+  anchor.viewArea.style.visibility = visibility.chat ? originalMargin.current?.visibility ?? '' : 'hidden'
 
   const openTab = (path: string) => {
     if (state.active !== null) draftCache.current.set(state.active.path, state.draft)
@@ -106,10 +126,15 @@ export function Workbench({ store, close, addContextToChat }: Props) {
     setWidths(value => ({ ...value, [current.key]: Math.max(minimum, current.start + event.clientX - current.startX) }))
   }
   const finishResize = () => { drag.current = null }
+  const setPaneVisibility = (key: WorkbenchPaneKey, value: boolean) => {
+    setVisibility(current => ({ ...current, [key]: value }))
+  }
+  const mobilePane = (['editor', 'tree', 'preview'] as const).find(key => visibility[key])
   const pane = (key: 'tree' | 'editor' | 'preview', title: string, content: React.ReactNode) => {
+    if (!visibility[key] || (compact && mobilePane !== key)) return null
     const paneRect = layout[key]
-    return <section className={css.workbenchPane} aria-label={title} style={{ display: compact && key !== 'editor' ? 'none' : undefined, left: compact ? rect.left : paneRect.left, top: paneRect.top, width: compact ? rect.right - rect.left : paneRect.right - paneRect.left, height: paneRect.bottom - paneRect.top }}>
-      <header className={css.workbenchHeader}><span>{title}</span>{key === 'editor' && <button className={css.iconButton} type="button" title="Save" aria-label="Save" disabled={!store.dirty} onClick={() => { void store.save() }}><Save size={15} /></button>}</header>
+    return <section className={css.workbenchPane} aria-label={title} style={{ left: compact ? rect.left : paneRect.left, top: paneRect.top, width: compact ? rect.right - rect.left : paneRect.right - paneRect.left, height: paneRect.bottom - paneRect.top }}>
+      <header className={css.workbenchHeader}><span>{title}</span><div className={css.workbenchHeaderActions}>{key === 'editor' && <button className={css.iconButton} type="button" title="Save" aria-label="Save" disabled={!store.dirty} onClick={() => { void store.save() }}><Save size={15} /></button>}<button className={css.iconButton} type="button" title={`Hide ${title} pane`} aria-label={`Hide ${title} pane`} onClick={() => setPaneVisibility(key, false)}><PanelLeftClose size={14} /></button></div></header>
       {content}
       <div className={css.workbenchResize} role="separator" aria-label={`Resize ${title.replace('Note editor', 'note pane')}`} onPointerDown={event => beginResize(key, event)} onPointerMove={moveResize} onPointerUp={finishResize} />
     </section>
@@ -124,8 +149,9 @@ export function Workbench({ store, close, addContextToChat }: Props) {
       <footer className={css.statusBar}><span>{state.active === null ? '' : `${state.draft.split(/\r?\n/u).length} lines`}</span><span>{store.dirty ? 'Modified' : 'Saved'}</span></footer>
     </div>)}
     {pane('preview', 'Preview', <article className={css.preview}>{state.active === null ? <div className={css.panelLoading}>Preview follows the selected note.</div> : <MarkdownPreview content={state.draft} notePath={state.active.path} notePaths={notePaths} openNote={openTab} />}</article>)}
-    {!compact && <div className={css.workbenchChatResize} role="separator" aria-label="Resize chat pane" onPointerDown={event => beginResize('chat', event)} onPointerMove={moveResize} onPointerUp={finishResize} style={{ left: layout.chat.left - 5, top: rect.top, height: rect.bottom - rect.top }} />}
-    <div className={css.workbenchChrome}><button className={css.iconButton} type="button" title="Settings and skills" aria-label="Settings and skills" onClick={() => setSkillsOpen(true)}><Settings size={15} /></button><button className={css.iconButton} type="button" title="Close workbench" aria-label="Close workbench" onClick={close}><X size={16} /></button></div>
+    {!visibility.tree && !visibility.editor && !visibility.preview && <div className={css.workbenchEmpty} role="status">All workbench panes are hidden. Use the pane menu to restore one.</div>}
+    {!compact && visibility.chat && <div className={css.workbenchChatResize} role="separator" aria-label="Resize chat pane" onPointerDown={event => beginResize('chat', event)} onPointerMove={moveResize} onPointerUp={finishResize} style={{ left: layout.chat.left - 5, top: rect.top, height: rect.bottom - rect.top }} />}
+    <div className={css.workbenchChrome}><button className={css.iconButton} type="button" title="Show or hide panes" aria-label="Show or hide panes" aria-expanded={paneMenuOpen} onClick={() => setPaneMenuOpen(value => !value)}><PanelLeftOpen size={15} /></button><button className={css.iconButton} type="button" title="Settings and skills" aria-label="Settings and skills" onClick={() => setSkillsOpen(true)}><Settings size={15} /></button><button className={css.iconButton} type="button" title="Close workbench" aria-label="Close workbench" onClick={close}><X size={16} /></button>{paneMenuOpen && <div className={css.workbenchPaneMenu} role="menu" aria-label="Workbench panes">{(Object.keys(PANE_LABELS) as WorkbenchPaneKey[]).map(key => <label key={key} className={css.workbenchPaneMenuItem}><input type="checkbox" checked={visibility[key]} onChange={event => setPaneVisibility(key, event.target.checked)} /> <span>{PANE_LABELS[key]}</span></label>)}</div>}</div>
     {skillsOpen && <div className={css.modalOverlay} role="dialog" aria-modal="true" aria-label="dsh-obsidian settings"><section className={css.skillSettingsShell}><SkillBrowser store={store} root={state.vaultRoot} closeBrowser={() => setSkillsOpen(false)} wide expandSidebar={() => undefined} /></section></div>}
   </div>, document.body)
 }
@@ -135,3 +161,10 @@ function loadWidths(): Widths {
   try { const value = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}'); return { tree: finite(value.tree, 240), editor: finite(value.editor, 360), preview: finite(value.preview, 360), chat: finite(value.chat, 360) } } catch { return { tree: 240, editor: 360, preview: 360, chat: 360 } }
 }
 function finite(value: unknown, fallback: number): number { return typeof value === 'number' && Number.isFinite(value) ? value : fallback }
+
+function loadVisibility(): WorkbenchVisibility {
+  try {
+    const value = JSON.parse(localStorage.getItem(VISIBILITY_STORAGE_KEY) ?? '{}') as Partial<WorkbenchVisibility>
+    return { tree: value.tree !== false, editor: value.editor !== false, preview: value.preview !== false, chat: value.chat !== false }
+  } catch { return DEFAULT_VISIBILITY }
+}
