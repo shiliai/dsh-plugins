@@ -11,6 +11,7 @@ import { vaultApi } from './api.ts'
 import { appendVaultContext } from './context-reference.ts'
 import type { VaultContextKind } from '../contracts.ts'
 import { Workbench } from './Workbench.tsx'
+import { ThoughtsPanel } from './ThoughtsPanel.tsx'
 import css from './styles.module.css?dsh-inline'
 
 export const inject = ['slots', 'layout', 'sessions', 'conversation']
@@ -30,12 +31,15 @@ interface FooterProps {
 
 function FooterButton({ wide, store, addContextToChat }: FooterProps) {
   const [open, setOpen] = useState(false)
+  const [thoughts, setThoughts] = useState(false)
   return (
     <>
       <button className={css.iconButton} type="button" title="Obsidian notes workbench" aria-label="Obsidian notes" onClick={() => { setOpen(value => !value) }}>
         <NotebookTabs size={wide ? 16 : 18} />
       </button>
       {open && <Workbench store={store} close={() => setOpen(false)} addContextToChat={addContextToChat} />}
+      <button className={css.iconButton} type="button" title="Thoughts inbox" aria-label="Thoughts inbox" onClick={() => setThoughts(value => !value)}>T</button>
+      {thoughts && <div className={css.modalOverlay}><ThoughtsPanel close={() => setThoughts(false)} /></div>}
     </>
   )
 }

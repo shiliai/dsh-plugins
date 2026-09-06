@@ -8,6 +8,7 @@ import type { SkillCoordinator } from './skill-coordinator.ts'
 import { AgentSkillStoreError, AgentSkillRevisionConflictError } from './skill-store.ts'
 import { AgentSkillCodecError } from './skill-codec.ts'
 import { AgentSkillValidationError } from './validate-skill.ts'
+import type { ThoughtService } from './thought-service.ts'
 
 const API_PREFIX = '/dsh-obsidian/api'
 
@@ -22,14 +23,14 @@ interface MoveBody {
   to: string
 }
 
-export function registerVaultApi(webServer: WebServer, vault: VaultManager, mutationOrigin: string, skills?: SkillCoordinator): () => void {
+export function registerVaultApi(webServer: WebServer, vault: VaultManager, mutationOrigin: string, skills?: SkillCoordinator, thoughts?: ThoughtService): () => void {
   const authority = normalizeOrigin(mutationOrigin)
   return webServer.register({
     kind: 'prefix',
     path: API_PREFIX,
     handler: async (request, response) => {
       try {
-        await route(request, response, vault, authority, skills)
+        await route(request, response, vault, authority, skills, thoughts)
       } catch (error) {
         sendError(response, error)
       }
@@ -37,9 +38,18 @@ export function registerVaultApi(webServer: WebServer, vault: VaultManager, muta
   })
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, vault: VaultManager, authority: string, skills?: SkillCoordinator): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, vault: VaultManager, authority: string, skills?: SkillCoordinator, thoughts?: ThoughtService): Promise<void> {
   const url = new URL(request.url ?? '/', 'http://dsh.local')
   const endpoint = url.pathname.slice(API_PREFIX.length) || '/'
+  if (endpoint === '/thoughts' && thoughts !== undefined) {
+    if (request.method === 'GET') { const q = optionalQuery(url, 'q'); const status = optionalQuery(url, 'status'); sendJson(response, 200, { thoughts: await thoughts.list({ ...(q === undefined ? {} : { q }), ...(status === undefined ? {} : { status: status as never }) }) }); return }
+    assertConfiguredOrigin(request, authority); const body = await readJson(request, 256 * 1024); if (!isRecord(body)) throw new VaultError('Invalid thought body.', 'INVALID_BODY', 400)
+    const id = typeof body.id === 'string' ? body.id : undefined
+    if (request.method === 'POST') { sendJson(response, 200, { thought: await thoughts.create(typeof body.text === 'string' ? body.text : '') }); return }
+    if (id === undefined) throw new VaultError('Thought id is required.', 'INVALID_BODY', 400)
+    if (request.method === 'PATCH') { sendJson(response, 200, { thought: await thoughts.update(id, body.status as never, typeof body.text === 'string' ? body.text : undefined) }); return }
+    if (request.method === 'DELETE') { sendJson(response, 200, { thought: await thoughts.remove(id) }); return }
+  }
   if (request.method === 'GET' && endpoint === '/skills' && skills !== undefined) {
     sendJson(response, 200, { result: await skills.list() })
     return
