@@ -102,6 +102,11 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
       setFeedback({ kind: 'error', text: error instanceof Error ? error.message : 'Could not add Vault context to chat.' })
     }
   }
+  const createInFolder = (target: ContextTarget): void => {
+    setContextMenu(null)
+    setFeedback(null)
+    setNewPath(target.value ? `${target.value}/` : '')
+  }
 
   if (!wide) {
     return (
@@ -218,7 +223,7 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
           }}
         >
           {state.view === 'notes' && state.query.trim() === '' && state.tree.map(node => (
-            <TreeNode key={node.path} node={node} activePath={state.active?.path} open={path => { void store.openNote(path) }} openMenu={openContextMenu} add={target => { void addContext(target) }} />
+            <TreeNode key={node.path} node={node} activePath={state.active?.path} open={path => { void store.openNote(path) }} openMenu={openContextMenu} add={target => { void addContext(target) }} create={createInFolder} />
           ))}
 
           {state.view === 'notes' && state.query.trim() !== '' && state.searchResults.map(result => {
@@ -260,6 +265,7 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
 
       {contextMenu !== null && (
         <div className={css.contextMenu} role="menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={event => { event.stopPropagation() }}>
+          {contextMenu.kind === 'directory' && <button type="button" role="menuitem" onClick={() => { createInFolder(contextMenu) }}><FilePlus2 size={14} />New note here</button>}
           <button type="button" role="menuitem" onClick={() => { void addContext(contextMenu) }}><MessageSquarePlus size={14} />Add to chat</button>
         </div>
       )}
@@ -281,12 +287,13 @@ function ContextRow({ target, openMenu, add, children }: {
   )
 }
 
-function TreeNode({ node, activePath, open, openMenu, add }: {
+function TreeNode({ node, activePath, open, openMenu, add, create }: {
   node: VaultTreeNode
   activePath: string | undefined
   open(path: string): void
   openMenu(event: ReactMouseEvent, target: ContextTarget): void
   add(target: ContextTarget): void
+  create(target: ContextTarget): void
 }) {
   const [expanded, setExpanded] = useState(true)
   const childCount = useMemo(() => node.children?.length ?? 0, [node.children])
@@ -311,7 +318,7 @@ function TreeNode({ node, activePath, open, openMenu, add }: {
           <span>{node.name}</span><small>{childCount}</small>
         </button>
       </ContextRow>
-      {expanded && <div className={css.treeChildren} role="group">{node.children?.map(child => <TreeNode key={child.path} node={child} activePath={activePath} open={open} openMenu={openMenu} add={add} />)}</div>}
+      {expanded && <div className={css.treeChildren} role="group">{node.children?.map(child => <TreeNode key={child.path} node={child} activePath={activePath} open={open} openMenu={openMenu} add={add} create={create} />)}</div>}
     </div>
   )
 }
