@@ -13,8 +13,14 @@ import type { VaultContextKind } from '../contracts.ts'
 import { Workbench } from './Workbench.tsx'
 import { ThoughtsPanel } from './ThoughtsPanel.tsx'
 import css from './styles.module.css?dsh-inline'
+import { SkillBrowser } from './SkillBrowser.tsx'
 
 export const inject = ['slots', 'layout', 'sessions', 'conversation']
+
+function ObsidianSkillsSettings({ store }: { store: VaultStore }) {
+  const state = store.getSnapshot()
+  return <SkillBrowser store={store} root={state.vaultRoot} closeBrowser={() => undefined} wide expandSidebar={() => undefined} />
+}
 
 export type PanelTarget = 'conversation' | 'conversation.session' | 'details'
 
@@ -90,6 +96,14 @@ export function apply(ctx: ClientContext): void {
     },
     close: closePanel,
   })
+
+  ctx.slots.register({
+    name: 'settings.plugins.tab',
+    id: 'dsh-obsidian-skills',
+    order: 40,
+    label: 'Obsidian skills',
+    inject: () => ({ store }),
+  }, ObsidianSkillsSettings)
 
   const closeBrowser = (): void => {
     browserDispose?.()
