@@ -142,6 +142,16 @@ or raw frames — only identities (chat id / chat type / msg id) and byte
 counts. The WeCom SDK's own `debug` logs (which serialize frame bodies) are
 always dropped, even at `debug`. Only identity and metadata are emitted.
 
+When an agent turn fails, the plugin now records the **actual error** — not just
+an opaque kind — in two `error`-level lines: `run turn failed` (from
+`runTurn`, e.g. a bound session that is live in the browser, or a
+`whenIdle`/`followup` throw) and `agent turn failed` (from the queue's catch,
+which emits the user-facing "抱歉，处理这条消息时发生错误" fallback). Each line
+carries `errorMessage` and `errorStack` plus the chat identity, so a transient
+failure can be diagnosed from the log instead of the user's screenshot. This
+companion change also makes `/detach` drop the persisted binding (mirroring
+`/new`), so a restart no longer resurrects a detached web session.
+
 `/cd` first resolves the target with `realpath`, then requires it to be under
 `allowedCwdRoots`. This blocks absolute-path, `..`, and symlink escapes. With
 no roots configured, only `defaultCwd` (or `process.cwd()`) and its descendants

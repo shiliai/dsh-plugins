@@ -760,6 +760,20 @@ export class WecomAgentBridge {
       await agent.whenIdle()
       if (sessions) await sessions.flush(agent.session)
       return summarizeTurn(agent.session.events, firstSeq)
+    } catch (error) {
+      // A completed agent turn can still throw here (e.g. whenIdle/followup or
+      // a bound session that is live in the browser). Surface the real error so
+      // the "抱歉" fallback in enqueue() is no longer a silent failure.
+      this.log.error('run turn failed', {
+        chatId: st.chatId,
+        chatType: st.chatType,
+        generation: st.generation,
+        boundSessionId: st.boundSessionId ?? undefined,
+        errorKind: safeErrorKind(error),
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? error.stack : undefined,
+      })
+      throw error
     } finally {
       st.activeSenderId = undefined
     }
@@ -1042,7 +1056,11 @@ export class WecomAgentBridge {
   private async cmdDetach(st: ChatState): Promise<TurnResult> {
     if (!st.boundSessionId) return { text: '当前未绑定任何 web 会话。', ok: true }
     const detached = st.boundSessionId
+    const { chatType, chatId } = st
     await this.resetContext(st)
+    // Drop any persisted binding so a restart does not resurrect it (mirrors the
+    // /new detach path, which clears the persisted map too).
+    this.persistBinding(chatType, chatId, undefined)
     this.log.info('detach', { chatId: st.chatId, chatType: st.chatType, session: detached })
     return { text: `已解除绑定 \`${detached}\`（已开启本聊天的独立新会话）。`, ok: true }
   }
@@ -1181,6 +1199,15 @@ export class WecomAgentBridge {
         await this.finishReply(message, streamId, result.text)
         return result
       } catch (error) {
+        // A real agent turn threw. Log the actual error (not just a kind) so the
+        // user-facing "抱歉" fallback below is diagnosable instead of silent.
+        this.log.error('agent turn failed', {
+          chatId: message.chatId,
+          chatType: message.chatType,
+          errorKind: safeErrorKind(error),
+          errorMessage: error instanceof Error ? error.message : String(error),
+          errorStack: error instanceof Error ? error.stack : undefined,
+        })
         // If a thinking stream was opened, finalize it with a failure note (no
         // duplicate reply); otherwise rethrow to the caller's normal failure path.
         if (streamId) {
