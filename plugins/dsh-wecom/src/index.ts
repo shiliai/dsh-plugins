@@ -482,7 +482,7 @@ export class WecomAgentBridge {
   }
 
   /** Serialize a read-modify-write of the bindings file for one chat key. */
-  private persistBinding(chatType: string, chatId: string, sessionId: string | undefined): void {
+  private persistBinding(chatType: string, chatId: string, sessionId: string | undefined): Promise<void> {
     const key = chatKey(chatType, chatId)
     const run = this.bindingsQueue.then(async () => {
       const path = this.bindingsPath()
@@ -500,6 +500,7 @@ export class WecomAgentBridge {
       }
     }).catch(() => undefined)
     this.bindingsQueue = run
+    return run
   }
 
   /**
@@ -594,7 +595,8 @@ export class WecomAgentBridge {
       st.boundSessionId = undefined
       st.aligned = false
       // Drop any persisted binding so a later restart does not resurrect it.
-      this.persistBinding(st.chatType, st.chatId, undefined)
+      // Awaited so /new and /detach return only after the file is updated.
+      await this.persistBinding(st.chatType, st.chatId, undefined)
     }
     st.lastActiveAt = Date.now()
     this.log.info('new generation', { chatId: st.chatId, chatType: st.chatType, generation: st.generation })
@@ -759,7 +761,46 @@ export class WecomAgentBridge {
       agent.followup(userMessage)
       await agent.whenIdle()
       if (sessions) await sessions.flush(agent.session)
-      return summarizeTurn(agent.session.events, firstSeq)
+      // The session event source differs across dsh-session versions: versions
+      // within this plugin's peer range (<=0.1.0-rc.8) expose `events` (a
+      // frozen full-log snapshot), while newer runtimes (0.1.2+) removed that
+      // accessor in favor of `snapshotEvents()`/`ownEvents()`. Resolve whichever
+      // this runtime provides so turn summarization never depends on a removed
+      // accessor (the root cause of the intermittent "抱歉" replies).
+      const session = agent.session as unknown as {
+        events?: unknown
+        snapshotEvents?: (fromSeq?: number, toSeqExclusive?: number) => readonly unknown[] | undefined
+        ownEvents?: () => readonly unknown[] | undefined
+        log?: readonly unknown[]
+      } | undefined
+      let sessionEvents: readonly unknown[] | undefined = Array.isArray(session?.events) ? session.events : undefined
+      if (sessionEvents === undefined && typeof session?.snapshotEvents === 'function') {
+        try {
+          sessionEvents = session.snapshotEvents()
+        } catch {
+          // fall through to the next source
+        }
+      }
+      if (sessionEvents === undefined && typeof session?.ownEvents === 'function') {
+        try {
+          sessionEvents = session.ownEvents()
+        } catch {
+          // fall through to the next source
+        }
+      }
+      if (sessionEvents === undefined && Array.isArray(session?.log)) {
+        sessionEvents = session.log
+      }
+      if (!Array.isArray(sessionEvents)) {
+        this.log.warn('run turn: no session event source available', {
+          chatId: st.chatId,
+          chatType: st.chatType,
+          generation: st.generation,
+          boundSessionId: st.boundSessionId ?? undefined,
+          sessionKeys: session ? Object.keys(session) : undefined,
+        })
+      }
+      return summarizeTurn(sessionEvents, firstSeq)
     } catch (error) {
       // A completed agent turn can still throw here (e.g. whenIdle/followup or
       // a bound session that is live in the browser). Surface the real error so
@@ -970,7 +1011,7 @@ export class WecomAgentBridge {
     st.boundSessionId = freshId
     st.boundFresh = true
     st.aligned = true
-    this.persistBinding(st.chatType, st.chatId, freshId)
+    await this.persistBinding(st.chatType, st.chatId, freshId)
     this.log.info('new', { chatId: st.chatId, chatType: st.chatType, cwd: target, workspace: workspace, freshSession: freshId })
     const note = workspace && workspace !== target ? `工作区 \`${workspace}\` 不可用，已回退到 \`${target}\`。` : ''
     return { text: `${note}已开启新会话 \`${freshId}\`，下一条消息将在此目录创建（DSH web 中将显示）。`, ok: true }
@@ -1004,7 +1045,7 @@ export class WecomAgentBridge {
       st.boundSessionId = target
       st.boundFresh = false
       st.bindingHydrated = true
-      this.persistBinding(st.chatType, st.chatId, target)
+      await this.persistBinding(st.chatType, st.chatId, target)
       this.log.info('sessions bind', { chatId: st.chatId, chatType: st.chatType, to: target })
       return { text: `已绑定会话 \`${target}\`。下一条消息将写入该会话（与 DSH web 共享）。`, ok: true }
     }
@@ -1048,7 +1089,7 @@ export class WecomAgentBridge {
     st.boundSessionId = target
     st.boundFresh = false
     st.bindingHydrated = true
-    this.persistBinding(st.chatType, st.chatId, target)
+    await this.persistBinding(st.chatType, st.chatId, target)
     this.log.info('attach', { chatId: st.chatId, chatType: st.chatType, from: previous, to: target })
     return { text: `已绑定会话 \`${target}\`。下一条消息将写入该会话（与 DSH web 共享）。`, ok: true }
   }
@@ -1056,11 +1097,10 @@ export class WecomAgentBridge {
   private async cmdDetach(st: ChatState): Promise<TurnResult> {
     if (!st.boundSessionId) return { text: '当前未绑定任何 web 会话。', ok: true }
     const detached = st.boundSessionId
-    const { chatType, chatId } = st
+    // resetContext() disposes the agent, bumps the generation, and durably
+    // clears the persisted binding (awaited inside) so a restart right after
+    // /detach cannot resurrect it.
     await this.resetContext(st)
-    // Drop any persisted binding so a restart does not resurrect it (mirrors the
-    // /new detach path, which clears the persisted map too).
-    this.persistBinding(chatType, chatId, undefined)
     this.log.info('detach', { chatId: st.chatId, chatType: st.chatType, session: detached })
     return { text: `已解除绑定 \`${detached}\`（已开启本聊天的独立新会话）。`, ok: true }
   }

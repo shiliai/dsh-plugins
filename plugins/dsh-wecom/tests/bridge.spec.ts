@@ -65,6 +65,8 @@ function baseContext(opts: {
   liveIds?: string[]
   /** If true, mock `workspaceRegistry` and capture attach calls. */
   withRegistry?: boolean
+  /** If true, sessions mimic dsh-session 0.1.2+: no `events`, only `snapshotEvents()`/`ownEvents()`. */
+  newRuntimeSession?: boolean
 } = {}) {
   const agents: FakeAgent[] = []
   const creates: Array<Record<string, unknown>> = []
@@ -76,6 +78,18 @@ function baseContext(opts: {
     const index = agents.length
     const a = makeAgent(`agent${index + 1}`)
     if (opts.whenIdle) a.whenIdle = () => opts.whenIdle!(index)
+    if (opts.newRuntimeSession) {
+      // Mirror dsh-session 0.1.2+, which removed the `events` accessor in
+      // favor of snapshotEvents()/ownEvents().
+      const log = a.session.events
+      a.session = {
+        get seq() {
+          return log.length
+        },
+        snapshotEvents: (fromSeq = 0, toSeqExclusive = log.length) => Object.freeze(log.slice(fromSeq, toSeqExclusive)),
+        ownEvents: () => Object.freeze([...log]),
+      } as never
+    }
     agents.push(a)
     return { agent: a, dispose: async () => opts.dispose?.(index) }
   }
@@ -181,6 +195,21 @@ describe('WecomAgentBridge', () => {
     expect(bot.replyText).not.toHaveBeenCalled()
     expect(interactionRouteOf(agents[0]!.messages[0] as object))
       .toEqual({ channel: 'wecom', destination: 'single:u1' })
+  })
+
+  it('replies with the agent output on newer runtimes without session.events (snapshotEvents fallback)', async () => {
+    // dsh-session 0.1.2+ removed the `events` accessor; the bridge must
+    // summarize via snapshotEvents() and still deliver the real reply instead
+    // of the "抱歉" fallback.
+    const { mockCtx } = baseContext({ newRuntimeSession: true })
+    const bot = fakeBot()
+    const bridge = new WecomAgentBridge(mockCtx as never, bot as never, { botId: 'b', botSecret: 's' })
+    const res = await bridge.enqueue(msg('u1', '你好'))
+    expect(res.ok).toBe(true)
+    expect(res.text).toContain('你好')
+    expect(bot.finishReply).toHaveBeenCalledTimes(1)
+    expect(bot.finishReply.mock.calls[0]![2]).toContain('你好')
+    expect(bot.finishReply.mock.calls[0]![2]).not.toContain('抱歉')
   })
 
   it('falls back to a direct message when the thinking stream cannot be finalized', async () => {

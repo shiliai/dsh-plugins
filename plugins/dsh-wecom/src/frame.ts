@@ -13,7 +13,8 @@ export function extractTextFromFrame(frame: WsFrame): string {
 }
 
 /** Aggregate the last assistant text and turn outcome from a session event suffix. */
-export function summarizeTurn(events: readonly unknown[], firstSeq: number): TurnResult {
+export function summarizeTurn(events: readonly unknown[] | undefined | null, firstSeq: number): TurnResult {
+  if (!Array.isArray(events)) return { text: '', ok: false }
   let started = false
   let text = ''
   let ok = false
