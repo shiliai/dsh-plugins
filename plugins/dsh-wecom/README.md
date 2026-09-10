@@ -142,6 +142,26 @@ or raw frames — only identities (chat id / chat type / msg id) and byte
 counts. The WeCom SDK's own `debug` logs (which serialize frame bodies) are
 always dropped, even at `debug`. Only identity and metadata are emitted.
 
+When an agent turn fails, the plugin now records the **actual error** — not just
+an opaque kind — in two `error`-level lines: `run turn failed` (from
+`runTurn`, e.g. a bound session that is live in the browser, or a
+`whenIdle`/`followup` throw) and `agent turn failed` (from the queue's catch,
+which emits the user-facing "抱歉，处理这条消息时发生错误" fallback). Each line
+carries `errorMessage` and `errorStack` plus the chat identity, so a transient
+failure can be diagnosed from the log instead of the user's screenshot.
+
+Two robustness fixes ship alongside. First, turn summarization now resolves the
+session event source across `dsh-session` versions: older runtimes (within this
+plugin's peer range) expose `session.events`, while newer runtimes (0.1.2+)
+removed that accessor in favor of `snapshotEvents()`/`ownEvents()`. The plugin
+tries each in turn (plus the raw log as a last resort), which eliminates the
+previously silent `events is not iterable` failure — the real root cause of the
+intermittent "抱歉" replies — and logs a `warn` when no source is available.
+Second, binding writes are now awaited by `/new`, `/attach`,
+`/sessions <id>`, and `/detach`, so the bindings file is updated on disk before
+the command replies; a restart can no longer race a pending write (or resurrect
+a detached web session).
+
 `/cd` first resolves the target with `realpath`, then requires it to be under
 `allowedCwdRoots`. This blocks absolute-path, `..`, and symlink escapes. With
 no roots configured, only `defaultCwd` (or `process.cwd()`) and its descendants
