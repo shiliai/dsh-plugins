@@ -40,7 +40,7 @@ export class WallabagAdapter {
   async listEntries(options: { page?: number; perPage?: number } = {}): Promise<Article[]> {
     const page = Math.max(1, Math.floor(options.page ?? 1))
     const perPage = Math.min(100, Math.max(1, Math.floor(options.perPage ?? 50)))
-    const payload = await this.request(`/entries?detail=full&page=${page}&perPage=${perPage}`)
+    const payload = await this.request(`/entries?detail=full&sort=created&order=desc&page=${page}&perPage=${perPage}`)
     const embedded = isRecord(payload) && isRecord(payload._embedded) ? (Array.isArray(payload._embedded.items) ? payload._embedded.items : payload._embedded.entries) : undefined
     const rows = Array.isArray(embedded) ? embedded : isRecord(payload) && Array.isArray(payload.entries) ? payload.entries : isRecord(payload) && Array.isArray(payload.items) ? payload.items : Array.isArray(payload) ? payload : []
     return rows.filter(isRecord).map(row => this.toArticle(row))
