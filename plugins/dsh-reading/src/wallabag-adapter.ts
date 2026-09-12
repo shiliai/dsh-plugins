@@ -70,7 +70,12 @@ export class WallabagAdapter {
   private async token(): Promise<string> {
     if (this.#bearerToken !== undefined && Date.now() < this.#expiresAt) return this.#bearerToken
     const body = new URLSearchParams({ grant_type: 'password', client_id: this.#config.clientId, client_secret: this.#config.clientSecret, username: this.#config.username, password: this.#config.password })
-    const response = await this.fetchImpl(`${this.#config.origin}/oauth/v2/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, body, signal: AbortSignal.timeout(this.#config.timeoutMs ?? 20_000) })
+    let response: Response
+    try {
+      response = await this.fetchImpl(`${this.#config.origin}/oauth/v2/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, body, signal: AbortSignal.timeout(this.#config.timeoutMs ?? 20_000) })
+    } catch {
+      throw new ReadingError('Wallabag is unavailable.', 'WALLABAG_UNAVAILABLE', 503)
+    }
     if (!response.ok) throw new ReadingError('Wallabag authentication failed.', 'WALLABAG_AUTH', response.status === 401 ? 502 : 503)
     const payload = await response.json() as TokenResponse
     if (typeof payload.access_token !== 'string' || payload.access_token === '') throw new ReadingError('Wallabag authentication returned no token.', 'WALLABAG_AUTH', 502)
@@ -82,7 +87,12 @@ export class WallabagAdapter {
 
   private async request(path: string, init: RequestInit = {}): Promise<unknown> {
     const token = await this.token()
-    const response = await this.fetchImpl(`${this.#config.origin}/api${path}`, { ...init, headers: { Accept: 'application/json', Authorization: `Bearer ${token}`, ...init.headers }, signal: init.signal ?? AbortSignal.timeout(this.#config.timeoutMs ?? 20_000) })
+    let response: Response
+    try {
+      response = await this.fetchImpl(`${this.#config.origin}/api${path}`, { ...init, headers: { Accept: 'application/json', Authorization: `Bearer ${token}`, ...init.headers }, signal: init.signal ?? AbortSignal.timeout(this.#config.timeoutMs ?? 20_000) })
+    } catch {
+      throw new ReadingError('Wallabag is unavailable.', 'WALLABAG_UNAVAILABLE', 503)
+    }
     if (!response.ok) {
       if (response.status === 401) { this.#bearerToken = undefined; this.#expiresAt = 0 }
       throw new ReadingError(`Wallabag request failed (${response.status}).`, 'WALLABAG_REQUEST', response.status === 404 ? 404 : 502)
