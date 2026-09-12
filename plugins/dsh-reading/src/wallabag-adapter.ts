@@ -1,5 +1,8 @@
 import type { Article } from './contracts.ts'
 import { ReadingError } from './library.ts'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
 
 export interface WallabagConfig {
   origin: string
@@ -26,7 +29,8 @@ export class WallabagAdapter {
   }
 
   static fromEnv(env: NodeJS.ProcessEnv = process.env): WallabagAdapter | undefined {
-    const value = (name: string) => env[name]?.trim() ?? ''
+    const refs = readCredentialRefs(env)
+    const value = (name: string) => (env[name] ?? refs[name] ?? '').trim()
     const origin = value('READING_WALLABAG_URL')
     const clientId = value('READING_WALLABAG_CLIENT_ID')
     const clientSecret = value('READING_WALLABAG_CLIENT_SECRET')
@@ -113,6 +117,20 @@ export class WallabagAdapter {
     const html = rawHtml === undefined ? undefined : sanitizeHtml(rawHtml)
     return { id: `wallabag:${id}`, source: 'wallabag', url, title, ...(typeof row.domain_name === 'string' ? { domain: row.domain_name } : {}), ...(readingTime !== undefined ? { readingTimeMin: readingTime } : {}), isArchived: archived, savedAt, ...(html !== undefined ? { extractedHtml: html } : {}) }
   }
+}
+
+/** DSH normally exposes credential refs as env values; read its local refs as a fallback for standalone hosts. */
+function readCredentialRefs(env: NodeJS.ProcessEnv): Record<string, string> {
+  const home = env.DSH_HOME?.trim() || join(homedir(), '.local', 'dsh_home')
+  try {
+    const text = readFileSync(join(home, '.credentials.yaml'), 'utf8')
+    const refs: Record<string, string> = {}
+    for (const line of text.split(/\r?\n/u)) {
+      const match = /^\s{2}([A-Z0-9_]+):\s*(.*?)\s*$/u.exec(line)
+      if (match?.[1] !== undefined && match[2] !== undefined) refs[match[1]] = match[2].replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/u, '$1$2')
+    }
+    return refs
+  } catch { return {} }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) }
