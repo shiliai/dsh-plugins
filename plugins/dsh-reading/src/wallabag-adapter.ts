@@ -15,7 +15,7 @@ interface TokenResponse { access_token?: unknown; expires_in?: unknown }
 /** Small Wallabag REST client. Credentials stay on the host and are never returned. */
 export class WallabagAdapter {
   readonly #config: WallabagConfig
-  #token: string | undefined
+  #bearerToken: string | undefined
   #expiresAt = 0
 
   constructor(config: WallabagConfig, private readonly fetchImpl: typeof fetch = fetch) {
@@ -68,23 +68,23 @@ export class WallabagAdapter {
   }
 
   private async token(): Promise<string> {
-    if (this.#token !== undefined && Date.now() < this.#expiresAt) return this.#token
+    if (this.#bearerToken !== undefined && Date.now() < this.#expiresAt) return this.#bearerToken
     const body = new URLSearchParams({ grant_type: 'password', client_id: this.#config.clientId, client_secret: this.#config.clientSecret, username: this.#config.username, password: this.#config.password })
     const response = await this.fetchImpl(`${this.#config.origin}/oauth/v2/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, body, signal: AbortSignal.timeout(this.#config.timeoutMs ?? 20_000) })
     if (!response.ok) throw new ReadingError('Wallabag authentication failed.', 'WALLABAG_AUTH', response.status === 401 ? 502 : 503)
     const payload = await response.json() as TokenResponse
     if (typeof payload.access_token !== 'string' || payload.access_token === '') throw new ReadingError('Wallabag authentication returned no token.', 'WALLABAG_AUTH', 502)
     const expires = typeof payload.expires_in === 'number' ? payload.expires_in : 300
-    this.#token = payload.access_token
+    this.#bearerToken = payload.access_token
     this.#expiresAt = Date.now() + Math.max(30, expires - 30) * 1000
-    return this.#token
+    return this.#bearerToken
   }
 
   private async request(path: string, init: RequestInit = {}): Promise<unknown> {
     const token = await this.token()
     const response = await this.fetchImpl(`${this.#config.origin}/api${path}`, { ...init, headers: { Accept: 'application/json', Authorization: `Bearer ${token}`, ...init.headers }, signal: init.signal ?? AbortSignal.timeout(this.#config.timeoutMs ?? 20_000) })
     if (!response.ok) {
-      if (response.status === 401) { this.#token = undefined; this.#expiresAt = 0 }
+      if (response.status === 401) { this.#bearerToken = undefined; this.#expiresAt = 0 }
       throw new ReadingError(`Wallabag request failed (${response.status}).`, 'WALLABAG_REQUEST', response.status === 404 ? 404 : 502)
     }
     if (response.status === 204) return {}
@@ -99,9 +99,18 @@ export class WallabagAdapter {
     const archived = row.is_archived === true || row.is_archived === 1 || row.is_archived === '1'
     const savedAt = typeof row.created_at === 'string' ? row.created_at : new Date().toISOString()
     const readingTime = typeof row.reading_time === 'number' ? row.reading_time : undefined
-    const html = typeof row.content === 'string' ? row.content : typeof row.content_html === 'string' ? row.content_html : undefined
+    const rawHtml = typeof row.content === 'string' ? row.content : typeof row.content_html === 'string' ? row.content_html : undefined
+    const html = rawHtml === undefined ? undefined : sanitizeHtml(rawHtml)
     return { id: `wallabag:${id}`, source: 'wallabag', url, title, ...(typeof row.domain_name === 'string' ? { domain: row.domain_name } : {}), ...(readingTime !== undefined ? { readingTimeMin: readingTime } : {}), isArchived: archived, savedAt, ...(html !== undefined ? { extractedHtml: html } : {}) }
   }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) }
+
+/** Keep Wallabag article markup inert before it crosses the HTML boundary. */
+function sanitizeHtml(value: string): string {
+  return value
+    .replace(/<\/?(?:script|style|iframe|object|embed|form)(?:\s[^>]*)?>[\s\S]*?<\/?(?:script|style|iframe|object|embed|form)>/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\s+(?:href|src)\s*=\s*(["'])\s*javascript:[\s\S]*?\1/gi, '')
+}
