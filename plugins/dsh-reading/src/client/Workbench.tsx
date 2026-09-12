@@ -4,19 +4,20 @@ import X from 'lucide-react/dist/esm/icons/x'
 import Library from 'lucide-react/dist/esm/icons/library'
 import Clock from 'lucide-react/dist/esm/icons/clock'
 import PenLine from 'lucide-react/dist/esm/icons/pen-line'
+import BookOpen from 'lucide-react/dist/esm/icons/book-open'
 import PanelRightClose from 'lucide-react/dist/esm/icons/panel-right-close'
 import type { Article, PublicBookWithProgress } from '../contracts.ts'
 import type { ReadingStore } from './store.ts'
-import { LibraryView } from './LibraryView.tsx'
+import { LibraryView, NasLibraryView } from './LibraryView.tsx'
 import { ReaderView } from './ReaderView.tsx'
 import { ArticleReader, ReadLaterView } from './ReadLaterView.tsx'
 import { findConversationAnchor, type ConversationAnchor } from './workbench-anchor.ts'
 import { calculateReadingLayout, MIN_CHAT, MIN_LIBRARY, type ReadingWidths, type WorkbenchRect } from './workbench-geometry.ts'
 import css from './styles.module.css?dsh-inline'
 
-type LeftTab = 'library' | 'readlater' | 'annotations'
+type LeftTab = 'library' | 'nas' | 'readlater' | 'annotations'
 
-const TAB_LABEL: Record<LeftTab, string> = { library: '书库', readlater: '稍后读', annotations: '批注' }
+const TAB_LABEL: Record<LeftTab, string> = { library: '本地书库', nas: 'NAS 书库', readlater: '稍后读', annotations: '批注' }
 const LAYOUT_STORAGE_KEY = 'dsh-reading.layout'
 const COMPACT_BREAKPOINT = 900
 const DEFAULT_WIDTHS: ReadingWidths = { library: 248, chat: 400 }
@@ -130,13 +131,13 @@ export function Workbench({ store, close, addArticleContext, addObsidianReadingC
           <nav className={css.leftTabs}>
             {(Object.keys(TAB_LABEL) as LeftTab[]).map(key => (
               <button key={key} type="button" className={`${css.leftTab} ${tab === key ? css.selected : ''}`} onClick={() => setTab(key)}>
-                {key === 'library' ? <Library size={13} /> : key === 'readlater' ? <Clock size={13} /> : <PenLine size={13} />}
+                {key === 'library' ? <Library size={13} /> : key === 'nas' ? <BookOpen size={13} /> : key === 'readlater' ? <Clock size={13} /> : <PenLine size={13} />}
                 {TAB_LABEL[key]}
               </button>
             ))}
           </nav>
           <div className={css.leftBody}>
-            {tab === 'library' ? <LibraryView store={store} onOpen={onOpenBook} /> : tab === 'readlater' ? <ReadLaterView onOpen={onOpenArticle} /> : (
+            {tab === 'library' ? <LibraryView store={store} onOpen={onOpenBook} /> : tab === 'nas' ? <NasLibraryView store={store} /> : tab === 'readlater' ? <ReadLaterView onOpen={onOpenArticle} /> : (
               <div className={css.panelLoading}>批注中心将在 M3 接入。</div>
             )}
           </div>

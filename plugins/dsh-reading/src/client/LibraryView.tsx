@@ -1,11 +1,13 @@
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Upload from 'lucide-react/dist/esm/icons/upload'
 import RefreshCw from 'lucide-react/dist/esm/icons/refresh-cw'
 import BookOpen from 'lucide-react/dist/esm/icons/book-open'
 import FileText from 'lucide-react/dist/esm/icons/file-text'
 import type { PublicBookWithProgress } from '../contracts.ts'
 import type { ReadingStore } from './store.ts'
+import { readingApi } from './api.ts'
 import css from './styles.module.css?dsh-inline'
+import type { OpdsBook } from '../opds-adapter.ts'
 
 interface Props {
   store: ReadingStore
@@ -66,4 +68,32 @@ export function LibraryView({ store, onOpen }: Props) {
       </div>
     </div>
   )
+}
+
+export function NasLibraryView({ store }: { store: ReadingStore }) {
+  const [books, setBooks] = useState<OpdsBook[]>([])
+  const [source, setSource] = useState('nasubuntu')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [importing, setImporting] = useState<string | null>(null)
+  const refresh = async () => {
+    setLoading(true); setError(null)
+    try { const result = await readingApi.opdsBooks(); setSource(result.source); setBooks(result.books) }
+    catch (err) { setError(err instanceof Error ? err.message : String(err)) }
+    finally { setLoading(false) }
+  }
+  useEffect(() => { void refresh() }, [])
+  return <div className={css.libraryRoot}>
+    <div className={css.libraryToolbar}><span className={css.panelLabel}>{source}</span><button type="button" className={css.iconButton} title="刷新 NAS 书库" aria-label="刷新 NAS 书库" onClick={() => void refresh()} disabled={loading}><RefreshCw size={14} /></button></div>
+    {error !== null && <div className={css.libraryError}>{error}</div>}
+    <div className={css.libraryList}>
+      {loading && books.length === 0 ? <div className={css.panelLoading}>加载中…</div> : null}
+      {!loading && books.length === 0 && error === null ? <div className={css.panelLoading}><BookOpen size={28} /><p>NAS 书库暂无可下载书籍。</p></div> : null}
+      {books.map(book => <div key={book.id} className={css.bookCard}>
+        <span className={css.bookCover}>{book.format === 'pdf' ? <FileText size={22} /> : <BookOpen size={22} />}</span>
+        <span className={css.bookMeta}><span className={css.bookTitle}>{book.title}</span><span className={css.bookSub}><span className={css.formatBadge}>{book.format.toUpperCase()}</span>{book.author ?? ''}</span></span>
+        <button type="button" className={css.toolButton} disabled={importing !== null} onClick={() => { setImporting(book.id); void store.importOpdsBook(book.id).finally(() => setImporting(null)) }}>{importing === book.id ? '下载中…' : '下载阅读'}</button>
+      </div>)}
+    </div>
+  </div>
 }

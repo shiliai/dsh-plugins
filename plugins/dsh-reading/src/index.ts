@@ -6,6 +6,7 @@ import { registerReadingApi } from './http-api.ts'
 import { LocalLibrary, ReadingError } from './library.ts'
 import { ReadingStateStore } from './state-store.ts'
 import { WallabagAdapter, type WallabagConfig } from './wallabag-adapter.ts'
+import { OpdsAdapter, type OpdsConfig } from './opds-adapter.ts'
 
 export const name = 'dsh-reading'
 export const inject = ['webServer']
@@ -14,6 +15,7 @@ export interface Config {
   /** Reading data directory (books + state). Defaults to $READING_DATA_DIR or ~/.dsh/reading. */
   dataDir?: string | null
   wallabag?: WallabagConfig | null
+  opds?: OpdsConfig | null
 }
 
 export async function apply(ctx: Context, config: Config): Promise<void> {
@@ -21,8 +23,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const library = new LocalLibrary(dataDir)
   const store = await ReadingStateStore.create(dataDir)
   const wallabag = config.wallabag === null ? undefined : config.wallabag === undefined ? WallabagAdapter.fromEnv() : new WallabagAdapter(config.wallabag)
+  const opds = config.opds === null ? undefined : config.opds === undefined ? OpdsAdapter.fromEnv() : new OpdsAdapter(config.opds)
   ctx.effect(
-    () => registerReadingApi(ctx.webServer, library, store, wallabag),
+    () => registerReadingApi(ctx.webServer, library, store, wallabag, opds),
     'dsh-reading: reading HTTP API',
   )
 }
@@ -47,6 +50,8 @@ export { ReadingStateStore } from './state-store.ts'
 export { LocalLibrary, ReadingError } from './library.ts'
 export { WallabagAdapter } from './wallabag-adapter.ts'
 export type { WallabagConfig } from './wallabag-adapter.ts'
+export { OpdsAdapter } from './opds-adapter.ts'
+export type { OpdsConfig, OpdsBook } from './opds-adapter.ts'
 export type {
   Annotation, Book, BookFormat, BookWithProgress, Locator, PublicBook, PublicBookWithProgress, ReadingProgress, ReadingStateSnapshot,
   Article,

@@ -6,6 +6,7 @@ import type { Annotation, Locator, ReadingProgress } from './contracts.ts'
 import { LocalLibrary, ReadingError } from './library.ts'
 import { ReadingStateStore } from './state-store.ts'
 import { WallabagAdapter } from './wallabag-adapter.ts'
+import { OpdsAdapter } from './opds-adapter.ts'
 
 const API_PREFIX = '/dsh-reading/api'
 const MAX_IMPORT_BYTES = 512 * 1024 * 1024
@@ -18,13 +19,13 @@ const MIME_BY_FORMAT: Record<string, string> = {
   azw: 'application/vnd.amazon.ebook',
 }
 
-export function registerReadingApi(webServer: WebServer, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter): () => void {
+export function registerReadingApi(webServer: WebServer, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter): () => void {
   return webServer.register({
     kind: 'prefix',
     path: API_PREFIX,
     handler: async (request, response) => {
       try {
-        await route(request, response, library, store, wallabag)
+        await route(request, response, library, store, wallabag, opds)
       } catch (error) {
         sendError(response, error)
       }
@@ -32,7 +33,7 @@ export function registerReadingApi(webServer: WebServer, library: LocalLibrary, 
   })
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter): Promise<void> {
   const url = new URL(request.url ?? '/', 'http://dsh.local')
   const endpoint = url.pathname.slice(API_PREFIX.length) || '/'
 
@@ -47,6 +48,18 @@ async function route(request: IncomingMessage, response: ServerResponse, library
 
   if (request.method === 'GET' && endpoint === '/library') {
     sendJson(response, 200, { books: (await library.listBooks(store.snapshot.progress)).map(toPublicBook) })
+    return
+  }
+
+  if (request.method === 'GET' && endpoint === '/opds/books') {
+    if (opds === undefined) throw new ReadingError('OPDS is not configured.', 'OPDS_UNAVAILABLE', 503)
+    sendJson(response, 200, { source: opds.name, books: await opds.listBooks() })
+    return
+  }
+  const opdsImport = /^\/opds\/books\/([^/]+)\/import$/u.exec(endpoint)
+  if (opdsImport !== null && opdsImport[1] !== undefined && request.method === 'POST') {
+    if (opds === undefined) throw new ReadingError('OPDS is not configured.', 'OPDS_UNAVAILABLE', 503)
+    sendJson(response, 200, { book: toPublicBook(await opds.importBook(decodeURIComponent(opdsImport[1]), library)) })
     return
   }
 

@@ -38,6 +38,8 @@
 }
 .toolButton:hover { background: var(--reading-bg-soft); }
 
+.panelLabel { color: var(--reading-muted); font-size: 12px; font-weight: 600; }
+
 .panelLoading {
   display: flex;
   flex-direction: column;

@@ -63,6 +63,11 @@ export class ReadingStore {
     await this.refresh()
   }
 
+  async importOpdsBook(id: string): Promise<void> {
+    await readingApi.importOpdsBook(id)
+    await this.refresh()
+  }
+
   /** Debounced progress persistence; flushes on close/unmount. */
   reportProgress(bookId: string, locator: Locator, percent: number): void {
     const pending = this.#progressFlush

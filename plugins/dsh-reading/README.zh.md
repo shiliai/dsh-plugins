@@ -13,6 +13,7 @@ DeepSeek Harness 沉浸式阅读工作台：在 GUI 内阅读 EPUB / PDF（AZW3/
 - **PDF**：基于 [pdf.js](https://mozilla.github.io/pdf.js/)，连续滚动 + 懒渲染。
 - **进度持久化**：存于插件数据目录 `state.json`；EPUB 按 epubcfi 恢复，PDF 按页码 + 滚动比例恢复。
 - **Wallabag 稍后读**：粘贴 HTTP(S) URL 收藏，获取正文后在中栏打开，并持久化文章滚动进度。
+- **NAS Calibre-Web OPDS**：浏览配置的 nasubuntu 书库，将选中的书下载到本地缓存后阅读。
 - **导入**：书库页「导入」按钮（支持 `.epub` / `.pdf` / `.azw3` / `.mobi` / `.azw`；Amazon 格式在 M3 转换管道落地后可阅读）。
 
 ## 配置

@@ -1,4 +1,5 @@
 import type { Annotation, Article, Locator, PublicBook, PublicBookWithProgress, ReadingProgress } from '../contracts.ts'
+import type { OpdsBook } from '../opds-adapter.ts'
 
 const API = '/dsh-reading/api'
 
@@ -18,6 +19,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const readingApi = {
   library: () => request<{ books: PublicBookWithProgress[] }>('/library'),
+  opdsBooks: () => request<{ source: string; books: OpdsBook[] }>('/opds/books'),
+  importOpdsBook: (id: string) => request<{ book: PublicBook }>(`/opds/books/${encodeURIComponent(id)}/import`, { method: 'POST' }),
   book: (id: string) => request<{ book: PublicBookWithProgress }>(`/book/${encodeURIComponent(id)}`),
   bookFileUrl: (id: string) => `${API}/book/${encodeURIComponent(id)}/file`,
   importBook: (file: File) => request<{ book: PublicBook }>(`/import?filename=${encodeURIComponent(file.name)}`, {
