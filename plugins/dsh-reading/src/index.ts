@@ -43,5 +43,5 @@ function expandHome(path: string): string {
 export { ReadingStateStore } from './state-store.ts'
 export { LocalLibrary, ReadingError } from './library.ts'
 export type {
-  Annotation, Book, BookFormat, BookWithProgress, Locator, ReadingProgress, ReadingStateSnapshot,
+  Annotation, Book, BookFormat, BookWithProgress, Locator, PublicBook, PublicBookWithProgress, ReadingProgress, ReadingStateSnapshot,
 } from './contracts.ts'

@@ -55,6 +55,11 @@ export interface BookWithProgress extends Book {
   progress?: ReadingProgress
 }
 
+/** Book metadata safe to return to web clients; filesystem paths stay server-side. */
+export type PublicBook = Omit<Book, 'filePath'>
+
+export type PublicBookWithProgress = Omit<BookWithProgress, 'filePath'>
+
 export interface ReadingApiError {
   error: string
   code: string

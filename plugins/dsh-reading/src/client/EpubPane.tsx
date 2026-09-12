@@ -126,7 +126,10 @@ export function EpubPane({ bookId, fileName, prefs, initialCfi, onRelocate, onRe
       view.remove()
       viewRef.current = null
     }
-  }, [bookId, fileName, initialCfi])
+  // Open the reader only when the selected book changes. Progress updates
+  // change initialCfi, but must not tear down and recreate the view after
+  // every relocate event; the captured value is used only for initial restore.
+  }, [bookId, fileName])
 
   return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
 }

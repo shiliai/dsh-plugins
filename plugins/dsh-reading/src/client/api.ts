@@ -1,4 +1,4 @@
-import type { Annotation, Book, BookWithProgress, Locator, ReadingProgress } from '../contracts.ts'
+import type { Annotation, Locator, PublicBook, PublicBookWithProgress, ReadingProgress } from '../contracts.ts'
 
 const API = '/dsh-reading/api'
 
@@ -12,14 +12,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch { /* keep default message */ }
     throw new Error(message)
   }
+  if (response.status === 204 || response.status === 205) return undefined as T
   return response.json() as Promise<T>
 }
 
 export const readingApi = {
-  library: () => request<{ books: BookWithProgress[] }>('/library'),
-  book: (id: string) => request<{ book: BookWithProgress }>(`/book/${encodeURIComponent(id)}`),
+  library: () => request<{ books: PublicBookWithProgress[] }>('/library'),
+  book: (id: string) => request<{ book: PublicBookWithProgress }>(`/book/${encodeURIComponent(id)}`),
   bookFileUrl: (id: string) => `${API}/book/${encodeURIComponent(id)}/file`,
-  importBook: (file: File) => request<{ book: Book }>(`/import?filename=${encodeURIComponent(file.name)}`, {
+  importBook: (file: File) => request<{ book: PublicBook }>(`/import?filename=${encodeURIComponent(file.name)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/octet-stream' },
     body: file,

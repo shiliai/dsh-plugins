@@ -5,7 +5,7 @@ import Library from 'lucide-react/dist/esm/icons/library'
 import Clock from 'lucide-react/dist/esm/icons/clock'
 import PenLine from 'lucide-react/dist/esm/icons/pen-line'
 import PanelRightClose from 'lucide-react/dist/esm/icons/panel-right-close'
-import type { BookWithProgress } from '../contracts.ts'
+import type { PublicBookWithProgress } from '../contracts.ts'
 import type { ReadingStore } from './store.ts'
 import { LibraryView } from './LibraryView.tsx'
 import { ReaderView } from './ReaderView.tsx'
@@ -88,7 +88,7 @@ export function Workbench({ store, close }: Props) {
   }
   anchor.viewArea.style.marginLeft = compact ? '0px' : `${layout.chatMarginLeft}px`
 
-  const onOpenBook = (book: BookWithProgress) => {
+  const onOpenBook = (book: PublicBookWithProgress) => {
     store.flushProgress()
     store.openBook(book)
   }

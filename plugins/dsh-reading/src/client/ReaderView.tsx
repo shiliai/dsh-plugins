@@ -10,7 +10,7 @@ import ChevronLeft from 'lucide-react/dist/esm/icons/chevron-left'
 import ChevronRight from 'lucide-react/dist/esm/icons/chevron-right'
 import ScrollText from 'lucide-react/dist/esm/icons/scroll-text'
 import Columns2 from 'lucide-react/dist/esm/icons/columns-2'
-import type { BookWithProgress } from '../contracts.ts'
+import type { PublicBookWithProgress } from '../contracts.ts'
 import type { ReadingStore } from './store.ts'
 import { EpubPane, type EpubPaneHandle, type TocEntry } from './EpubPane.tsx'
 import { PdfPane, type PdfPaneHandle } from './PdfPane.tsx'
@@ -18,7 +18,7 @@ import { loadPrefs, savePrefs, READING_THEMES, type ReadingPrefs, type ThemeName
 import css from './styles.module.css?dsh-inline'
 
 interface Props {
-  book: BookWithProgress
+  book: PublicBookWithProgress
   store: ReadingStore
 }
 
