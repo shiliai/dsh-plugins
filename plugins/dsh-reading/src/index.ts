@@ -5,6 +5,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import { registerReadingApi } from './http-api.ts'
 import { LocalLibrary, ReadingError } from './library.ts'
 import { ReadingStateStore } from './state-store.ts'
+import { WallabagAdapter, type WallabagConfig } from './wallabag-adapter.ts'
 
 export const name = 'dsh-reading'
 export const inject = ['webServer']
@@ -12,14 +13,16 @@ export const inject = ['webServer']
 export interface Config {
   /** Reading data directory (books + state). Defaults to $READING_DATA_DIR or ~/.dsh/reading. */
   dataDir?: string | null
+  wallabag?: WallabagConfig | null
 }
 
 export async function apply(ctx: Context, config: Config): Promise<void> {
   const dataDir = resolveDataDir(config)
   const library = new LocalLibrary(dataDir)
   const store = await ReadingStateStore.create(dataDir)
+  const wallabag = config.wallabag === null ? undefined : config.wallabag === undefined ? WallabagAdapter.fromEnv() : new WallabagAdapter(config.wallabag)
   ctx.effect(
-    () => registerReadingApi(ctx.webServer, library, store),
+    () => registerReadingApi(ctx.webServer, library, store, wallabag),
     'dsh-reading: reading HTTP API',
   )
 }
@@ -42,6 +45,9 @@ function expandHome(path: string): string {
 
 export { ReadingStateStore } from './state-store.ts'
 export { LocalLibrary, ReadingError } from './library.ts'
+export { WallabagAdapter } from './wallabag-adapter.ts'
+export type { WallabagConfig } from './wallabag-adapter.ts'
 export type {
   Annotation, Book, BookFormat, BookWithProgress, Locator, PublicBook, PublicBookWithProgress, ReadingProgress, ReadingStateSnapshot,
+  Article,
 } from './contracts.ts'

@@ -1,4 +1,4 @@
-import type { Annotation, Locator, PublicBook, PublicBookWithProgress, ReadingProgress } from '../contracts.ts'
+import type { Annotation, Article, Locator, PublicBook, PublicBookWithProgress, ReadingProgress } from '../contracts.ts'
 
 const API = '/dsh-reading/api'
 
@@ -43,4 +43,11 @@ export const readingApi = {
   removeAnnotation: async (id: string) => {
     await request<void>(`/annotations/${encodeURIComponent(id)}`, { method: 'DELETE' })
   },
+  wallabagEntries: () => request<{ articles: Article[] }>('/wallabag/entries'),
+  importUrl: (url: string) => request<{ article: Article }>('/wallabag/entries', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  }),
+  wallabagEntry: (id: string) => request<{ article: Article }>(`/wallabag/entries/${encodeURIComponent(id)}`),
 }

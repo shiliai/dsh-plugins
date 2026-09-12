@@ -64,3 +64,16 @@ export interface ReadingApiError {
   error: string
   code: string
 }
+
+/** Article saved in Wallabag and exposed to the web client. */
+export interface Article {
+  id: string
+  source: 'wallabag' | 'extract'
+  url: string
+  title: string
+  domain?: string
+  readingTimeMin?: number
+  isArchived: boolean
+  savedAt: string
+  extractedHtml?: string
+}

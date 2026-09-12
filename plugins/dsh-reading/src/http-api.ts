@@ -5,6 +5,7 @@ import type { WebServer } from '@deepseek-ai/dsh-host-webserver'
 import type { Annotation, Locator, ReadingProgress } from './contracts.ts'
 import { LocalLibrary, ReadingError } from './library.ts'
 import { ReadingStateStore } from './state-store.ts'
+import { WallabagAdapter } from './wallabag-adapter.ts'
 
 const API_PREFIX = '/dsh-reading/api'
 const MAX_IMPORT_BYTES = 512 * 1024 * 1024
@@ -17,13 +18,13 @@ const MIME_BY_FORMAT: Record<string, string> = {
   azw: 'application/vnd.amazon.ebook',
 }
 
-export function registerReadingApi(webServer: WebServer, library: LocalLibrary, store: ReadingStateStore): () => void {
+export function registerReadingApi(webServer: WebServer, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter): () => void {
   return webServer.register({
     kind: 'prefix',
     path: API_PREFIX,
     handler: async (request, response) => {
       try {
-        await route(request, response, library, store)
+        await route(request, response, library, store, wallabag)
       } catch (error) {
         sendError(response, error)
       }
@@ -31,7 +32,7 @@ export function registerReadingApi(webServer: WebServer, library: LocalLibrary, 
   })
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, library: LocalLibrary, store: ReadingStateStore): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter): Promise<void> {
   const url = new URL(request.url ?? '/', 'http://dsh.local')
   const endpoint = url.pathname.slice(API_PREFIX.length) || '/'
 
@@ -52,6 +53,29 @@ async function route(request: IncomingMessage, response: ServerResponse, library
 
   if (request.method === 'GET' && endpoint === '/progress') {
     sendJson(response, 200, { progress: store.snapshot.progress })
+    return
+  }
+
+  if (endpoint === '/wallabag/entries') {
+    if (wallabag === undefined) throw new ReadingError('Wallabag is not configured.', 'WALLABAG_UNAVAILABLE', 503)
+    if (request.method === 'GET') {
+      const page = parsePositiveInt(url.searchParams.get('page'), 1)
+      const perPage = parsePositiveInt(url.searchParams.get('perPage'), 50)
+      sendJson(response, 200, { articles: await wallabag.listEntries({ page, perPage }) })
+      return
+    }
+    if (request.method === 'POST') {
+      const body = await readJson(request, 32 * 1024)
+      if (!isRecord(body) || typeof body.url !== 'string' || body.url.trim() === '') throw new ReadingError('Request body requires url.', 'INVALID_BODY', 400)
+      sendJson(response, 200, { article: await wallabag.importUrl(body.url) })
+      return
+    }
+  }
+  const articleMatch = /^\/wallabag\/entries\/([^/]+)$/u.exec(endpoint)
+  if (articleMatch !== null && articleMatch[1] !== undefined && request.method === 'GET') {
+    if (wallabag === undefined) throw new ReadingError('Wallabag is not configured.', 'WALLABAG_UNAVAILABLE', 503)
+    const article = await wallabag.getEntry(decodeURIComponent(articleMatch[1]))
+    sendJson(response, 200, { article })
     return
   }
 
@@ -245,6 +269,12 @@ async function readJson(request: IncomingMessage, limit: number): Promise<unknow
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function parsePositiveInt(value: string | null, fallback: number): number {
+  if (value === null || value.trim() === '') return fallback
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? Math.min(100, parsed) : fallback
 }
 
 function sendJson(response: ServerResponse, status: number, value: unknown): void {

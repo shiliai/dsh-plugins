@@ -5,10 +5,11 @@ import Library from 'lucide-react/dist/esm/icons/library'
 import Clock from 'lucide-react/dist/esm/icons/clock'
 import PenLine from 'lucide-react/dist/esm/icons/pen-line'
 import PanelRightClose from 'lucide-react/dist/esm/icons/panel-right-close'
-import type { PublicBookWithProgress } from '../contracts.ts'
+import type { Article, PublicBookWithProgress } from '../contracts.ts'
 import type { ReadingStore } from './store.ts'
 import { LibraryView } from './LibraryView.tsx'
 import { ReaderView } from './ReaderView.tsx'
+import { ArticleReader, ReadLaterView } from './ReadLaterView.tsx'
 import { findConversationAnchor, type ConversationAnchor } from './workbench-anchor.ts'
 import { calculateReadingLayout, MIN_CHAT, MIN_LIBRARY, type ReadingWidths, type WorkbenchRect } from './workbench-geometry.ts'
 import css from './styles.module.css?dsh-inline'
@@ -29,6 +30,7 @@ export function Workbench({ store, close }: Props) {
   const state = store.useSnapshot()
   const [anchor, setAnchor] = useState<ConversationAnchor | null>(() => findConversationAnchor())
   const [tab, setTab] = useState<LeftTab>('library')
+  const [article, setArticle] = useState<Article | null>(null)
   const [leftVisible, setLeftVisible] = useState(true)
   const [widths, setWidths] = useState<ReadingWidths>(() => loadWidths())
   const originalMargin = useRef<{ element: HTMLElement; left: string } | null>(null)
@@ -89,8 +91,14 @@ export function Workbench({ store, close }: Props) {
   anchor.viewArea.style.marginLeft = compact ? '0px' : `${layout.chatMarginLeft}px`
 
   const onOpenBook = (book: PublicBookWithProgress) => {
+    setArticle(null)
     store.flushProgress()
     store.openBook(book)
+  }
+
+  const onOpenArticle = (value: Article) => {
+    setArticle(value)
+    store.closeBook()
   }
 
   const beginResize = (key: keyof ReadingWidths, event: React.PointerEvent) => {
@@ -126,10 +134,8 @@ export function Workbench({ store, close }: Props) {
             ))}
           </nav>
           <div className={css.leftBody}>
-            {tab === 'library' ? <LibraryView store={store} onOpen={onOpenBook} /> : (
-              <div className={css.panelLoading}>
-                {tab === 'readlater' ? '稍后读（Wallabag）将在 M4 接入。' : '批注中心将在 M3 接入。'}
-              </div>
+            {tab === 'library' ? <LibraryView store={store} onOpen={onOpenBook} /> : tab === 'readlater' ? <ReadLaterView onOpen={onOpenArticle} /> : (
+              <div className={css.panelLoading}>批注中心将在 M3 接入。</div>
             )}
           </div>
         </section>
@@ -137,7 +143,7 @@ export function Workbench({ store, close }: Props) {
 
       {/* Middle column: reader */}
       <section className={css.readerColumn} style={paneStyle(readerRect)} aria-label="阅读栏">
-        {state.current === null ? (
+        {article !== null ? <ArticleReader article={article} /> : state.current === null ? (
           <div className={css.readerEmpty}>
             <p>📖 从左侧书库选择一本书开始阅读</p>
             <p className={css.readerEmptyHint}>右栏为当前对话，阅读时选中文本即可与 agent 互动（M3）。</p>
