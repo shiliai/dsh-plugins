@@ -1,13 +1,13 @@
 import { useSyncExternalStore } from 'react'
-import type { BookWithProgress, Locator, ReadingProgress } from '../contracts.ts'
+import type { Locator, PublicBookWithProgress, ReadingProgress } from '../contracts.ts'
 import { readingApi } from './api.ts'
 
 export interface ReadingClientState {
-  books: BookWithProgress[]
+  books: PublicBookWithProgress[]
   loading: boolean
   error: string | null
   /** Book currently open in the reader pane. */
-  current: BookWithProgress | null
+  current: PublicBookWithProgress | null
 }
 
 const INITIAL: ReadingClientState = { books: [], loading: false, error: null, current: null }
@@ -49,7 +49,7 @@ export class ReadingStore {
     }
   }
 
-  openBook(book: BookWithProgress): void {
+  openBook(book: PublicBookWithProgress): void {
     this.#set({ current: book })
   }
 

@@ -3,13 +3,13 @@ import Upload from 'lucide-react/dist/esm/icons/upload'
 import RefreshCw from 'lucide-react/dist/esm/icons/refresh-cw'
 import BookOpen from 'lucide-react/dist/esm/icons/book-open'
 import FileText from 'lucide-react/dist/esm/icons/file-text'
-import type { BookWithProgress } from '../contracts.ts'
+import type { PublicBookWithProgress } from '../contracts.ts'
 import type { ReadingStore } from './store.ts'
 import css from './styles.module.css?dsh-inline'
 
 interface Props {
   store: ReadingStore
-  onOpen(book: BookWithProgress): void
+  onOpen(book: PublicBookWithProgress): void
 }
 
 const FORMAT_LABEL: Record<string, string> = { epub: 'EPUB', pdf: 'PDF', azw3: 'AZW3', mobi: 'MOBI', azw: 'AZW' }

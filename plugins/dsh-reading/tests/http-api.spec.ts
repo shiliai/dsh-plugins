@@ -46,9 +46,14 @@ describe('reading HTTP API', () => {
     const { book } = await response.json() as { book: { id: string; format: string; title: string } }
     expect(book.format).toBe('pdf')
     expect(book.title).toBe('测试 book')
+    expect('filePath' in book).toBe(false)
 
-    const library = await (await fetch(`${base}/library`)).json() as { books: Array<{ id: string }> }
+    const library = await (await fetch(`${base}/library`)).json() as { books: Array<{ id: string; filePath?: string }> }
     expect(library.books.map(b => b.id)).toContain(book.id)
+    expect(library.books[0]).not.toHaveProperty('filePath')
+
+    const detail = await (await fetch(`${base}/book/${encodeURIComponent(book.id)}`)).json() as { book: { filePath?: string } }
+    expect(detail.book).not.toHaveProperty('filePath')
 
     const file = await fetch(`${base}/book/${encodeURIComponent(book.id)}/file`)
     expect(file.status).toBe(200)
@@ -99,5 +104,20 @@ describe('reading HTTP API', () => {
     expect(got.progress.percent).toBe(0.77)
     const all = await (await fetch(`${base}/progress`)).json() as { progress: Record<string, unknown> }
     expect(Object.keys(all.progress)).toHaveLength(1)
+  })
+
+  it('deletes an annotation with an empty 204 response', async () => {
+    const annotation = {
+      id: 'annotation-1', bookId: 'book-1',
+      locator: { type: 'pdf', page: 1, scrollRatio: 0 },
+      quote: 'A quote', color: 'yellow', createdAt: new Date().toISOString(),
+    }
+    const created = await fetch(`${base}/annotations`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(annotation),
+    })
+    expect(created.status).toBe(200)
+    const deleted = await fetch(`${base}/annotations/${annotation.id}`, { method: 'DELETE' })
+    expect(deleted.status).toBe(204)
+    expect(await deleted.text()).toBe('')
   })
 })

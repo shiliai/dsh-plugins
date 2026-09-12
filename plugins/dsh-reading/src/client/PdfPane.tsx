@@ -163,8 +163,10 @@ export function PdfPane({ bookId, prefs, initialPage, onProgress, paneRef }: Pro
       initialScrollDone.current = false
       if (loadingTask !== null) void loadingTask.destroy()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookId, initialPage])
+    // Open the document only when the selected book changes. Progress updates
+    // change initialPage, but must not tear down and recreate the PDF view;
+    // the captured value is used only for initial restore.
+  }, [bookId])
 
   return <div ref={scrollRef} className="dshReadingPdfHost" style={{ width: '100%', height: '100%', overflowY: 'auto' }} />
 }

@@ -36,7 +36,7 @@ async function route(request: IncomingMessage, response: ServerResponse, library
   const endpoint = url.pathname.slice(API_PREFIX.length) || '/'
 
   if (request.method === 'GET' && endpoint === '/library') {
-    sendJson(response, 200, { books: await library.listBooks(store.snapshot.progress) })
+    sendJson(response, 200, { books: (await library.listBooks(store.snapshot.progress)).map(toPublicBook) })
     return
   }
 
@@ -46,7 +46,7 @@ async function route(request: IncomingMessage, response: ServerResponse, library
       throw new ReadingError('Missing query parameter: filename', 'INVALID_QUERY', 400)
     }
     const data = await readBody(request, MAX_IMPORT_BYTES)
-    sendJson(response, 200, { book: await library.importBook(data, fileName) })
+    sendJson(response, 200, { book: toPublicBook(await library.importBook(data, fileName)) })
     return
   }
 
@@ -103,11 +103,17 @@ async function route(request: IncomingMessage, response: ServerResponse, library
     const bookId = decodeURIComponent(bookMatch[1])
     const book = (await library.listBooks(store.snapshot.progress)).find(item => item.id === bookId)
     if (book === undefined) throw new ReadingError('Book not found.', 'NOT_FOUND', 404)
-    sendJson(response, 200, { book })
+    sendJson(response, 200, { book: toPublicBook(book) })
     return
   }
 
   throw new ReadingError('API endpoint not found.', 'NOT_FOUND', 404)
+}
+
+/** Keep filesystem details inside the host; clients use the file endpoint by id. */
+function toPublicBook<T extends { filePath: string }>(book: T): Omit<T, 'filePath'> {
+  const { filePath: _filePath, ...publicBook } = book
+  return publicBook
 }
 
 /** Stream a local book file, honoring `Range` (required by PDF.js). */
