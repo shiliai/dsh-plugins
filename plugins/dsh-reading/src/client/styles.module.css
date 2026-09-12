@@ -175,6 +175,10 @@
   position: fixed;
   border-radius: 10px;
   overflow: hidden;
+  /* Opaque panel: a transparent middle column lets the conversation bleed
+     through when no book is open. */
+  background: rgba(20, 22, 26, 0.92);
+  backdrop-filter: blur(6px);
   box-shadow: 0 2px 14px rgba(0, 0, 0, 0.4);
 }
 

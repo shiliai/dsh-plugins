@@ -1,6 +1,6 @@
 /** User-level reading preferences (M1: localStorage; M4 moves to DSH settings panel). */
 
-export type ThemeName = 'dark' | 'paper' | 'sepia'
+export type ThemeName = 'dark' | 'paper' | 'sepia' | 'green'
 
 export interface ReadingTheme {
   background: string
@@ -8,10 +8,13 @@ export interface ReadingTheme {
   linkColor: string
 }
 
+// Eye-friendly palettes modeled on common e-readers (Kindle / WeRead / Koodo):
+// no pure black-on-white, warm neutrals, moderate contrast for long sessions.
 export const READING_THEMES: Record<ThemeName, ReadingTheme> = {
-  dark: { background: '#16181d', color: '#e8e6e3', linkColor: '#7fb4e8' },
-  paper: { background: '#ffffff', color: '#1f2328', linkColor: '#1a5fb4' },
-  sepia: { background: '#f5ecd9', color: '#4b3a24', linkColor: '#8a5a2b' },
+  dark: { background: '#1f1d1a', color: '#c9c4bb', linkColor: '#8fb8dc' },
+  paper: { background: '#f7f4ef', color: '#2a2c30', linkColor: '#1a5fb4' },
+  sepia: { background: '#f6eedd', color: '#4f4232', linkColor: '#8a5a2b' },
+  green: { background: '#dce8d4', color: '#2f3e33', linkColor: '#3c6e58' },
 }
 
 export interface ReadingPrefs {
@@ -46,7 +49,7 @@ export function loadPrefs(): ReadingPrefs {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw === null) return fallback
     const value = JSON.parse(raw) as Partial<ReadingPrefs>
-    const themeName = value.themeName === 'paper' || value.themeName === 'sepia' ? value.themeName : 'dark'
+    const themeName: ThemeName = value.themeName === 'paper' || value.themeName === 'sepia' || value.themeName === 'green' ? value.themeName : 'dark'
     return {
       fontSize: clampNumber(value.fontSize, 12, 28, fallback.fontSize),
       lineHeight: clampNumber(value.lineHeight, 1.2, 2.4, fallback.lineHeight),

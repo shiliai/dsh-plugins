@@ -22,8 +22,8 @@ interface Props {
   store: ReadingStore
 }
 
-const THEME_ORDER: ThemeName[] = ['dark', 'paper', 'sepia']
-const THEME_LABEL: Record<ThemeName, string> = { dark: '夜间', paper: '白纸', sepia: '羊皮纸' }
+const THEME_ORDER: ThemeName[] = ['dark', 'paper', 'sepia', 'green']
+const THEME_LABEL: Record<ThemeName, string> = { dark: '夜间', paper: '白纸', sepia: '羊皮纸', green: '护眼' }
 
 export function ReaderView({ book, store }: Props) {
   const [prefs, setPrefs] = useState<ReadingPrefs>(() => loadPrefs())

@@ -105,6 +105,9 @@ export function EpubPane({ bookId, fileName, prefs, initialCfi, onRelocate, onRe
         await view.open(file)
         if (cancelled) return
         viewRef.current = view
+        // The mount-time prefs effect ran while viewRef was still null; apply
+        // the theme/font CSS now so the book renders with the chosen theme.
+        applyPrefsToView(view, prefs)
         onReadyRef.current(flattenToc(view.book?.toc))
         if (initialCfi !== undefined && initialCfi !== '') await view.goTo(initialCfi)
         else await view.goToTextStart()
