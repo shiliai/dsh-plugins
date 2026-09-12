@@ -105,7 +105,7 @@ flowchart TB
 
 配置分两个文件（均已在本机 `~/.local/dsh_home/` 生效，e2e 验证通过）：
 
-**`$DSH_HOME/.env` — 非密钥部署配置**（DSH 宿主自动加载为最低优先级 env 层）：数据目录、OPDS 源名称/URL/认证方式/用户名、Wallabag URL/CLIENT_ID、SSH 转换目标、Obsidian 导出目录、抓取超时等，见 `docs/plans/dsh-reading-v1.env.example`。
+**`$DSH_HOME/.env` — 非密钥部署配置**（DSH 宿主自动加载为最低优先级 env 层）：数据目录、OPDS 源名称/URL/认证方式/用户名、Wallabag URL/用户名、SSH 转换目标、Obsidian 导出目录、抓取超时等，见 `docs/plans/dsh-reading-v1.env.example`。
 
 **`$DSH_HOME/.credentials.yaml` 的 `refs:` — 密钥**（与 API keys 同库，600 权限，watch 热加载）：`DSH_READING_OPDS_0_PASSWORD`、`DSH_READING_WALLABAG_CLIENT_SECRET`、`DSH_READING_WALLABAG_USERNAME`、`DSH_READING_WALLABAG_PASSWORD`。
 
