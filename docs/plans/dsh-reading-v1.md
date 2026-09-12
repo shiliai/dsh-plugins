@@ -101,26 +101,25 @@ flowchart TB
 | AZW3/MOBI/AZW | SSH → `ebook-convert` → EPUB 缓存 | —（不做原生渲染） |
 | URL | **Wallabag API**（主）/ readability（降级） | — |
 
-### 4.3 配置契约（部署级 `.env`）
+### 4.3 配置契约（部署级，已落地）
 
-所有连接与密钥只从环境变量读取（对齐 dsh-remote 的 `DSH_REMOTE_*` 风格），支持不同主机部署各配各的 `.env`；插件启动时一次性解析为 `SourceConfig`，缺失项在对应 UI 位置显示"未配置"。**多实例/多主机**：同一套变量名，按部署环境的 `.env` 区分，无需改代码。
+配置分两个文件（均已在本机 `~/.local/dsh_home/` 生效，e2e 验证通过）：
 
-| 变量 | 默认 | 说明 |
-|------|------|------|
-| `DSH_READING_DATA_DIR` | `~/.dsh/reading` | 数据根：导入文件、转换缓存、状态库 |
-| `DSH_READING_OPDS_<n>_NAME` | — | 第 n 个 OPDS 源显示名，如 `nasubuntu-calibre` |
-| `DSH_READING_OPDS_<n>_URL` | — | OPDS 根地址，如 `http://192.168.88.22:9080/opds` |
-| `DSH_READING_OPDS_<n>_AUTH` | `none` | `none \| basic \| bearer` |
-| `DSH_READING_OPDS_<n>_USERNAME` / `_PASSWORD` / `_TOKEN` | — | basic/bearer 凭据（password 不进 dump-config） |
-| `DSH_READING_WALLABAG_URL` | — | 如 `http://192.168.88.22:8292` |
-| `DSH_READING_WALLABAG_CLIENT_ID` / `_CLIENT_SECRET` / `_USERNAME` / `_PASSWORD` | — | Wallabag OAuth2 + 账号 |
-| `DSH_READING_CONVERT_SSH_TARGET` | — | ssh alias，如 `nasubuntu`；空则禁用 Amazon 格式转换（UI 显示"未配置转换主机"） |
-| `DSH_READING_CONVERT_REMOTE_TMPDIR` | `/tmp/dsh-reading` | 远端 ebook-convert 工作目录 |
-| `DSH_READING_OBSIDIAN_EXPORT_DIR` | `读书笔记` | 导出笔记在 vault 内的子目录（复用 dsh-obsidian 写入） |
-| `DSH_READING_FETCH_TIMEOUT_MS` | `20000` | URL 抓取/提取超时 |
-| `DSH_READING_FETCH_USER_AGENT` | 插件 UA | 抓取 UA |
+**`$DSH_HOME/.env` — 非密钥部署配置**（DSH 宿主自动加载为最低优先级 env 层）：数据目录、OPDS 源名称/URL/认证方式/用户名、Wallabag URL/CLIENT_ID、SSH 转换目标、Obsidian 导出目录、抓取超时等，见 `docs/plans/dsh-reading-v1.env.example`。
 
-密钥类变量（`*_PASSWORD`、`*_SECRET`、`*_TOKEN`）在契约层标注 secret，仅用于服务端出站请求，不回传客户端、不进 `dump-config`。
+**`$DSH_HOME/.credentials.yaml` 的 `refs:` — 密钥**（与 API keys 同库，600 权限，watch 热加载）：`DSH_READING_OPDS_0_PASSWORD`、`DSH_READING_WALLABAG_CLIENT_SECRET`、`DSH_READING_WALLABAG_USERNAME`、`DSH_READING_WALLABAG_PASSWORD`。
+
+插件解析顺序对齐宿主约定：进程环境 > credentials refs > `$DSH_HOME/.env`；密钥不回传客户端、不进 `dump-config`。多主机部署 = 每台复制两个文件改值，变量名不变。
+
+**nas 侧现状（e2e 已验证，2026-09-12）**：
+
+| 端点 | 地址 | 验证结果 |
+|------|------|---------|
+| calibre-web OPDS | `http://192.168.88.22:9083/opds`（须用 9083 直连后端；9080 的 nginx 会剥掉 Authorization 头导致 400） | 浏览/搜索/new/discover ✅ 下载 ✅ Range 206 ✅ 封面 ✅ |
+| Wallabag | `http://192.168.88.22:8292` | 专用账号 `dshreading` + client `dsh-reading`，OAuth password 授权 ✅ |
+| SSH 转换 | `nasubuntu`（~/.ssh/config alias） | ebook-convert 7.4 ✅ |
+| OPDS 账号 | `dshreading`（calibre-web，role=338） | 手工插入 user 表时 `view_settings` 等字段必须非空（`{}`/`''`），否则 OPDS/页面返回空或 500 |
+| 书库 schema | `metadata.db` 缺 `books.isbn/flags` 导致 OPDS 内容路由 500 | 已按 Calibre 7.4 定义补列（user_version 保持 27；talebook 5.12 / calibre-web 5.44 / host 7.4 读验均通过），备份 `metadata.db.bak-20260912` |
 
 ### 4.4 设置页（用户级偏好）
 
