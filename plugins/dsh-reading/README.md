@@ -17,7 +17,7 @@ Immersive reading workbench for DeepSeek Harness. Read EPUB / PDF (and soon AZW3
 
 ## Configuration
 
-Deployment-level config lives in `$DSH_HOME/.env` (non-secrets) and `$DSH_HOME/.credentials.yaml` (secrets). See `docs/plans/dsh-reading-v1.env.example` in the monorepo. M1 only uses:
+Deployment-level config lives in `$DSH_HOME/.env` (non-secrets) and the top-level flat mapping in `$DSH_HOME/.credentials.yaml` (secrets). See `docs/plans/dsh-reading-v1.env.example` in the monorepo. M1 only uses:
 
 | Variable | Default | Purpose |
 |---|---|---|

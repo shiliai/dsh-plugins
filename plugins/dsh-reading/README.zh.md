@@ -17,13 +17,13 @@ DeepSeek Harness 沉浸式阅读工作台：在 GUI 内阅读 EPUB / PDF（AZW3/
 
 ## 配置
 
-部署级配置放在 `$DSH_HOME/.env`（非密钥）与 `$DSH_HOME/.credentials.yaml`（密钥），模板见 monorepo 的 `docs/plans/dsh-reading-v1.env.example`。M1 只用：
+部署级配置放在 `$DSH_HOME/.env`（非密钥）与 `$DSH_HOME/.credentials.yaml` 的顶层 flat mapping（密钥），模板见 monorepo 的 `docs/plans/dsh-reading-v1.env.example`。M1 只用：
 
 | 变量 | 默认值 | 用途 |
 |---|---|---|
 | `READING_DATA_DIR` | `~/.dsh/reading` | 书籍与 `state.json` 目录 |
 | `READING_WALLABAG_URL` | — | Wallabag 地址 |
-| `READING_WALLABAG_CLIENT_ID` 等 | — | OAuth 凭据（写入 credentials refs） |
+| `READING_WALLABAG_CLIENT_ID` 等 | — | OAuth 凭据（写入 credentials flat mapping） |
 
 > 安全提示：foliate-js 要求通过 CSP 屏蔽书内脚本，DSH 目前不发送 CSP 头，请只打开可信来源的电子书。
 

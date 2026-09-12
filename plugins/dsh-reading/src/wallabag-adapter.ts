@@ -119,14 +119,16 @@ export class WallabagAdapter {
   }
 }
 
-/** DSH normally exposes credential refs as env values; read its local refs as a fallback for standalone hosts. */
+/** Read current rc.8 flat credentials and legacy version/refs files for standalone hosts. */
 function readCredentialRefs(env: NodeJS.ProcessEnv): Record<string, string> {
   const home = env.DSH_HOME?.trim() || join(homedir(), '.local', 'dsh_home')
   try {
     const text = readFileSync(join(home, '.credentials.yaml'), 'utf8')
     const refs: Record<string, string> = {}
     for (const line of text.split(/\r?\n/u)) {
-      const match = /^\s{2}([A-Z0-9_]+):\s*(.*?)\s*$/u.exec(line)
+      // Current DSH writes top-level keys; the optional two-space form keeps
+      // older `refs:` files readable during migration.
+      const match = /^\s{0,2}([A-Z0-9_]+):\s*(.*?)\s*$/u.exec(line)
       if (match?.[1] !== undefined && match[2] !== undefined) refs[match[1]] = match[2].replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/u, '$1$2')
     }
     return refs

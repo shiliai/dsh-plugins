@@ -36,6 +36,15 @@ async function route(request: IncomingMessage, response: ServerResponse, library
   const url = new URL(request.url ?? '/', 'http://dsh.local')
   const endpoint = url.pathname.slice(API_PREFIX.length) || '/'
 
+  // Browser state-changing requests must originate from this host. Native/API
+  // clients commonly omit Origin, so absence remains allowed for compatibility.
+  if (request.method === 'POST' || request.method === 'PUT' || request.method === 'DELETE' || request.method === 'PATCH') {
+    const origin = request.headers.origin
+    if (origin !== undefined && !isSameOrigin(origin, request)) {
+      throw new ReadingError('Cross-origin state-changing request is not allowed.', 'FORBIDDEN_ORIGIN', 403)
+    }
+  }
+
   if (request.method === 'GET' && endpoint === '/library') {
     sendJson(response, 200, { books: (await library.listBooks(store.snapshot.progress)).map(toPublicBook) })
     return
@@ -186,6 +195,7 @@ function pipe(response: ServerResponse, filePath: string, range: { start?: numbe
 }
 
 export function parseRange(header: string, size: number): { start: number; end: number } | null {
+  if (!Number.isInteger(size) || size <= 0) return null
   const match = /^bytes=(\d*)-(\d*)$/u.exec(header.trim())
   if (match === null) return null
   const [, startRaw, endRaw] = match
@@ -193,15 +203,33 @@ export function parseRange(header: string, size: number): { start: number; end: 
   if (startRaw === '') {
     // suffix range: last N bytes
     const suffix = Number(endRaw)
-    if (!Number.isInteger(suffix) || suffix <= 0) return null
+    if (!Number.isSafeInteger(suffix) || suffix <= 0) return null
     const start = Math.max(0, size - suffix)
     return { start, end: size - 1 }
   }
   const start = Number(startRaw)
-  if (!Number.isInteger(start) || start >= size) return null
-  const end = endRaw === '' ? size - 1 : Math.min(Number(endRaw), size - 1)
-  if (end < start) return null
+  if (!Number.isSafeInteger(start) || start >= size) return null
+  if (endRaw === '') return { start, end: size - 1 }
+  const requestedEnd = Number(endRaw)
+  if (!Number.isSafeInteger(requestedEnd) || requestedEnd < start) return null
+  const end = Math.min(requestedEnd, size - 1)
   return { start, end }
+}
+
+function isSameOrigin(origin: string, request: IncomingMessage): boolean {
+  try {
+    const parsed = new URL(origin)
+    if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) return false
+    const host = request.headers.host
+    if (host === undefined) return false
+    const forwardedProto = request.headers['x-forwarded-proto']
+    const protocol = typeof forwardedProto === 'string' && forwardedProto.split(',')[0] !== ''
+      ? forwardedProto.split(',')[0]!.trim()
+      : 'http'
+    return parsed.protocol === `${protocol}:` && parsed.host === host
+  } catch {
+    return false
+  }
 }
 
 function normalizeProgress(bookId: string, body: unknown): ReadingProgress {

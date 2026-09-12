@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { registerReadingApi } from '../src/http-api.ts'
+import { parseRange, registerReadingApi } from '../src/http-api.ts'
 import { LocalLibrary } from '../src/library.ts'
 import { ReadingStateStore } from '../src/state-store.ts'
 
@@ -37,6 +37,16 @@ afterEach(async () => {
 })
 
 describe('reading HTTP API', () => {
+  it('rejects malformed byte ranges and cross-origin mutations', async () => {
+    expect(parseRange('bytes=1-abc', 16)).toBeNull()
+    expect(parseRange('bytes=-1', 0)).toBeNull()
+
+    const response = await fetch(`${base}/import?filename=blocked.epub`, {
+      method: 'POST', headers: { 'Content-Type': 'application/octet-stream', Origin: 'https://evil.example' }, body: Buffer.from('blocked'),
+    })
+    expect(response.status).toBe(403)
+  })
+
   it('imports a book, lists the library, and serves the file', async () => {
     const content = Buffer.from('%PDF-1.4 fake pdf payload for range tests')
     const response = await fetch(`${base}/import?filename=${encodeURIComponent('测试 book.pdf')}`, {

@@ -27,6 +27,14 @@ function inlineCssModules(): InlineCssPlugin {
       const path = id.slice(CSS_PREFIX.length, -CSS_SUFFIX.length)
       this.addWatchFile(path)
       let source = await readFile(path, 'utf8')
+      // Keep CSS-module global selectors untouched while scoping local classes.
+      // Protecting the whole selector also prevents :global(.foo) from being
+      // accidentally rewritten as a local class.
+      const globalSelectors: string[] = []
+      source = source.replace(/:global\(([^()]*)\)/gu, (_match, selector: string) => {
+        const index = globalSelectors.push(selector) - 1
+        return `__DSH_READING_GLOBAL_${index}__`
+      })
       const names = new Set<string>()
       for (const match of source.matchAll(/\.([A-Za-z_][A-Za-z0-9_-]*)/gu)) {
         const name = match[1]
@@ -36,7 +44,9 @@ function inlineCssModules(): InlineCssPlugin {
       for (const [name, scoped] of Object.entries(classes)) {
         source = source.replaceAll(`.${name}`, `.${scoped}`)
       }
-      source = source.replaceAll(':global(*)', '*')
+      for (const [index, selector] of globalSelectors.entries()) {
+        source = source.replaceAll(`__DSH_READING_GLOBAL_${index}__`, selector)
+      }
       const tagId = `${PACKAGE_ID}/${basename(path)}`
       return [
         `const css = ${JSON.stringify(source)};`,

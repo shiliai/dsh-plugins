@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { WallabagAdapter } from '../src/wallabag-adapter.ts'
 
@@ -25,5 +28,37 @@ describe('WallabagAdapter', () => {
   it('rejects non-http URLs', async () => {
     const adapter = new WallabagAdapter({ origin: 'http://wallabag.local', clientId: 'c', clientSecret: 's', username: 'u', password: 'p' }, vi.fn() as typeof fetch)
     await expect(adapter.importUrl('javascript:alert(1)')).rejects.toMatchObject({ code: 'INVALID_URL', status: 400 })
+  })
+
+  it('loads credentials from current flat mapping and legacy refs mapping', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-reading-credentials-'))
+    try {
+      const credentials = join(root, '.credentials.yaml')
+      const baseEnv = {
+        DSH_HOME: root,
+        READING_WALLABAG_URL: 'http://wallabag.local',
+      }
+      writeFileSync(credentials, [
+        'READING_WALLABAG_CLIENT_ID: client',
+        'READING_WALLABAG_CLIENT_SECRET: secret',
+        'READING_WALLABAG_USERNAME: user',
+        'READING_WALLABAG_PASSWORD: pass',
+        '',
+      ].join('\n'))
+      expect(WallabagAdapter.fromEnv(baseEnv)).toBeDefined()
+
+      writeFileSync(credentials, [
+        'version: 1',
+        'refs:',
+        '  READING_WALLABAG_CLIENT_ID: client',
+        '  READING_WALLABAG_CLIENT_SECRET: secret',
+        '  READING_WALLABAG_USERNAME: user',
+        '  READING_WALLABAG_PASSWORD: pass',
+        '',
+      ].join('\n'))
+      expect(WallabagAdapter.fromEnv(baseEnv)).toBeDefined()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })

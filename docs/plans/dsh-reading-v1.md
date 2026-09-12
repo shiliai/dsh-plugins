@@ -107,11 +107,11 @@ flowchart TB
 
 **`$DSH_HOME/.env` — 非密钥部署配置**（DSH 宿主自动加载为最低优先级 env 层）：数据目录、OPDS 源名称/URL/认证方式/用户名、Wallabag URL/用户名、SSH 转换目标、Obsidian 导出目录、抓取超时等，见 `docs/plans/dsh-reading-v1.env.example`。
 
-**`$DSH_HOME/.credentials.yaml` 的 `refs:` — 密钥**（与 API keys 同库，600 权限，watch 热加载）：`READING_OPDS_0_PASSWORD`、`READING_WALLABAG_CLIENT_SECRET`、`READING_WALLABAG_USERNAME`、`READING_WALLABAG_PASSWORD`。
+**`$DSH_HOME/.credentials.yaml` 的顶层 flat mapping — 密钥**（与 API keys 同库，600 权限，watch 热加载）：`READING_OPDS_0_PASSWORD`、`READING_WALLABAG_CLIENT_SECRET`、`READING_WALLABAG_USERNAME`、`READING_WALLABAG_PASSWORD`。
 
 > 命名说明：`@deepseek-ai/dsh-app-boot` 禁止在 `.env` 中设置任何以 `DSH_` 开头的变量，故 dsh-reading 的部署级配置统一使用 `READING_*` 前缀（不再用 `DSH_READING_*`）。
 
-插件解析顺序对齐宿主约定：进程环境 > credentials refs > `$DSH_HOME/.env`；密钥不回传客户端、不进 `dump-config`。多主机部署 = 每台复制两个文件改值，变量名不变。
+插件解析顺序对齐宿主约定：进程环境 > credentials flat mapping > `$DSH_HOME/.env`；密钥不回传客户端、不进 `dump-config`。多主机部署 = 每台复制两个文件改值，变量名不变。
 
 **nas 侧现状（e2e 已验证，2026-09-12）**：
 
