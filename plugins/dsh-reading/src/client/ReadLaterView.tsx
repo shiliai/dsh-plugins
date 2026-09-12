@@ -52,6 +52,17 @@ export function ReadLaterView({ onOpen }: Props) {
     }
   }
 
+  const openArticle = async (value: Article) => {
+    if (value.extractedHtml === undefined && value.source === 'wallabag') {
+      try {
+        const result = await readingApi.wallabagEntry(value.id)
+        onOpen(result.article)
+        return
+      } catch { /* open the metadata already available */ }
+    }
+    onOpen(value)
+  }
+
   return (
     <div className={css.readLaterRoot}>
       <form className={css.readLaterForm} onSubmit={submit}>
@@ -69,7 +80,7 @@ export function ReadLaterView({ onOpen }: Props) {
         {loading && articles.length === 0 ? <div className={css.panelLoading}>加载中…</div> : null}
         {!loading && articles.length === 0 ? <div className={css.panelLoading}><Clock size={26} /><p>暂无稍后读。粘贴 URL 收藏一篇文章。</p></div> : null}
         {articles.map(article => (
-          <button key={article.id} type="button" className={css.articleCard} onClick={() => onOpen(article)}>
+          <button key={article.id} type="button" className={css.articleCard} onClick={() => void openArticle(article)}>
             <span className={css.articleMeta}>
               <span className={css.articleTitle}>{article.title || article.url}</span>
               <span className={css.articleSub}>{article.domain ?? article.url}{article.readingTimeMin ? ` · ${article.readingTimeMin} 分钟` : ''}</span>
