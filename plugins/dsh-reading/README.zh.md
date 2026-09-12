@@ -21,7 +21,7 @@ DeepSeek Harness 沉浸式阅读工作台：在 GUI 内阅读 EPUB / PDF（AZW3/
 
 | 变量 | 默认值 | 用途 |
 |---|---|---|
-| `DSH_READING_DATA_DIR` | `~/.dsh/reading` | 书籍与 `state.json` 目录 |
+| `READING_DATA_DIR` | `~/.dsh/reading` | 书籍与 `state.json` 目录 |
 
 > 安全提示：foliate-js 要求通过 CSP 屏蔽书内脚本，DSH 目前不发送 CSP 头，请只打开可信来源的电子书。
 

@@ -10,7 +10,7 @@ export const name = 'dsh-reading'
 export const inject = ['webServer']
 
 export interface Config {
-  /** Reading data directory (books + state). Defaults to $DSH_READING_DATA_DIR or ~/.dsh/reading. */
+  /** Reading data directory (books + state). Defaults to $READING_DATA_DIR or ~/.dsh/reading. */
   dataDir?: string | null
 }
 
@@ -27,7 +27,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 export function resolveDataDir(config: Config): string {
   const fromEnv = typeof config.dataDir === 'string' ? config.dataDir.trim() : ''
   if (fromEnv !== '') return expandHome(fromEnv)
-  const envValue = process.env.DSH_READING_DATA_DIR?.trim()
+  // Keep the previous name as a fallback so an existing profile can be
+  // restarted while its environment is migrated to the shorter name.
+  const envValue = (process.env.READING_DATA_DIR ?? process.env.DSH_READING_DATA_DIR)?.trim()
   if (envValue !== undefined && envValue !== '') return expandHome(envValue)
   return join(homedir(), '.dsh', 'reading')
 }

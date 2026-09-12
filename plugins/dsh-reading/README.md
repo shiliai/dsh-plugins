@@ -21,7 +21,7 @@ Deployment-level config lives in `$DSH_HOME/.env` (non-secrets) and `$DSH_HOME/.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DSH_READING_DATA_DIR` | `~/.dsh/reading` | Books + `state.json` directory |
+| `READING_DATA_DIR` | `~/.dsh/reading` | Books + `state.json` directory |
 
 > EPUB rendering note: foliate-js requires CSP to block scripts in book content. DSH does not send CSP headers; only open books you trust.
 
