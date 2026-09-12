@@ -49,5 +49,5 @@ export const readingApi = {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url }),
   }),
-  wallabagEntry: (id: string) => request<{ article: Article }>(`/wallabag/entries/${encodeURIComponent(id)}`),
+  wallabagEntry: (id: string) => request<{ article: Article }>(`/wallabag/entries/${encodeURIComponent(id.replace(/^wallabag:/u, ''))}`),
 }
