@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/dsh-reading",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Immersive reading workbench for DeepSeek Harness: EPUB/PDF reading with progress, OPDS library, Wallabag read-later, and Obsidian export",
   "license": "MIT",
   "repository": {
