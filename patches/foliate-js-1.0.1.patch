@@ -1,5 +1,5 @@
 diff --git a/paginator.js b/paginator.js
-index 95c4d0dae16bd96c3ace91bbd87fd1bea1c9f571..1fbb4366e137440638b53469f27346d4c5c5a5fa 100644
+index 95c4d0dae16bd96c3ace91bbd87fd1bea1c9f571..f3d6a0fa77d6fe7e257ff22be86afefa39cd6b7e 100644
 --- a/paginator.js
 +++ b/paginator.js
 @@ -84,6 +84,8 @@ const getBoundingClientRect = target => {
@@ -110,13 +110,19 @@ index 95c4d0dae16bd96c3ace91bbd87fd1bea1c9f571..1fbb4366e137440638b53469f27346d4
              this.dispatchEvent(new CustomEvent('create-overlayer', {
                  detail: {
                      doc: view.document, index,
-@@ -1145,18 +1173,22 @@ export class Paginator extends HTMLElement {
+@@ -1145,18 +1173,28 @@ export class Paginator extends HTMLElement {
  
          // NOTE: needs `requestAnimationFrame` in Chromium
          requestAnimationFrame(() => {
 -            this.#replaceBackground(this.#view.docBackground, this.columnCount)
 +            // dsh-reading: the view may be destroyed before the frame runs.
-+            this.#replaceBackground(this.#view?.docBackground, this.columnCount)
++            // Also refresh docBackground: theme CSS can change the document
++            // background without a new section load (e.g. reader theme
++            // switch), and a stale color would linger in the column gutter.
++            const doc = this.#view?.document
++            const background = doc ? getBackground(doc) : this.#view?.docBackground
++            if (doc && background) this.#view.docBackground = background
++            this.#replaceBackground(background, this.columnCount)
          })
  
          // needed because the resize observer doesn't work in Firefox

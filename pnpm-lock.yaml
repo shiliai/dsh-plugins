@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  foliate-js@1.0.1: 6fc10785c1391a76adc2f1d457db4a146d364127ac0a4a09f9aa0e481c511465
+  foliate-js@1.0.1: 4b5b10b1be8899a3e34595837f7c08d0b6e564494b92c1ef07292b599b5d538c
 
 importers:
 
@@ -170,7 +170,7 @@ importers:
         version: 0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1))
       foliate-js:
         specifier: ^1.0.1
-        version: 1.0.1(patch_hash=6fc10785c1391a76adc2f1d457db4a146d364127ac0a4a09f9aa0e481c511465)
+        version: 1.0.1(patch_hash=4b5b10b1be8899a3e34595837f7c08d0b6e564494b92c1ef07292b599b5d538c)
       lucide-react:
         specifier: ^0.468.0
         version: 0.468.0(react@18.3.1)
@@ -8931,7 +8931,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  foliate-js@1.0.1(patch_hash=6fc10785c1391a76adc2f1d457db4a146d364127ac0a4a09f9aa0e481c511465):
+  foliate-js@1.0.1(patch_hash=4b5b10b1be8899a3e34595837f7c08d0b6e564494b92c1ef07292b599b5d538c):
     dependencies:
       construct-style-sheets-polyfill: 3.1.0
 
