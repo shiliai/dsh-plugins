@@ -1,0 +1,1815 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DSH · 阅读工作台 (原型)</title>
+<style>
+/* ============================================================
+   DSH Reading — 三栏阅读工作台原型 · pure HTML/CSS/JS, no external assets
+   ============================================================ */
+:root {
+  --font: -apple-system, "PingFang SC", "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --bg-app: #14161a;
+  --bg-panel: #1b1e24;
+  --bg-card: #22262e;
+  --bg-card-hover: #272c36;
+  --bg-input: #16191f;
+  --bg-elevated: #2a2f3a;
+
+  --border: #2c313b;
+  --border-soft: #242933;
+
+  --text-1: #e8eaf0;
+  --text-2: #a8afbd;
+  --text-3: #6b7280;
+
+  --accent: #4f8cff;
+  --accent-soft: rgba(79, 140, 255, .14);
+  --green: #34c17b;
+  --blue: #4f8cff;
+  --orange: #e8913d;
+  --gray: #8a93a3;
+  --yellow-hl: rgba(255, 213, 79, .38);
+
+  --radius: 10px;
+  --shadow-1: 0 1px 2px rgba(0,0,0,.35);
+  --shadow-2: 0 8px 28px rgba(0,0,0,.45);
+  --shadow-pop: 0 12px 40px rgba(0,0,0,.55);
+
+  --font-size: 17px;
+  --ease: cubic-bezier(.22,.9,.3,1);
+
+  --left-w: 300px;    /* 14px collapse strip inside */
+  --right-w: 400px;
+}
+
+/* paper theme (center reading column only) */
+.reader-paper {
+  --bg-panel: #f5f1e8;
+  --bg-card: #efe9dc;
+  --bg-input: #ece5d6;
+  --bg-elevated: #e9e2d2;
+  --border: #d8d0bd;
+  --border-soft: #e0d9c8;
+  --text-1: #2b2620;
+  --text-2: #5c554a;
+  --text-3: #8a8172;
+  --accent-soft: rgba(79, 140, 255, .16);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font);
+  background: var(--bg-app);
+  color: var(--text-1);
+  font-size: 14px;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+button { font-family: var(--font); cursor: pointer; border: none; background: none; color: inherit; }
+input, textarea { font-family: var(--font); }
+::selection { background: rgba(79,140,255,.32); }
+[hidden] { display: none !important; }
+
+/* ---------- focus ring ---------- */
+button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ================= TOP BAR ================= */
+.topbar {
+  height: 44px;
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 14px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.logo {
+  width: 24px; height: 24px; border-radius: 7px;
+  background: linear-gradient(135deg, #4f8cff, #7c5cff);
+  display: grid; place-items: center;
+  font-size: 10px; font-weight: 800; color: #fff; letter-spacing: .3px;
+  box-shadow: 0 2px 8px rgba(79,140,255,.4);
+}
+.topbar .app-title { font-weight: 600; font-size: 13px; }
+.topbar .ws {
+  margin: 0 auto;
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12.5px; color: var(--text-2);
+  background: var(--bg-card); border: 1px solid var(--border);
+  padding: 4px 12px; border-radius: 999px;
+}
+.topbar .ws .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); }
+.topbar .right { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.status { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-2); }
+.status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 7px var(--green); animation: pulse 2.4s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+.avatar {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: linear-gradient(135deg, #34c17b, #1f9d63);
+  color: #fff; font-size: 12px; font-weight: 700;
+  display: grid; place-items: center;
+}
+
+/* ================================================================
+   SHELL — three permanent columns
+   ================================================================ */
+.shell { display: flex; height: calc(100vh - 44px); overflow: hidden; }
+
+/* collapse strip shared */
+.col-toggle {
+  width: 14px; flex: 0 0 auto;
+  display: grid; place-items: center;
+  font-size: 9px; color: var(--text-3);
+  background: var(--bg-panel);
+  transition: color .15s, background .15s;
+  user-select: none;
+}
+.col-toggle:hover { color: var(--accent); background: var(--bg-card); }
+
+/* ================= LEFT COLUMN (300px) ================= */
+.col-left {
+  width: var(--left-w); flex: 0 0 auto;
+  display: flex;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+  transition: width .26s var(--ease);
+}
+.col-left.collapsed { width: 14px; }
+.col-left-inner {
+  width: calc(var(--left-w) - 14px); flex: 0 0 auto; min-width: 0;
+  overflow: hidden;
+  display: flex; flex-direction: column;
+}
+
+/* ---------- left tab switcher (segmented, active pill) ---------- */
+.ltabs {
+  flex: 0 0 auto;
+  display: flex; gap: 4px;
+  padding: 10px 10px 9px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.ltab {
+  flex: 1;
+  padding: 6px 0;
+  border-radius: 999px;
+  font-size: 12px; color: var(--text-2);
+  transition: background .15s, color .15s;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.ltab:hover { background: var(--bg-card); color: var(--text-1); }
+.ltab.active { background: var(--accent-soft); color: var(--accent); border-color: rgba(79,140,255,.28); font-weight: 600; }
+
+/* ---------- left panels ---------- */
+.lpanels { flex: 1; min-height: 0; position: relative; }
+.lpanel {
+  position: absolute; inset: 0;
+  overflow-y: auto;
+  display: none;
+  flex-direction: column;
+}
+.lpanel.active { display: flex; }
+
+/* ---------- left footer (obsidian sync) ---------- */
+.left-foot {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border-soft);
+}
+.sync-item {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11.5px; color: var(--text-2);
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 7px 10px;
+  cursor: pointer; transition: background .15s;
+}
+.sync-item:hover { background: var(--bg-card-hover); }
+.sync-item .label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ================= LEFT · 书库 (compact) ================= */
+.lib-mini-toolbar { display: flex; gap: 6px; padding: 10px 10px 4px; flex-wrap: wrap; }
+.search {
+  flex: 1 1 100%; min-width: 0;
+  display: flex; align-items: center; gap: 7px;
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 0 10px;
+  transition: border-color .15s;
+}
+.search:focus-within { border-color: var(--accent); }
+.search input { flex: 1; background: none; border: none; outline: none; color: var(--text-1); font-size: 12.5px; height: 30px; min-width: 0; }
+.search input::placeholder { color: var(--text-3); }
+.select-wrap {
+  position: relative; display: flex; align-items: center; flex: 1; min-width: 0;
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 0 10px; height: 30px;
+  font-size: 11.5px; color: var(--text-2); cursor: pointer;
+  gap: 5px; user-select: none;
+  transition: border-color .15s;
+}
+.select-wrap:hover { border-color: var(--text-3); }
+.select-wrap .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.select-wrap .caret { font-size: 9px; color: var(--text-3); margin-left: auto; }
+.select-menu {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 60;
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow-pop);
+  min-width: 210px; padding: 5px;
+  display: none;
+}
+.select-menu.open { display: block; animation: pop .16s var(--ease); }
+@keyframes pop { from { opacity: 0; transform: translateY(-4px) scale(.98); } }
+.select-menu .opt { padding: 8px 10px; border-radius: 7px; font-size: 12px; display: flex; justify-content: space-between; gap: 12px; }
+.select-menu .opt:hover { background: var(--accent-soft); color: var(--text-1); }
+.select-menu .opt .meta { color: var(--text-3); font-size: 11px; }
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 12px;
+  border-radius: var(--radius); font-size: 12px; font-weight: 600;
+  background: var(--bg-card); border: 1px solid var(--border); color: var(--text-1);
+  transition: background .15s, border-color .15s, transform .15s;
+}
+.btn:hover { background: var(--bg-card-hover); border-color: var(--text-3); }
+.btn.primary { background: var(--accent); border-color: transparent; color: #fff; box-shadow: 0 3px 12px rgba(79,140,255,.3); }
+.btn.primary:hover { background: #5f97ff; }
+.btn.ghost { background: transparent; }
+.btn.sm { height: 28px; padding: 0 10px; font-size: 12px; border-radius: 8px; }
+
+/* mini nav = compact count pills */
+.lib-mini-nav { display: flex; flex-wrap: wrap; gap: 5px; padding: 6px 10px 0; }
+.mchip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; color: var(--text-2);
+  background: var(--bg-card); border: 1px solid var(--border);
+  padding: 3px 9px; border-radius: 999px;
+  transition: all .14s;
+}
+.mchip b { font-weight: 600; font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.mchip:hover { color: var(--text-1); border-color: var(--text-3); }
+.mchip.active { background: var(--accent-soft); color: var(--accent); border-color: rgba(79,140,255,.4); font-weight: 600; }
+.mchip.active b { color: var(--accent); }
+
+.opds-card {
+  margin: 10px 10px 0;
+  background: linear-gradient(160deg, rgba(52,193,123,.10), rgba(52,193,123,.03));
+  border: 1px solid rgba(52,193,123,.28);
+  border-radius: var(--radius); padding: 8px 10px;
+  font-size: 10.5px; color: var(--text-2); line-height: 1.6;
+}
+.opds-card b { color: var(--green); font-size: 11px; }
+.opds-card .row { display: flex; gap: 6px; align-items: center; }
+.opds-card .pulse-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2.2s infinite; }
+
+/* book grid — 2-column mini cards */
+.book-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px 10px;
+  padding: 12px 10px 20px;
+}
+.book-card { cursor: pointer; transition: transform .2s var(--ease); min-width: 0; }
+.book-card:hover { transform: translateY(-3px); }
+.book-card:hover .cover { box-shadow: var(--shadow-2); }
+.cover {
+  position: relative;
+  aspect-ratio: 3 / 4.1;
+  border-radius: 6px 10px 10px 6px;
+  padding: 10px 9px;
+  display: flex; flex-direction: column;
+  box-shadow: var(--shadow-1);
+  transition: box-shadow .2s;
+  overflow: hidden;
+}
+.cover::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px;
+  background: linear-gradient(90deg, rgba(0,0,0,.35), rgba(255,255,255,.14) 55%, rgba(0,0,0,.18));
+}
+.cover::after {
+  content: ""; position: absolute; inset: 0;
+  background: radial-gradient(120% 90% at 20% 0%, rgba(255,255,255,.16), transparent 55%);
+  pointer-events: none;
+}
+.cover .ct { font-weight: 700; font-size: 11.5px; line-height: 1.45; color: rgba(255,255,255,.96); text-shadow: 0 1px 3px rgba(0,0,0,.4); z-index: 1; }
+.cover .ca { margin-top: auto; font-size: 9px; color: rgba(255,255,255,.78); z-index: 1; text-shadow: 0 1px 2px rgba(0,0,0,.35); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cover .mark {
+  position: absolute; top: 5px; right: 5px; z-index: 2;
+  font-size: 8px; background: rgba(0,0,0,.45); color: #ffe9a8;
+  padding: 2px 5px; border-radius: 999px; border: 1px solid rgba(255,233,168,.35);
+  backdrop-filter: blur(3px);
+}
+.book-meta { padding: 7px 1px 0; }
+.book-meta .t { font-size: 11.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.book-meta .a { font-size: 10px; color: var(--text-3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.badges { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; }
+.badge {
+  font-size: 8.5px; font-weight: 700; padding: 1px 5px; border-radius: 4px; letter-spacing: .3px;
+}
+.badge.epub { background: rgba(52,193,123,.16); color: var(--green); }
+.badge.pdf { background: rgba(79,140,255,.16); color: var(--blue); }
+.badge.convert { background: rgba(232,145,61,.16); color: var(--orange); }
+.badge.mobi { background: rgba(138,147,163,.16); color: var(--gray); }
+
+/* ================= LEFT · 稍后读 ================= */
+.rl-banner {
+  margin: 10px 10px 8px; padding: 8px 10px;
+  background: rgba(52,193,123,.10); border: 1px solid rgba(52,193,123,.28);
+  border-radius: var(--radius);
+  font-size: 11px; color: var(--text-2);
+  display: flex; align-items: center; gap: 6px;
+}
+.rl-banner b { color: var(--green); }
+.rl-add { display: flex; gap: 6px; padding: 0 10px 8px; }
+.rl-add input {
+  flex: 1; min-width: 0; height: 30px; background: var(--bg-input);
+  border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text-1); padding: 0 9px; font-size: 12px; outline: none;
+}
+.rl-add input:focus { border-color: var(--accent); }
+.rl-items { flex: 1; overflow-y: auto; padding: 0 6px 10px; }
+.rl-item {
+  width: 100%; text-align: left;
+  display: flex; gap: 8px; padding: 8px;
+  border-radius: var(--radius); border: 1px solid transparent;
+  transition: background .14s, border-color .14s;
+}
+.rl-item:hover { background: var(--bg-card); }
+.rl-item.active { background: var(--accent-soft); border-color: rgba(79,140,255,.3); }
+.rl-item .fav {
+  width: 26px; height: 26px; flex: 0 0 auto; border-radius: 7px;
+  background: var(--bg-elevated); display: grid; place-items: center; font-size: 12px;
+}
+.rl-item .it { min-width: 0; flex: 1; }
+.rl-item .t { font-size: 11.5px; font-weight: 600; color: var(--text-1); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.rl-item .m { font-size: 10px; color: var(--text-3); margin-top: 3px; display: flex; gap: 5px; flex-wrap: wrap; }
+
+/* ================= LEFT · 批注 ================= */
+.anno-filters { display: flex; gap: 5px; align-items: center; padding: 10px 10px 6px; flex-wrap: wrap; }
+.anno-filters .fchip {
+  font-size: 11px; padding: 3px 9px; border-radius: 999px;
+  background: var(--bg-card); border: 1px solid var(--border); color: var(--text-2);
+  transition: all .14s;
+}
+.anno-filters .fchip.active { background: var(--accent-soft); color: var(--accent); border-color: rgba(79,140,255,.4); font-weight: 600; }
+.anno-filters .grow { flex: 1; }
+.anno-list-wrap { flex: 1; overflow-y: auto; padding: 0 10px 16px; }
+
+.anno-row {
+  display: flex; gap: 9px; align-items: flex-start; flex-wrap: wrap;
+  background: var(--bg-card); border: 1px solid var(--border-soft);
+  border-radius: 12px; padding: 10px;
+  margin-bottom: 8px;
+  transition: border-color .15s;
+  animation: msgin .25s var(--ease);
+}
+.anno-row:hover { border-color: var(--text-3); }
+.anno-row .thumb {
+  width: 26px; height: 36px; flex: 0 0 auto; border-radius: 4px 6px 6px 4px;
+  display: grid; place-items: center;
+  font-size: 7px; font-weight: 700; color: rgba(255,255,255,.92);
+  text-align: center; line-height: 1.3; padding: 3px;
+  box-shadow: var(--shadow-1);
+}
+.anno-row .content { flex: 1; min-width: 0; }
+.anno-row .q {
+  font-size: 11.5px; color: var(--text-1); line-height: 1.65;
+  background: rgba(255,213,79,.08); border-left: 3px solid rgba(255,196,0,.6);
+  padding: 6px 9px; border-radius: 0 7px 7px 0;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.anno-row .n { font-size: 11px; color: var(--text-2); margin-top: 6px; line-height: 1.65; }
+.anno-row .n b { color: var(--text-1); }
+.anno-row .meta { font-size: 9.5px; color: var(--text-3); margin-top: 5px; font-family: var(--mono); word-break: break-all; }
+.anno-row .acts { display: flex; gap: 5px; flex: 0 0 auto; width: 100%; margin-top: 2px; }
+.anno-row .acts .btn { height: 24px; padding: 0 9px; font-size: 11px; flex: 1; justify-content: center; }
+
+/* ================= CENTER COLUMN (reading surface) ================= */
+.col-center {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  transition: background .3s var(--ease), border-color .3s;
+}
+
+/* ---------- reader toolbar ---------- */
+.reader-toolbar {
+  height: 48px; flex: 0 0 auto;
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 12px; border-bottom: 1px solid var(--border);
+  transition: border-color .3s;
+}
+.reader-toolbar .rt-title {
+  font-size: 12.5px; font-weight: 600; color: var(--text-1);
+  margin: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex: 0 1 auto; min-width: 0;
+}
+.rt-btn {
+  width: 30px; height: 30px; border-radius: 8px;
+  display: grid; place-items: center;
+  color: var(--text-2); font-size: 13px;
+  transition: background .15s, color .15s;
+  flex: 0 0 auto;
+}
+.rt-btn:hover { background: var(--bg-card); color: var(--text-1); }
+.rt-btn.on { color: var(--accent); background: var(--accent-soft); }
+.progress-wrap { display: flex; align-items: center; gap: 7px; margin-left: auto; flex: 0 0 auto; }
+.progress-wrap input[type=range] { width: 100px; accent-color: var(--accent); }
+.progress-pct { font-size: 11.5px; color: var(--text-2); font-variant-numeric: tabular-nums; min-width: 32px; }
+
+/* ---------- empty state ---------- */
+.empty-state {
+  min-height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; padding: 40px 24px; text-align: center;
+}
+.es-glyph {
+  font-size: 66px; line-height: 1;
+  opacity: .9;
+  filter: drop-shadow(0 8px 24px rgba(79,140,255,.18));
+}
+.es-title { font-size: 15.5px; font-weight: 600; color: var(--text-2); letter-spacing: .02em; }
+.es-sub { font-size: 12px; color: var(--text-3); margin-top: -6px; }
+.es-hints { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.es-hint {
+  font-size: 12px; color: var(--text-3);
+  background: var(--bg-card); border: 1px solid var(--border-soft);
+  padding: 7px 16px; border-radius: 999px;
+  transition: border-color .15s, color .15s;
+}
+.es-hint:hover { border-color: rgba(79,140,255,.4); color: var(--text-2); }
+.es-hint b { color: var(--text-2); font-weight: 600; }
+
+/* ---------- reading surfaces ---------- */
+.reader-body { flex: 1; display: flex; min-height: 0; }
+.reader-main { flex: 1; min-width: 0; overflow-y: auto; scroll-behavior: smooth; }
+
+.reading-surface {
+  max-width: 680px; margin: 0 auto;
+  padding: 48px 24px 120px;
+  font-size: var(--font-size);
+  line-height: 1.9;
+  color: var(--text-1);
+  transition: font-size .2s var(--ease), color .3s;
+}
+.reading-surface h2 {
+  font-size: 1.5em; margin: 0 0 1.4em; letter-spacing: .02em; line-height: 1.4;
+}
+.reading-surface h3 { font-size: 1.15em; margin: 2.2em 0 1em; }
+.reading-surface p { margin: 0 0 1.35em; text-align: justify; text-justify: inter-ideograph; }
+.reading-surface .hl {
+  background: var(--yellow-hl);
+  border-bottom: 1px solid rgba(255,196,0,.55);
+  border-radius: 2px; padding: 0 1px;
+  cursor: default;
+}
+.note-marker {
+  display: inline-block; font-size: .78em; vertical-align: super;
+  margin-left: 3px; cursor: pointer; opacity: .9;
+  transition: transform .15s;
+}
+.note-marker:hover { transform: scale(1.25); }
+.margin-note {
+  margin: -0.6em 0 1.3em; padding: 10px 14px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0 8px 8px 0;
+  font-size: .82em; color: var(--text-2);
+}
+.margin-note b { color: var(--text-1); font-weight: 600; }
+
+/* annotation editor under paragraph */
+.anno-editor {
+  margin: -0.4em 0 1.4em; padding: 12px;
+  background: var(--bg-card); border: 1px solid var(--accent);
+  border-radius: var(--radius); box-shadow: var(--shadow-2);
+  animation: pop .18s var(--ease);
+}
+.anno-editor textarea {
+  width: 100%; min-height: 64px; resize: vertical;
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text-1); padding: 9px 11px;
+  font-size: 13px; line-height: 1.6; outline: none;
+}
+.anno-editor textarea:focus { border-color: var(--accent); }
+.anno-editor .ae-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 9px; }
+
+/* ---------- selection floating toolbar ---------- */
+.sel-toolbar {
+  position: fixed; z-index: 90;
+  display: none; gap: 2px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px; padding: 4px;
+  box-shadow: var(--shadow-pop);
+  animation: pop .15s var(--ease);
+}
+.sel-toolbar.show { display: flex; }
+.sel-toolbar button {
+  display: flex; align-items: center; gap: 5px;
+  padding: 6px 10px; border-radius: 8px;
+  font-size: 12px; color: var(--text-1); white-space: nowrap;
+  transition: background .12s;
+}
+.sel-toolbar button:hover { background: var(--accent-soft); color: var(--accent); }
+.sel-toolbar .sep { width: 1px; background: var(--border); margin: 4px 2px; }
+
+/* ---------- TOC drawer (push layout, no overlay) ---------- */
+.drawer {
+  flex: 0 0 auto;
+  width: 0; overflow: hidden;
+  background: var(--bg-panel);
+  border-left: 1px solid transparent;
+  transition: width .28s var(--ease), border-color .28s var(--ease);
+  display: flex; flex-direction: column;
+}
+.drawer.open { width: 240px; border-left-color: var(--border); }
+.drawer header { padding: 14px 16px 10px; font-weight: 700; font-size: 13.5px; border-bottom: 1px solid var(--border-soft); display:flex; justify-content: space-between; align-items:center;}
+.drawer .toc-list { flex: 1; overflow-y: auto; padding: 8px; }
+.toc-item {
+  display: block; width: 100%; text-align: left;
+  padding: 8px 10px; border-radius: 8px;
+  font-size: 12px; color: var(--text-2);
+  transition: background .15s, color .15s;
+}
+.toc-item:hover { background: var(--bg-card); color: var(--text-1); }
+.toc-item.current { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.toc-item .sub { font-size: 10px; color: var(--text-3); margin-left: 6px; }
+
+/* ---------- article (read-later) reading surface ---------- */
+.rl-article { max-width: 660px; margin: 0 auto; padding: 44px 28px 110px; }
+.rl-article h1 { font-size: 24px; line-height: 1.35; margin-bottom: 10px; letter-spacing: .01em; }
+.rl-src { font-size: 12px; color: var(--text-3); display: flex; gap: 10px; align-items: center; padding-bottom: 20px; border-bottom: 1px solid var(--border-soft); margin-bottom: 26px; flex-wrap: wrap; }
+.rl-src .mode { background: var(--accent-soft); color: var(--accent); padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 600; }
+.rl-src a { color: var(--accent); text-decoration: none; }
+.rl-src a:hover { text-decoration: underline; }
+.rl-article p { font-size: var(--font-size); line-height: 1.9; color: var(--text-1); margin-bottom: 1.3em; text-align: justify; }
+
+/* ================= RIGHT COLUMN (conversation dock) ================= */
+.col-right {
+  width: var(--right-w); flex: 0 0 auto;
+  display: flex;
+  background: var(--bg-panel);
+  overflow: hidden;
+  transition: width .26s var(--ease);
+}
+.col-right.collapsed { width: 14px; }
+.col-right-inner {
+  width: calc(var(--right-w) - 14px); flex: 0 0 auto; min-width: 0;
+  overflow: hidden;
+  display: flex; flex-direction: column;
+}
+
+/* header: 对话 + context chip + collapse */
+.chat-head {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 10px 9px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.chat-head .ch-title { font-weight: 700; font-size: 13.5px; flex: 0 0 auto; }
+.ctx-chip {
+  flex: 1; min-width: 0;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11.5px; color: var(--text-2);
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 999px; padding: 4px 10px;
+  white-space: nowrap;
+}
+.ctx-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--gray); flex: 0 0 auto; transition: background .2s, box-shadow .2s; }
+.ctx-chip.book .dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.ctx-chip.link .dot { background: var(--blue); box-shadow: 0 0 6px var(--blue); }
+.ctx-chip.none { color: var(--text-3); border-style: dashed; }
+.ctx-chip .txt { overflow: hidden; text-overflow: ellipsis; }
+.ctx-chip.pulse { animation: chippulse .55s var(--ease); }
+@keyframes chippulse {
+  0% { box-shadow: 0 0 0 0 rgba(79,140,255,.55); }
+  100% { box-shadow: 0 0 0 12px rgba(79,140,255,0); }
+}
+
+/* ---------- chat stream ---------- */
+.chat-stream {
+  flex: 1; overflow-y: auto;
+  padding: 18px 14px 10px;
+  display: flex; flex-direction: column; gap: 16px;
+}
+.ctx-card {
+  display: flex; gap: 12px; align-items: flex-start;
+  background: linear-gradient(150deg, rgba(79,140,255,.10), rgba(124,92,255,.06));
+  border: 1px solid rgba(79,140,255,.30);
+  border-radius: 12px; padding: 12px 14px;
+  animation: pop .2s var(--ease);
+}
+.ctx-card.archived {
+  background: var(--bg-card); border-color: var(--border);
+  opacity: .82; cursor: pointer;
+  transition: border-color .15s, opacity .15s;
+}
+.ctx-card.archived:hover { border-color: var(--text-3); opacity: 1; }
+.ctx-card .book-ico {
+  width: 32px; height: 32px; flex: 0 0 auto; border-radius: 8px;
+  background: linear-gradient(135deg, #ff8a5c, #d84f7a);
+  display: grid; place-items: center; font-size: 14px;
+}
+.ctx-card .body { flex: 1; min-width: 0; }
+.ctx-card .src { font-size: 12px; font-weight: 700; color: var(--text-1); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ctx-card .tag {
+  font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+  background: rgba(52,193,123,.15); color: var(--green); border: 1px solid rgba(52,193,123,.3);
+}
+.ctx-card .quote {
+  margin-top: 6px; font-size: 12px; color: var(--text-2);
+  font-style: italic; line-height: 1.7;
+  border-left: 2px solid var(--accent); padding-left: 10px;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  word-break: break-all;
+}
+.ctx-card .acts { display: flex; gap: 4px; flex: 0 0 auto; }
+.icon-btn {
+  width: 26px; height: 26px; border-radius: 7px;
+  display: grid; place-items: center;
+  color: var(--text-3); font-size: 12px;
+  transition: background .13s, color .13s;
+  flex: 0 0 auto;
+}
+.icon-btn:hover { background: var(--bg-card-hover); color: var(--text-1); }
+
+.msg-row { display: flex; gap: 10px; align-items: flex-end; animation: msgin .25s var(--ease); }
+@keyframes msgin { from { opacity: 0; transform: translateY(8px); } }
+.msg-row.user { justify-content: flex-end; }
+.bubble {
+  max-width: 88%;
+  padding: 11px 14px;
+  border-radius: 14px;
+  font-size: 13px; line-height: 1.75;
+  min-width: 0;
+}
+.msg-row.user .bubble {
+  background: linear-gradient(135deg, #3d74d9, #4f8cff);
+  color: #fff; border-bottom-right-radius: 4px;
+  box-shadow: 0 4px 14px rgba(79,140,255,.25);
+}
+.msg-row.agent .bubble {
+  background: var(--bg-card); border: 1px solid var(--border-soft);
+  border-bottom-left-radius: 4px;
+}
+.bubble ul { padding-left: 1.2em; margin: .4em 0; }
+.bubble table { border-collapse: collapse; margin-top: .6em; font-size: 12px; width: 100%; }
+.bubble th, .bubble td { border: 1px solid var(--border); padding: 5px 8px; text-align: left; }
+.bubble th { background: var(--bg-input); font-weight: 600; }
+.bubble code { font-family: var(--mono); font-size: .9em; background: var(--bg-input); padding: 1px 5px; border-radius: 4px; }
+.typing { display: inline-flex; gap: 4px; padding: 4px 2px; }
+.typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); animation: tp 1.1s infinite; }
+.typing i:nth-child(2) { animation-delay: .18s; }
+.typing i:nth-child(3) { animation-delay: .36s; }
+@keyframes tp { 0%,60%,100%{transform:translateY(0);opacity:.4} 30%{transform:translateY(-4px);opacity:1} }
+
+/* ask-bubble: user bubble carrying a context quote card */
+.ask-bubble {
+  max-width: 92% !important;
+  background: var(--bg-card) !important;
+  border: 1px solid rgba(79,140,255,.32);
+  color: var(--text-1) !important;
+  box-shadow: none !important;
+}
+.ask-bubble .ask-src { display: flex; gap: 7px; align-items: center; font-size: 11.5px; font-weight: 700; color: var(--text-1); margin-bottom: 6px; }
+.ask-bubble .ask-quote {
+  font-size: 12px; color: var(--text-2); font-style: italic; line-height: 1.7;
+  border-left: 2px solid var(--accent); padding-left: 10px;
+  word-break: break-all;
+}
+
+/* ---------- composer ---------- */
+.composer-zone { flex: 0 0 auto; padding: 9px 14px 12px; border-top: 1px solid var(--border-soft); }
+.composer-zone .ctx-slot { margin-bottom: 8px; }
+.composer {
+  display: flex; align-items: flex-end; gap: 9px;
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: 14px; padding: 9px 11px;
+  transition: border-color .15s;
+}
+.composer:focus-within { border-color: var(--accent); }
+.composer textarea {
+  flex: 1; background: none; border: none; outline: none; resize: none;
+  color: var(--text-1); font-size: 13px; line-height: 1.6;
+  max-height: 110px; font-family: var(--font); min-width: 0;
+}
+.send-btn {
+  width: 32px; height: 32px; border-radius: 10px; flex: 0 0 auto;
+  background: var(--accent); color: #fff; font-size: 13px;
+  display: grid; place-items: center;
+  transition: background .15s, transform .15s;
+  box-shadow: 0 3px 10px rgba(79,140,255,.3);
+}
+.send-btn:hover { background: #5f97ff; transform: translateY(-1px); }
+.chips { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.chip {
+  font-size: 11.5px; color: var(--text-2);
+  background: var(--bg-card); border: 1px solid var(--border);
+  padding: 4px 10px; border-radius: 999px;
+  transition: all .15s;
+}
+.chip:hover { color: var(--accent); border-color: rgba(79,140,255,.4); background: var(--accent-soft); }
+
+/* ================= MODAL ================= */
+.modal-mask {
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(8,10,14,.62); backdrop-filter: blur(3px);
+  display: none; place-items: center;
+  opacity: 0; transition: opacity .22s;
+}
+.modal-mask.open { display: grid; opacity: 1; }
+.modal {
+  width: min(560px, 92vw); max-height: 84vh; overflow-y: auto;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: 14px; box-shadow: var(--shadow-pop);
+  transform: translateY(10px) scale(.98); transition: transform .22s var(--ease);
+}
+.modal-mask.open .modal { transform: translateY(0) scale(1); }
+.modal header { padding: 16px 20px; border-bottom: 1px solid var(--border-soft); font-weight: 700; font-size: 14.5px; display: flex; justify-content: space-between; align-items: center; }
+.modal .m-body { padding: 18px 20px; }
+.modal label { font-size: 12px; color: var(--text-3); display: block; margin-bottom: 6px; }
+.path-input {
+  width: 100%; height: 36px; background: var(--bg-input);
+  border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text-1); padding: 0 12px; font-size: 12.5px;
+  font-family: var(--mono); outline: none; margin-bottom: 14px;
+}
+.path-input:focus { border-color: var(--accent); }
+.md-preview {
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.75;
+  color: var(--text-2); white-space: pre-wrap; word-break: break-all;
+  max-height: 280px; overflow-y: auto;
+}
+.md-preview .fm { color: var(--green); }
+.md-preview .tag-c { color: var(--accent); }
+.md-preview .quote-c { color: var(--orange); }
+.modal footer { padding: 14px 20px; border-top: 1px solid var(--border-soft); display: flex; justify-content: flex-end; gap: 10px; }
+
+/* ================= TOAST ================= */
+.toast-zone {
+  position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%);
+  z-index: 300; display: flex; flex-direction: column; gap: 8px; align-items: center;
+  pointer-events: none;
+}
+.toast {
+  background: var(--bg-elevated); color: var(--text-1);
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: 9px 18px; font-size: 12.5px;
+  box-shadow: var(--shadow-pop);
+  display: flex; align-items: center; gap: 8px;
+  animation: toastin .25s var(--ease);
+  pointer-events: auto;
+}
+.toast.leaving { animation: toastout .3s var(--ease) forwards; }
+.toast .spin {
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 2px solid rgba(232,145,61,.3); border-top-color: var(--orange);
+  animation: rot .7s linear infinite;
+}
+@keyframes rot { to { transform: rotate(360deg); } }
+@keyframes toastin { from { opacity: 0; transform: translateY(12px); } }
+@keyframes toastout { to { opacity: 0; transform: translateY(10px); } }
+
+/* scrollbar */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-3); background-clip: content-box; border: 2px solid transparent; }
+
+/* ================= narrow screens: shrink side columns, center keeps ≥ ~560 ================= */
+@media (max-width: 1320px) {
+  :root { --left-w: 280px; --right-w: 360px; }
+  .drawer.open { width: 200px; }
+  .progress-wrap input[type=range] { width: 80px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ================= TOP BAR ================= -->
+<header class="topbar">
+  <div class="logo">DS</div>
+  <div class="app-title">DeepSeek Harness</div>
+  <div class="ws"><span class="dot"></span>workspace · dsh-plugins</div>
+  <div class="right">
+    <div class="status"><span class="dot"></span>agent 就绪</div>
+    <div class="avatar">C</div>
+  </div>
+</header>
+
+<div class="shell">
+
+  <!-- ================= LEFT COLUMN ================= -->
+  <aside class="col-left" id="colLeft">
+    <div class="col-left-inner">
+
+      <div class="ltabs" id="leftTabs">
+        <button class="ltab active" data-tab="library">📚 书库</button>
+        <button class="ltab" data-tab="readlater">🔗 稍后读</button>
+        <button class="ltab" data-tab="annotations">🖍 批注</button>
+      </div>
+
+      <div class="lpanels">
+
+        <!-- ===== 书库 ===== -->
+        <section class="lpanel active" id="lpanel-library">
+          <div class="lib-mini-toolbar">
+            <div class="search"><span>🔍</span><input id="libSearch" placeholder="搜索书名 / 作者 / ISBN"></div>
+            <div class="select-wrap" id="srcSelect">
+              <span>📡</span><span class="lbl" id="srcLabel">nasubuntu · calibre-web</span><span class="caret">▾</span>
+              <div class="select-menu" id="srcMenu">
+                <div class="opt" data-src="nasubuntu · calibre-web OPDS"><span>nasubuntu · calibre-web OPDS</span><span class="meta">1,247 本</span></div>
+                <div class="opt" data-src="本地导入"><span>本地导入</span><span class="meta">38 本</span></div>
+                <div class="opt" data-src="Wallabag 稍后读"><span>Wallabag 稍后读</span><span class="meta">12 篇</span></div>
+              </div>
+            </div>
+            <button class="btn" id="btnImport" title="导入本地文件">＋ 导入</button>
+          </div>
+          <div class="lib-mini-nav" id="libMiniNav">
+            <button class="mchip active" data-filter="all">全部 <b>1,247</b></button>
+            <button class="mchip" data-filter="new">新入库 <b>14</b></button>
+            <button class="mchip" data-filter="author">作者 <b>312</b></button>
+            <button class="mchip" data-filter="tag">标签 <b>96</b></button>
+            <button class="mchip" data-filter="epub">EPUB <b>302</b></button>
+            <button class="mchip" data-filter="convert">需转换 <b>520</b></button>
+          </div>
+          <div class="opds-card">
+            <div class="row"><span class="pulse-dot"></span><b>OPDS 已连接</b></div>
+            <div style="margin-top:2px;">1,247 本 · 302 EPUB / 361 PDF<br>291 MOBI / 229 AZW3</div>
+          </div>
+          <div class="book-grid" id="bookGrid"></div>
+        </section>
+
+        <!-- ===== 稍后读 ===== -->
+        <section class="lpanel" id="lpanel-readlater">
+          <div class="rl-banner"><b>Wallabag 2.6.14</b> ● 已同步 12 篇</div>
+          <div class="rl-add">
+            <input id="rlUrl" placeholder="粘贴 URL 添加文章…">
+            <button class="btn sm primary" id="btnAddUrl">＋ 添加</button>
+          </div>
+          <div class="rl-items" id="rlItems"></div>
+        </section>
+
+        <!-- ===== 批注 ===== -->
+        <section class="lpanel" id="lpanel-annotations">
+          <div class="anno-filters">
+            <button class="fchip active" data-book="all">全部</button>
+            <button class="fchip" data-book="认知觉醒">认知觉醒</button>
+            <button class="fchip" data-book="置身事内">置身事内</button>
+            <button class="fchip" data-book="DDIA">DDIA</button>
+            <span class="grow"></span>
+            <button class="btn sm ghost" id="btnSelectAll">全选</button>
+            <button class="btn sm primary" id="btnExportAll">📥 导出</button>
+          </div>
+          <div class="anno-list-wrap" id="annoList"></div>
+        </section>
+
+      </div>
+
+      <div class="left-foot">
+        <div class="sync-item" id="syncItem" title="Obsidian 同步状态">
+          <span>✅</span><span class="label">已连接 vault: Knowledge</span>
+        </div>
+      </div>
+    </div>
+    <button class="col-toggle" id="toggleLeft" title="收起 / 展开书库栏">◂</button>
+  </aside>
+
+  <!-- ================= CENTER COLUMN ================= -->
+  <main class="col-center" id="colCenter">
+    <div class="reader-toolbar">
+      <button class="rt-btn" id="btnBackLib" title="收起 / 展开左侧书库栏">◧</button>
+      <span class="rt-title" id="readerTitle">未打开任何内容</span>
+      <button class="rt-btn" id="btnCloseReader" title="关闭当前阅读内容">✕</button>
+      <button class="rt-btn" id="btnToc" title="目录">☰</button>
+      <button class="rt-btn" id="btnFontMinus" title="减小字号">A−</button>
+      <button class="rt-btn" id="btnFontPlus" title="增大字号">A＋</button>
+      <button class="rt-btn" id="btnTheme" title="切换主题">◐</button>
+      <button class="rt-btn" id="btnBookmark" title="书签">☆</button>
+      <div class="progress-wrap">
+        <input type="range" id="progressSlider" min="0" max="100" value="32">
+        <span class="progress-pct" id="progressPct">32%</span>
+      </div>
+    </div>
+    <div class="reader-body">
+      <div class="reader-main" id="readerScroll">
+
+        <div class="empty-state" id="emptyState">
+          <div class="es-glyph">📖</div>
+          <div class="es-title">从左侧打开一本书或文章开始阅读</div>
+          <div class="es-sub">三栏工作台 · 书库 / 稍后读 / 批注 与对话始终并行</div>
+          <div class="es-hints">
+            <div class="es-hint"><b>📚 书库</b>　点击封面直接打开 EPUB</div>
+            <div class="es-hint"><b>🔗 稍后读</b>　点击文章，正文提取到此处</div>
+            <div class="es-hint"><b>✨ 选中文字</b>　即可高亮、批注或问 Agent</div>
+          </div>
+        </div>
+
+        <article class="reading-surface" id="readingSurface" hidden>
+          <h2>第三章 得耐心者得天下</h2>
+          <p>焦虑的根源，往往在于我们迫切地希望立刻看到结果。这个时代把"快"奉为信条：速读、速成、快速变现。我们同时在多件事之间切换，在每件事上都浅尝辄止，然后因为看不到回报而更加焦虑。然而，真正有价值的事情，几乎都遵循一个共同的规律：它们都需要时间的沉淀，都需要在正确的方向上持续积累。耐心，不是被动地等待，而是一种主动的战略选择。</p>
+          <p>大脑的学习机制决定了成长必然是非线性的。神经元之间建立连接需要反复的刺激，髓鞘质的加厚需要成百上千次的练习。<span class="hl">任何技能的形成，都要经历一段"平台期"——看似毫无进展，实则是大脑正在默默完成重组。</span><span class="note-marker" title="我的想法">💬</span>那些在这个阶段放弃的人，不是输给了天赋，而是输给了对平台期的误解。他们把沉默当成了失败，却不知沉默正是爆发的前奏。</p>
+          <div class="margin-note">💬 <b>我的想法：</b>平台期的概念和《刻意练习》里说的"停滞期"很像，可以对照着看。</div>
+          <p>理解复利曲线，是获得耐心的第一课。复利在前期增长缓慢，甚至令人失望，但一旦越过拐点，增长便会陡然加速。写作、编程、健身、投资，无一例外。问题是，大多数人都在拐点到来之前的漫长平缓段里放弃了。他们不是没有能力，而是没有用"复利"的视角去衡量自己的进步。</p>
+          <p>第二个关键，是学会在拉伸区练习。如果任务太简单，大脑得不到刺激，能力原地踏步；如果任务太难，挫败感会迅速消耗意志力；只有那些"踮起脚尖能够到"的任务，才能让能力持续生长。<span class="hl">学习的本质，就是让大脑中的神经元从偶尔相遇，到频繁握手，再到最终焊接在一起。</span><span class="note-marker" title="我的想法">💬</span>这个过程无法跳过，任何声称能跳过它的方法，都值得警惕。</p>
+          <div class="margin-note">💬 <b>我的想法：</b>"焊接"这个比喻很好，可以写进我的读书笔记里。</div>
+          <p>第三个关键，是把大目标拆成足够小的行动。想读完一本书，先读一页；想写完一篇文章，先写一句话。小行动不会触发大脑的抵触机制，而每一次完成都会带来微小的成就感，这些成就感又会反过来巩固行动的习惯。耐心，就这样在正反馈的循环里被慢慢喂养大。</p>
+          <p>我们还常常高估一天的改变，而低估三年的改变。这是人类直觉对指数增长的普遍误判。反过来想：如果你愿意用三年的时间去打磨一项技能，那么你就已经超过了绝大多数竞争者——因为大多数人连三个月都坚持不了。时间本身，就是最不公平也最公平的优势。</p>
+          <p>当然，耐心并不等于低效地重复。真正的耐心包含两个动作：在方向上保持笃定，在方法上保持迭代。每周回顾一次：方法是否需要调整？目标是否需要修正？笃定而不僵化，灵活而不摇摆，这才是耐心完整的模样。</p>
+          <p>本章的最后，我想请你记住一句话：<span class="hl">耐心是长期主义的入场券，而长期主义几乎是所有非凡成就的唯一通路。</span>下一次当你因为看不到进展而焦虑时，不妨问自己：我是在平台上，还是在滑坡上？如果是前者，请坐稳了，拐点可能就在下一个路口。</p>
+          <p>下一章，我们将讨论另一个被严重低估的能力：专注力——以及在碎片化的世界里，如何重新夺回你的注意力。</p>
+        </article>
+
+        <article class="rl-article" id="rlArticle" hidden>
+          <h1>为什么深度工作正在消失</h1>
+          <div class="rl-src">
+            <span>calnewport.com</span>
+            <span class="mode">正文提取模式</span>
+            <a href="#" onclick="return false">原文 ↗</a>
+          </div>
+          <p>Deep work — the ability to focus without distraction on a cognitively demanding task — is becoming both increasingly rare and increasingly valuable in our economy. Yet the tools we use every day are engineered to fragment our attention into ever-smaller slices.</p>
+          <p>The average knowledge worker now checks email or messaging tools every six minutes. Each check, research shows, costs far more than the few seconds it takes: attention residue lingers for twenty minutes or more, degrading the quality of every subsequent task. 我们以为自己在多任务处理，其实只是高频地切换任务，而每一次切换都有隐形的认知税。</p>
+          <p>Cal Newport 提出的解决方案并不复杂：为深度工作留出不被打扰的整块时间，对 shallow work（浅层工作）做严格的配额管理，并让"失联"成为可以被接受的团队规范。关键不是意志力，而是重新设计你的工作协议。</p>
+          <p>In practice, this means scheduling deep work blocks on your calendar like meetings you cannot miss, batching shallow tasks into fixed windows, and being explicit with colleagues about your availability. 工具上，关闭非必要通知、退出无关群组、把手机放到另一个房间——这些微小摩擦的累积，效果远大于自控力的挣扎。</p>
+          <p>深度工作能力的衰退是系统性的，但恢复它也可以是系统性的。The goal is not monk-like isolation, but a sustainable rhythm where your most valuable cognitive work gets the uninterrupted hours it deserves.</p>
+          <p>如果你每天能守护住哪怕 90 分钟的深度工作时间，一年累积下来就是 540 个小时——足够完成一本书、一个 side project，或者一次真正的技能跃迁。深度工作正在消失，但它是可以被你自己重新发明出来的。</p>
+        </article>
+
+      </div>
+      <!-- TOC drawer: push layout, no overlay -->
+      <aside class="drawer" id="tocDrawer">
+        <header>目录 <button class="icon-btn" id="btnTocClose">✕</button></header>
+        <div class="toc-list">
+          <button class="toc-item">第一章 大脑：一切问题的起源</button>
+          <button class="toc-item">第二章 焦虑：方向错了，越努力越累</button>
+          <button class="toc-item current">第三章 得耐心者得天下<span class="sub">· 当前</span></button>
+          <button class="toc-item">第四章 专注力：被碎片化的奢侈品</button>
+          <button class="toc-item">第五章 学习力：如何真正学会一件事</button>
+          <button class="toc-item">第六章 行动力：从"知道"到"做到"</button>
+          <button class="toc-item">第七章 情绪力：与内在的小孩和解</button>
+          <button class="toc-item">第八章 成本人生：几条底层规律</button>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <!-- ================= RIGHT COLUMN ================= -->
+  <aside class="col-right" id="colRight">
+    <div class="col-right-inner">
+
+      <div class="chat-head">
+        <span class="ch-title">对话</span>
+        <span class="ctx-chip none" id="ctxChip"><span class="dot"></span><span class="txt" id="ctxChipText">未绑定阅读上下文</span></span>
+        <button class="icon-btn" id="btnCollapseRight" title="收起 / 展开对话栏">▸</button>
+      </div>
+
+      <div class="chat-stream" id="chatStream">
+        <div class="msg-row user"><div class="bubble">帮我总结一下这本书前三章的核心观点</div></div>
+        <div class="msg-row agent"><div class="bubble">
+          《认知觉醒》前三章的核心观点如下：
+          <ul>
+            <li><b>大脑有三层</b>：本能脑、情绪脑、理智脑。成长的关键不是对抗本能，而是用理智脑巧妙地驱动前两者。</li>
+            <li><b>焦虑源于错位</b>：欲望与能力差距过大、同时想做的事太多。解法是把注意力收回到"拉伸区"。</li>
+            <li><b>耐心即战略</b>：理解复利曲线与平台期，把大目标拆成小行动，用长期主义换取拐点。</li>
+          </ul>
+          <table>
+            <tr><th>章节</th><th>关键词</th><th>一句话总结</th></tr>
+            <tr><td>第一章</td><td>三重大脑</td><td>用理智驾驭本能，而非消灭本能</td></tr>
+            <tr><td>第二章</td><td>焦虑 / 拉伸区</td><td>欲望做减法，能力做加法</td></tr>
+            <tr><td>第三章</td><td>复利 / 平台期</td><td>耐心是长期主义的入场券</td></tr>
+          </table>
+          需要我把这份总结直接整理成 Obsidian 笔记吗？
+        </div></div>
+        <!-- archived context card -->
+        <div class="ctx-card archived" id="archivedCard" title="点击查看批注详情">
+          <div class="book-ico">📖</div>
+          <div class="body">
+            <div class="src">《认知觉醒》 · 第二章 <span class="tag">已归档到 Obsidian ✅</span></div>
+            <div class="quote">"焦虑的根源：想同时做很多事，又想立即看到效果。"</div>
+          </div>
+          <div class="acts"><button class="icon-btn" title="查看">👁</button></div>
+        </div>
+      </div>
+
+      <div class="composer-zone">
+        <div class="ctx-slot" id="ctxSlot"></div>
+        <div class="composer">
+          <textarea id="composerInput" rows="1" placeholder="结合选中内容向 agent 提问…"></textarea>
+          <button class="send-btn" id="btnSend" title="发送">➤</button>
+        </div>
+        <div class="chips">
+          <button class="chip" data-chip="📝 生成读书笔记">📝 生成读书笔记</button>
+          <button class="chip" data-chip="🔍 搜索相关资料">🔍 搜索相关资料</button>
+          <button class="chip" data-chip="📥 保存到 Obsidian">📥 保存到 Obsidian</button>
+        </div>
+      </div>
+
+    </div>
+    <button class="col-toggle" id="toggleRight" title="收起 / 展开对话栏">◂</button>
+  </aside>
+
+</div>
+
+<!-- floating selection toolbar -->
+<div class="sel-toolbar" id="selToolbar">
+  <button data-act="ask">✨ 问 Agent</button>
+  <span class="sep"></span>
+  <button data-act="hl">🖍 高亮</button>
+  <button data-act="note">💬 批注</button>
+  <button data-act="copy">⧉ 复制</button>
+</div>
+
+<!-- Obsidian save modal -->
+<div class="modal-mask" id="obsModal">
+  <div class="modal">
+    <header>保存到 Obsidian <button class="icon-btn" id="obsModalClose">✕</button></header>
+    <div class="m-body">
+      <label>目标路径（可编辑）</label>
+      <input class="path-input" id="obsPath" value="Knowledge/读书笔记/认知觉醒.md">
+      <label>Markdown 预览</label>
+      <div class="md-preview" id="obsPreview"></div>
+    </div>
+    <footer>
+      <button class="btn" id="obsCancel">取消</button>
+      <button class="btn primary" id="obsSave">保存</button>
+    </footer>
+  </div>
+</div>
+
+<div class="toast-zone" id="toastZone"></div>
+
+<script>
+/* ================================================================
+   dsh-reading prototype — three-column workbench, no network, works on file://
+   ================================================================ */
+"use strict";
+
+/* ---------- tiny helpers ---------- */
+const $  = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+
+function toast(msg, opts) {
+  opts = opts || {};
+  const zone = $("#toastZone");
+  const t = document.createElement("div");
+  t.className = "toast";
+  if (opts.spinner) {
+    const sp = document.createElement("span");
+    sp.className = "spin";
+    t.appendChild(sp);
+  }
+  const span = document.createElement("span");
+  span.textContent = msg;
+  t.appendChild(span);
+  zone.appendChild(t);
+  const life = opts.duration || 2400;
+  setTimeout(() => {
+    t.classList.add("leaving");
+    setTimeout(() => t.remove(), 320);
+  }, life);
+  return t;
+}
+
+function escapeHTML(s) {
+  return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function dismissSelectionUI() {
+  hideSelToolbar();
+  savedRange = null;
+  const sel = window.getSelection();
+  if (sel) sel.removeAllRanges();
+}
+
+/* ================================================================
+   CONTEXT BINDING — the core of the three-column rework
+   currentlyOpen = null | {type:'book', title, chapter} | {type:'article', title, domain}
+   ================================================================ */
+let currentlyOpen = null;
+
+function setContext(ctx) {
+  currentlyOpen = ctx;
+  updateContextUI();
+}
+
+function chipLabel() {
+  if (!currentlyOpen) return null;
+  if (currentlyOpen.type === "book") {
+    return `📖 《${currentlyOpen.title}》· ${currentlyOpen.chapter} · ${$("#progressPct").textContent}`;
+  }
+  return `🔗 ${currentlyOpen.title} · ${currentlyOpen.domain}`;
+}
+
+function updateContextUI() {
+  const chip = $("#ctxChip"), txt = $("#ctxChipText");
+  chip.classList.remove("book", "link", "none", "pulse");
+  void chip.offsetWidth;               // restart pulse animation
+  chip.classList.add("pulse");
+
+  const label = chipLabel();
+  if (!label) {
+    chip.classList.add("none");
+    txt.textContent = "未绑定阅读上下文";
+    $("#readerTitle").textContent = "未打开任何内容";
+  } else {
+    chip.classList.add(currentlyOpen.type === "book" ? "book" : "link");
+    txt.textContent = label;
+    $("#readerTitle").textContent = currentlyOpen.type === "book"
+      ? `${currentlyOpen.title} · ${currentlyOpen.chapter}`
+      : `${currentlyOpen.title} · ${currentlyOpen.domain}`;
+  }
+
+  /* center panes */
+  $("#emptyState").hidden = !!currentlyOpen;
+  $("#readingSurface").hidden = !(currentlyOpen && currentlyOpen.type === "book");
+  $("#rlArticle").hidden = !(currentlyOpen && currentlyOpen.type === "article");
+}
+
+/* ================================================================
+   LEFT COLUMN · tab switcher (remembered for the session)
+   ================================================================ */
+let lastTab = "library";               // last active tab, per session
+function switchLeftTab(name) {
+  lastTab = name;
+  $$(".ltab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
+  $$(".lpanel").forEach(p => p.classList.toggle("active", p.id === "lpanel-" + name));
+  dismissSelectionUI();
+}
+$$(".ltab").forEach(t => t.addEventListener("click", () => switchLeftTab(t.dataset.tab)));
+
+/* ================================================================
+   COLUMN COLLAPSE (left & right)
+   ================================================================ */
+const colLeft = $("#colLeft"), colRight = $("#colRight");
+const toggleLeft = $("#toggleLeft"), toggleRight = $("#toggleRight");
+
+function setLeftCollapsed(c) {
+  colLeft.classList.toggle("collapsed", c);
+  toggleLeft.textContent = c ? "▸" : "◂";
+}
+function setRightCollapsed(c) {
+  colRight.classList.toggle("collapsed", c);
+  toggleRight.textContent = c ? "◂" : "▸";
+  $("#btnCollapseRight").textContent = c ? "◂" : "▸";
+}
+toggleLeft.addEventListener("click", () => setLeftCollapsed(!colLeft.classList.contains("collapsed")));
+toggleRight.addEventListener("click", () => setRightCollapsed(!colRight.classList.contains("collapsed")));
+$("#btnCollapseRight").addEventListener("click", () => setRightCollapsed(!colRight.classList.contains("collapsed")));
+$("#btnBackLib").addEventListener("click", () => setLeftCollapsed(!colLeft.classList.contains("collapsed")));
+
+$("#syncItem").addEventListener("click", () =>
+  toast("✅ Obsidian vault「Knowledge」连接正常 · 上次同步 2 分钟前"));
+
+/* ================================================================
+   LEFT · 书库
+   ================================================================ */
+const BOOKS = [
+  { t: "认知觉醒", a: "周岭", fmt: "epub", g: "linear-gradient(150deg,#ff8a5c,#d84f7a)", hot: true },
+  { t: "The Algorithm", a: "Hilke Schellmann", fmt: "epub", g: "linear-gradient(150deg,#3a7bd5,#1e3c72)" },
+  { t: "置身事内", a: "兰小欢", fmt: "epub", g: "linear-gradient(150deg,#11998e,#0f5e56)" },
+  { t: "Calibre 实战", a: "王磊", fmt: "epub", g: "linear-gradient(150deg,#8e2de2,#5b1a94)" },
+  { t: "纳瓦尔宝典", a: "Eric Jorgenson", fmt: "epub", g: "linear-gradient(150deg,#f7971e,#c3371e)" },
+  { t: "Designing Data-Intensive Applications", a: "Martin Kleppmann", fmt: "epub", g: "linear-gradient(150deg,#232526,#5a5f66)", short: "DDIA" },
+  { t: "深度学习入门", a: "斋藤康毅", fmt: "pdf", g: "linear-gradient(150deg,#f857a6,#7a1fa2)" },
+  { t: "人类简史", a: "尤瓦尔·赫拉利", fmt: "pdf", g: "linear-gradient(150deg,#c79081,#8a5a44)" },
+  { t: "思考,快与慢", a: "丹尼尔·卡尼曼", fmt: "pdf", g: "linear-gradient(150deg,#3ec1a7,#1b6f6e)" },
+  { t: "未来简史", a: "尤瓦尔·赫拉利", fmt: "azw3", g: "linear-gradient(150deg,#667eea,#3f4d9e)", cached: true },
+  { t: "枪炮、病菌与钢铁", a: "贾雷德·戴蒙德", fmt: "azw3", g: "linear-gradient(150deg,#b06ab3,#4568dc)" },
+  { t: "原则", a: "瑞·达利欧", fmt: "mobi", g: "linear-gradient(150deg,#4b6cb7,#182848)" },
+  { t: "Educated", a: "Tara Westover", fmt: "mobi", g: "linear-gradient(150deg,#e65c00,#8f3b00)", short: "你当像鸟飞往你的山" },
+  { t: "置身事内·解读版", a: "兰小欢 / 解读", fmt: "azw3", g: "linear-gradient(150deg,#0ba360,#3cba92)" }
+];
+
+function badgeHTML(fmt) {
+  if (fmt === "epub") return '<span class="badge epub">EPUB</span>';
+  if (fmt === "pdf")  return '<span class="badge pdf">PDF</span>';
+  if (fmt === "azw3") return '<span class="badge convert">AZW3→EPUB</span>';
+  return '<span class="badge mobi">MOBI→EPUB</span>';
+}
+
+function renderBooks(filter, query) {
+  const grid = $("#bookGrid");
+  grid.innerHTML = "";
+  const q = (query || "").trim().toLowerCase();
+  BOOKS
+    .filter(b => filter === "all" || (filter === "epub" && b.fmt === "epub") ||
+      (filter === "convert" && (b.fmt === "azw3" || b.fmt === "mobi")) ||
+      (filter === "new" && b.hot) ||
+      (filter === "author" && false) ||
+      (filter === "tag" && false))
+    .filter(b => !q || b.t.toLowerCase().includes(q) || b.a.toLowerCase().includes(q))
+    .forEach(b => {
+      const card = document.createElement("div");
+      card.className = "book-card";
+      card.innerHTML = `
+        <div class="cover" style="background:${b.g}">
+          ${b.cached ? '<span class="mark">✓ 已缓存转换</span>' : ""}
+          <div class="ct">${b.short || b.t}</div>
+          <div class="ca">${b.a}</div>
+        </div>
+        <div class="book-meta">
+          <div class="t">${b.t}</div>
+          <div class="a">${b.a}</div>
+          <div class="badges">${badgeHTML(b.fmt)}</div>
+        </div>`;
+      card.addEventListener("click", () => openBook(b));
+      grid.appendChild(card);
+    });
+  if (!grid.children.length) {
+    grid.innerHTML = '<div style="color:var(--text-3);font-size:12px;padding:24px 10px;grid-column:1/-1;">没有匹配的书籍</div>';
+  }
+}
+
+function openBook(b) {
+  const doOpen = () => {
+    setContext({ type: "book", title: b.t, chapter: "第三章" });
+    $("#readerScroll").scrollTop = 0;
+  };
+  if (b.fmt === "azw3" || b.fmt === "mobi") {
+    const src = "nasubuntu";
+    const from = b.fmt.toUpperCase();
+    const t = toast(`正在通过 ${src} 转换 ${from} → EPUB …`, { spinner: true, duration: 1500 });
+    setTimeout(() => {
+      t.remove();
+      toast(`✅ 转换完成 · 已打开 EPUB（${b.t}）`, { duration: 1800 });
+      doOpen();
+    }, 1500);
+  } else {
+    doOpen();
+  }
+}
+
+renderBooks("all", "");
+
+/* mini nav */
+$$("#libMiniNav .mchip").forEach(btn => {
+  btn.addEventListener("click", () => {
+    $$("#libMiniNav .mchip").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    renderBooks(btn.dataset.filter, $("#libSearch").value);
+  });
+});
+$("#libSearch").addEventListener("input", e => {
+  const active = $("#libMiniNav .mchip.active");
+  renderBooks(active ? active.dataset.filter : "all", e.target.value);
+});
+
+/* source dropdown */
+const srcSelect = $("#srcSelect"), srcMenu = $("#srcMenu");
+srcSelect.addEventListener("click", e => {
+  if (e.target.closest(".opt")) {
+    $("#srcLabel").textContent = e.target.closest(".opt").dataset.src;
+    srcMenu.classList.remove("open");
+    toast(`已切换书源：${e.target.closest(".opt").dataset.src}`);
+  } else {
+    srcMenu.classList.toggle("open");
+  }
+});
+document.addEventListener("click", e => {
+  if (!e.target.closest("#srcSelect")) srcMenu.classList.remove("open");
+});
+$("#btnImport").addEventListener("click", () =>
+  toast("📂 打开文件选择器…（原型中模拟）"));
+
+/* ================================================================
+   CENTER · READER toolbar
+   ================================================================ */
+
+/* TOC drawer */
+const tocDrawer = $("#tocDrawer");
+$("#btnToc").addEventListener("click", () => tocDrawer.classList.toggle("open"));
+$("#btnTocClose").addEventListener("click", closeToc);
+function closeToc() { tocDrawer.classList.remove("open"); }
+$$(".toc-item").forEach(item => item.addEventListener("click", () => {
+  $$(".toc-item").forEach(i => i.classList.remove("current"));
+  item.classList.add("current");
+  item.querySelector(".sub") || item.insertAdjacentHTML("beforeend", '<span class="sub">· 当前</span>');
+  closeToc();
+  $("#readerScroll").scrollTo({ top: 0, behavior: "smooth" });
+  toast(`已跳转到 ${item.textContent.replace("· 当前","").trim()}`);
+}));
+
+/* close current reading → back to empty state, context cleared */
+$("#btnCloseReader").addEventListener("click", () => {
+  setContext(null);
+  toast("已关闭当前阅读内容", { duration: 1400 });
+});
+
+/* font size */
+let fontSize = 17;
+function setFontSize(px) {
+  fontSize = Math.min(22, Math.max(14, px));
+  document.documentElement.style.setProperty("--font-size", fontSize + "px");
+}
+$("#btnFontMinus").addEventListener("click", () => setFontSize(fontSize - 1));
+$("#btnFontPlus").addEventListener("click", () => setFontSize(fontSize + 1));
+
+/* theme toggle (center column only) */
+const colCenter = $("#colCenter");
+$("#btnTheme").addEventListener("click", () => {
+  colCenter.classList.toggle("reader-paper");
+  const paper = colCenter.classList.contains("reader-paper");
+  toast(paper ? "☀️ 已切换到纸张护眼主题" : "🌙 已切换到深色主题", { duration: 1600 });
+});
+
+/* bookmark */
+$("#btnBookmark").addEventListener("click", e => {
+  const b = e.currentTarget;
+  const on = b.textContent.trim() === "★";
+  b.textContent = on ? "☆" : "★";
+  b.classList.toggle("on", !on);
+  toast(on ? "已移除书签" : "🔖 书签已保存 · 第三章", { duration: 1600 });
+});
+
+/* progress */
+$("#progressSlider").addEventListener("input", e => {
+  $("#progressPct").textContent = e.target.value + "%";
+  if (currentlyOpen && currentlyOpen.type === "book") {
+    $("#ctxChipText").textContent = chipLabel();
+  }
+});
+
+/* ================================================================
+   TEXT SELECTION TOOLBAR (book + article surfaces in center column)
+   ================================================================ */
+const selToolbar = $("#selToolbar");
+let savedRange = null;   // stored Range for later ops
+let noteAnchor = null;   // paragraph to attach note editor to
+
+function surfaceOf(node) {
+  return node && node.nodeType === 1 ? node.closest(".reading-surface, .rl-article") : null;
+}
+
+function parentSurfaceOf(range) {
+  const n = range.commonAncestorContainer;
+  return surfaceOf(n.nodeType === 1 ? n : n.parentElement);
+}
+
+let mouseDownInSurface = false;
+document.addEventListener("mousedown", e => {
+  if (e.target.closest(".sel-toolbar")) return;         // keep toolbar while using it
+  mouseDownInSurface = !!e.target.closest(".reading-surface, .rl-article");
+  // any press outside the toolbar dismisses it
+  hideSelToolbar();
+});
+
+document.addEventListener("mouseup", e => {
+  if (e.target.closest(".sel-toolbar") || e.target.closest(".anno-editor") || e.target.closest(".modal")) return;
+  setTimeout(() => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.toString().trim()) { hideSelToolbar(); return; }
+    // only offer the toolbar for gestures that began inside a reading surface
+    if (!mouseDownInSurface) { hideSelToolbar(); return; }
+    const range = sel.getRangeAt(0);
+    if (!parentSurfaceOf(range)) { hideSelToolbar(); return; }
+    savedRange = range.cloneRange();
+    showSelToolbar(range);
+  }, 0);
+});
+
+/* hide as soon as the selection itself collapses */
+document.addEventListener("selectionchange", () => {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed) hideSelToolbar();
+});
+
+function showSelToolbar(range) {
+  const rect = range.getBoundingClientRect();
+  selToolbar.classList.add("show");
+  const tw = selToolbar.offsetWidth, th = selToolbar.offsetHeight;
+  let x = rect.left + rect.width / 2 - tw / 2;
+  let y = rect.top - th - 10;
+  if (y < 50) y = rect.bottom + 10;              // flip below if off top
+  x = Math.max(8, Math.min(window.innerWidth - tw - 8, x));
+  selToolbar.style.left = x + "px";
+  selToolbar.style.top = y + "px";
+}
+function hideSelToolbar() {
+  selToolbar.classList.remove("show");
+}
+
+selToolbar.addEventListener("click", e => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  const act = btn.dataset.act;
+  if (act === "copy") {
+    const text = savedRange ? savedRange.toString() : "";
+    copyText(text);
+    toast("⧉ 已复制到剪贴板", { duration: 1500 });
+    hideSelToolbar();
+    window.getSelection().removeAllRanges();
+  } else if (act === "hl") {
+    applyHighlight();
+  } else if (act === "note") {
+    openNoteEditor();
+  } else if (act === "ask") {
+    askAgentWithQuote();
+  }
+});
+
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext !== false) {
+    navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+  } else {
+    fallbackCopy(text);
+  }
+}
+function fallbackCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); } catch (_) {}
+  ta.remove();
+}
+
+function applyHighlight() {
+  if (!savedRange) return;
+  const sel = window.getSelection();
+  try {
+    sel.removeAllRanges();
+    sel.addRange(savedRange);
+    const range = sel.getRangeAt(0);
+    if (range.collapsed) throw new Error("empty");
+    const span = document.createElement("span");
+    span.className = "hl";
+    range.surroundContents(span);
+    hideSelToolbar();
+    toast("🖍 已添加高亮", { duration: 1500 });
+  } catch (err) {
+    // fallback: cross-element selection — wrap via extractContents
+    try {
+      const range = savedRange;
+      const span = document.createElement("span");
+      span.className = "hl";
+      span.appendChild(range.extractContents());
+      range.insertNode(span);
+      hideSelToolbar();
+      toast("🖍 已添加高亮（跨段落）", { duration: 1500 });
+    } catch (err2) {
+      toast("⚠️ 该选区无法高亮，请缩小选择范围", { duration: 2000 });
+    }
+  }
+  savedRange = null;
+  window.getSelection().removeAllRanges();
+}
+
+function openNoteEditor() {
+  if (!savedRange) return;
+  const range = savedRange;
+  // attach to the block-level paragraph containing the selection start
+  let node = range.startContainer;
+  noteAnchor = (node.nodeType === 1 ? node : node.parentElement).closest("p");
+  hideSelToolbar();
+  window.getSelection().removeAllRanges();
+
+  if (!noteAnchor) { toast("⚠️ 请在正文中选择文字再批注", { duration: 2000 }); return; }
+  $$(".anno-editor").forEach(el => el.remove());
+
+  const editor = document.createElement("div");
+  editor.className = "anno-editor";
+  editor.innerHTML = `
+    <textarea placeholder="写下你的想法…（关联本段选文）"></textarea>
+    <div class="ae-actions">
+      <button class="btn sm ghost" data-ae="cancel">取消</button>
+      <button class="btn sm primary" data-ae="save">保存批注</button>
+    </div>`;
+  noteAnchor.after(editor);
+  editor.querySelector("textarea").focus();
+
+  editor.addEventListener("click", ev => {
+    const b = ev.target.closest("button");
+    if (!b) return;
+    if (b.dataset.ae === "cancel") { editor.remove(); return; }
+    const text = editor.querySelector("textarea").value.trim();
+    if (!text) { editor.remove(); return; }
+    editor.remove();
+    const marker = document.createElement("div");
+    marker.className = "margin-note";
+    marker.innerHTML = `💬 <b>我的想法：</b>${escapeHTML(text)}`;
+    noteAnchor.after(marker);
+    try {
+      const hl = document.createElement("span");
+      hl.className = "note-marker";
+      hl.textContent = "💬";
+      hl.title = "我的想法";
+      if (range.startContainer.parentElement && range.startContainer.parentElement.closest("p")) {
+        range.collapse(false);
+        range.insertNode(hl);
+      }
+    } catch (_) {}
+    toast("💬 批注已保存", { duration: 1500 });
+  });
+}
+
+/* ================================================================
+   ✨ 问 Agent — append context exchange to the RIGHT chat dock
+   (no view switching: all three columns are permanent)
+   ================================================================ */
+function askAgentWithQuote() {
+  const quote = savedRange ? savedRange.toString().trim() : "";
+  if (!quote) return;
+  hideSelToolbar();
+  window.getSelection().removeAllRanges();
+  savedRange = null;
+  appendAskExchange(quote);
+}
+
+function currentCtxForAsk() {
+  if (currentlyOpen) return currentlyOpen;
+  // selection toolbar only exists on reading surfaces, but stay defensive
+  return { type: "book", title: "认知觉醒", chapter: "第三章" };
+}
+
+function appendAskExchange(quote) {
+  const ctx = currentCtxForAsk();
+  const isArticle = ctx.type === "article";
+  const icon = isArticle ? "🔗" : "📖";
+  const src = isArticle ? `${ctx.title} · ${ctx.domain}` : `《${ctx.title}》 · ${ctx.chapter}`;
+
+  /* 1) user bubble carrying context card + quoted selection */
+  const row = document.createElement("div");
+  row.className = "msg-row user";
+  row.innerHTML = `<div class="bubble ask-bubble">
+      <div class="ask-src"><span>${icon}</span><span>${escapeHTML(src)}</span></div>
+      <div class="ask-quote">"${escapeHTML(quote)}"</div>
+    </div>`;
+  chatStream.appendChild(row);
+  scrollChat();
+
+  /* 2) typing dots … */
+  const typingRow = document.createElement("div");
+  typingRow.className = "msg-row agent";
+  typingRow.innerHTML = `<div class="bubble"><span class="typing"><i></i><i></i><i></i></span></div>`;
+  setTimeout(() => { chatStream.appendChild(typingRow); scrollChat(); }, 250);
+
+  /* 3) canned context-aware reply after ~1s (two-branch by keyword) */
+  setTimeout(() => {
+    typingRow.remove();
+    const reply = document.createElement("div");
+    reply.className = "msg-row agent";
+    let body;
+    if (quote.includes("平台期")) {
+      body = `这段引文点出了本章最关键的论点：<b>"平台期"不是失败信号，而是大脑正在默默重组的过程。</b><br><br>结合《认知觉醒》第三章的框架可以进一步拆解：它是复利曲线拐点之前的平缓段；它要求练习始终停留在"拉伸区"才有持续刺激；它需要把大目标拆成小行动来维持正反馈。那些在这个阶段放弃的人，输掉的并不是天赋，而是对沉默的误读。<br><br>我的建议：当你判断自己处于平台期时，先不要急于增加投入量，而是回顾方法是否需要迭代——笃定方向，灵活方法。需要我把这段分析连同引用一起整理进 Obsidian 笔记吗？`;
+    } else if (isArticle) {
+      body = `结合这篇来自 <b>${escapeHTML(ctx.domain)}</b> 的文章来看，你选中的这段话强调的是：<b>深度工作的对立面不是懒惰，而是被工具系统性切碎的注意力。</b><br><br>作者的思路是重新设计工作协议——把深度时间像会议一样写进日历、给浅层任务设配额、用"微小摩擦"替代意志力挣扎。可以把这段和书中第四章"专注力"对照着读，两者的结论会互相印证。<br><br>需要我围绕这段文字展开更详细的分析，或直接整理成 Obsidian 笔记吗？`;
+    } else {
+      body = `这段话值得停下来想一想。结合当前上下文（《${escapeHTML(ctx.title)}》 · ${escapeHTML(ctx.chapter)}），我的理解是：<b>它强调的是长期积累与非线性成长的关系——短期看不到进展，并不代表没有进展。</b><br><br>可以把这一页和"复利曲线""拉伸区"两节放在一起看：方向笃定、方法迭代、目标拆小，三者共同构成耐心的完整闭环。<br><br>需要我围绕这段文字展开更详细的分析，或直接整理成 Obsidian 笔记吗？`;
+    }
+    reply.innerHTML = `<div class="bubble">${body}</div>`;
+    chatStream.appendChild(reply);
+    scrollChat();
+  }, 1150);
+}
+
+/* ================================================================
+   RIGHT · CHAT
+   ================================================================ */
+const chatStream = $("#chatStream");
+function scrollChat() { chatStream.scrollTop = chatStream.scrollHeight; }
+
+function sendMessage(text) {
+  if (!text.trim()) return;
+  const row = document.createElement("div");
+  row.className = "msg-row user";
+  row.innerHTML = `<div class="bubble">${escapeHTML(text)}</div>`;
+  chatStream.appendChild(row);
+  scrollChat();
+
+  const typingRow = document.createElement("div");
+  typingRow.className = "msg-row agent";
+  typingRow.innerHTML = `<div class="bubble"><span class="typing"><i></i><i></i><i></i></span></div>`;
+  setTimeout(() => { chatStream.appendChild(typingRow); scrollChat(); }, 350);
+
+  setTimeout(() => {
+    typingRow.remove();
+    const reply = document.createElement("div");
+    reply.className = "msg-row agent";
+    const hasCtx = !!$("#ctxSlot .ctx-card");
+    reply.innerHTML = `<div class="bubble">${hasCtx
+      ? `这段文字的核心论点是：<b>成长遵循非线性规律，"平台期"是大脑重组的必要过程，而非失败信号。</b><br><br>结合第三章的框架可以进一步拆解为三点：它是复利曲线拐点前的平缓段；它要求任务停留在"拉伸区"才有刺激；它需要把目标拆小以维持正反馈。我的建议是：当你判断自己处于平台期时，不要增加投入量，而是先确认练习方法是否需要迭代。<br><br>需要我把这段分析连同引用一起整理进 Obsidian 笔记吗？`
+      : `好的。基于《认知觉醒》第三章的内容，我的建议是：当你判断自己处于平台期时，不要急于增加投入量，而是先确认练习方法是否需要迭代——笃定方向，灵活方法。<br><br>你也可以选中书中段落，用 ✨ 问 Agent 带着上下文提问。`}</div>`;
+    chatStream.appendChild(reply);
+    scrollChat();
+  }, 1350);
+}
+
+$("#btnSend").addEventListener("click", () => {
+  const ta = $("#composerInput");
+  sendMessage(ta.value);
+  ta.value = "";
+  ta.style.height = "auto";
+});
+$("#composerInput").addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    $("#btnSend").click();
+  }
+});
+$("#composerInput").addEventListener("input", function () {
+  this.style.height = "auto";
+  this.style.height = Math.min(110, this.scrollHeight) + "px";
+});
+
+$$(".chip").forEach(chip => chip.addEventListener("click", () => {
+  const label = chip.dataset.chip;
+  if (label.includes("Obsidian")) {
+    openObsModal({
+      book: "认知觉醒",
+      quote: "耐心是长期主义的入场券，而长期主义几乎是所有非凡成就的唯一通路。",
+      note: "来自对话生成的读书笔记"
+    });
+  } else if (label.includes("搜索")) {
+    sendMessage("🔍 帮我搜索与「平台期与刻意练习」相关的资料");
+  } else {
+    sendMessage("📝 根据我们刚才的讨论，生成一份读书笔记，格式适合 Obsidian");
+  }
+}));
+
+/* archived card → 批注 tab */
+$("#archivedCard").addEventListener("click", () => {
+  switchLeftTab("annotations");
+  toast("已定位到左侧「批注」标签", { duration: 1500 });
+});
+
+/* ================================================================
+   LEFT · 稍后读
+   ================================================================ */
+const ARTICLES = [
+  { fav: "🧠", t: "为什么深度工作正在消失", d: "calnewport.com", time: "今天 09:12", active: true },
+  { fav: "⚛️", t: "React 19 中的 Actions 与 useOptimistic 详解", d: "react.dev", time: "昨天 22:40" },
+  { fav: "📈", t: "The Quiet Rise of E-Ink Tablets", d: "stratechery.com", time: "昨天 08:05" },
+  { fav: "🤖", t: "大模型 Agent 的记忆机制设计综述", d: "lilianweng.github.io", time: "周一 19:33" },
+  { fav: "🏛️", t: "置身事内：地方政府的土地财政逻辑", d: "thepaper.cn", time: "3 天前" }
+];
+function renderArticles() {
+  const list = $("#rlItems");
+  list.innerHTML = "";
+  ARTICLES.forEach((a) => {
+    const el = document.createElement("button");
+    el.className = "rl-item" + (a.active ? " active" : "");
+    el.innerHTML = `
+      <span class="fav">${a.fav}</span>
+      <span class="it">
+        <span class="t">${a.t}</span>
+        <span class="m"><span>${a.d}</span>·<span>${a.time}</span></span>
+      </span>`;
+    el.addEventListener("click", () => {
+      ARTICLES.forEach(x => x.active = false);
+      a.active = true;
+      renderArticles();
+      openArticle(a);
+    });
+    list.appendChild(el);
+  });
+}
+renderArticles();
+
+function openArticle(a) {
+  setContext({ type: "article", title: a.t, domain: a.d });
+  $("#rlArticle h1").textContent = a.t;
+  $("#readerScroll").scrollTop = 0;
+}
+
+$("#btnAddUrl").addEventListener("click", () => {
+  const inp = $("#rlUrl");
+  const v = inp.value.trim();
+  if (!v) { toast("请先粘贴一个 URL", { duration: 1600 }); return; }
+  try {
+    const u = new URL(v);
+    const art = { fav: "🌐", t: u.hostname + " 的文章", d: u.hostname, time: "刚刚", active: true };
+    ARTICLES.forEach(x => x.active = false);
+    ARTICLES.unshift(art);
+    renderArticles();
+    inp.value = "";
+    openArticle(art);
+    toast("✅ 已添加，正在提取正文…", { duration: 1800 });
+  } catch (_) {
+    toast("⚠️ URL 格式无效", { duration: 1800 });
+  }
+});
+
+/* ================================================================
+   LEFT · 批注
+   ================================================================ */
+const ANNOS = [
+  { book: "认知觉醒", g: "linear-gradient(150deg,#ff8a5c,#d84f7a)", q: "任何技能的形成，都要经历一段“平台期”——看似毫无进展，实则是大脑正在默默完成重组。", n: "和《刻意练习》的停滞期对照阅读。", time: "2024-05-18 22:14", loc: "epubcfi(/6/4!/2/8)" },
+  { book: "认知觉醒", g: "linear-gradient(150deg,#ff8a5c,#d84f7a)", q: "学习的本质，就是让大脑中的神经元从偶尔相遇，到频繁握手，再到最终焊接在一起。", n: "“焊接”这个比喻很好，写进读书笔记。", time: "2024-05-18 22:31", loc: "epubcfi(/6/4!/2/14)" },
+  { book: "置身事内", g: "linear-gradient(150deg,#11998e,#0f5e56)", q: "对复杂问题若非亲历亲为掌握一手信息，仅凭三言两语的转述就急于下判断，很容易失之偏颇。", n: "做研究的方法论，值得反复看。", time: "2024-05-15 21:02", loc: "epubcfi(/6/9!/2/4)" },
+  { book: "DDIA", g: "linear-gradient(150deg,#232526,#5a5f66)", q: "Reliability means making systems work correctly, even when things go wrong.", n: "fault != failure，这两个词要分清。", time: "2024-05-12 08:47", loc: "epubcfi(/6/2!/2/6)" },
+  { book: "DDIA", g: "linear-gradient(150deg,#232526,#5a5f66)", q: "The only way to truly scale is to build systems that can be maintained by fallible humans.", n: "", time: "2024-05-11 23:19", loc: "epubcfi(/6/2!/2/22)" }
+];
+
+function renderAnnos(book) {
+  const list = $("#annoList");
+  list.innerHTML = "";
+  ANNOS.filter(a => book === "all" || a.book === book).forEach((a, i) => {
+    const row = document.createElement("div");
+    row.className = "anno-row";
+    row.style.animationDelay = (i * 40) + "ms";
+    row.innerHTML = `
+      <div class="thumb" style="background:${a.g}">${a.book}</div>
+      <div class="content">
+        <div class="q">${a.q}</div>
+        ${a.n ? `<div class="n">💬 <b>我的想法：</b>${a.n}</div>` : ""}
+        <div class="meta">${a.book} · ${a.loc} · ${a.time}</div>
+      </div>
+      <div class="acts">
+        <button class="btn sm ghost" data-act="ask">✨ 问 Agent</button>
+        <button class="btn sm" data-act="obs">📥 Obsidian</button>
+      </div>`;
+    row.querySelector('[data-act="ask"]').addEventListener("click", () => {
+      appendAskExchange(a.q);
+      toast("✨ 已把这条批注连同上下文追加到对话", { duration: 1600 });
+    });
+    row.querySelector('[data-act="obs"]').addEventListener("click", () => openObsModal(a));
+    list.appendChild(row);
+  });
+}
+renderAnnos("all");
+
+$$(".anno-filters .fchip").forEach(ch => ch.addEventListener("click", () => {
+  $$(".anno-filters .fchip").forEach(c => c.classList.remove("active"));
+  ch.classList.add("active");
+  renderAnnos(ch.dataset.book);
+}));
+
+$("#btnSelectAll").addEventListener("click", () =>
+  toast(`已选择 ${ANNOS.length} 条批注（原型中模拟）`, { duration: 1600 }));
+$("#btnExportAll").addEventListener("click", () => {
+  const t = toast("正在批量导出到 Obsidian …", { spinner: true, duration: 1400 });
+  setTimeout(() => { t.remove(); toast("✅ 已写入 Obsidian vault · Knowledge/读书笔记/", { duration: 2200 }); }, 1450);
+});
+
+/* ================================================================
+   OBSIDIAN MODAL
+   ================================================================ */
+const obsModal = $("#obsModal");
+let obsCurrent = null;
+
+function mdPreview(a) {
+  const tags = ["读书笔记", a.book.replace(/\s/g, ""), "dsh-reading"];
+  return `<span class="fm">---
+book_title: "${a.book}"
+author: "${a.author || "—"}"
+chapter: "第三章"
+location: "${a.loc || "epubcfi(/6/4!/2/8)"}"
+source_url: ""
+tags: [${tags.map(t => `<span class="tag-c">"${t}"</span>`).join(", ")}]
+---</span>
+
+<span class="quote-c">> ${a.quote || a.q}</span>
+${a.n ? `\n\n💬 我的想法：${a.n}` : ""}
+
+<span class="fm">exported: ${new Date().toISOString().slice(0, 10)} · via dsh-reading</span>`;
+}
+
+function openObsModal(data) {
+  obsCurrent = data;
+  $("#obsPath").value = `Knowledge/读书笔记/${data.book}.md`;
+  $("#obsPreview").innerHTML = mdPreview(data);
+  obsModal.classList.add("open");
+}
+function closeObsModal() { obsModal.classList.remove("open"); }
+
+$("#obsModalClose").addEventListener("click", closeObsModal);
+$("#obsCancel").addEventListener("click", closeObsModal);
+obsModal.addEventListener("click", e => { if (e.target === obsModal) closeObsModal(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { closeObsModal(); closeToc(); } });
+
+$("#obsSave").addEventListener("click", () => {
+  const path = $("#obsPath").value.trim();
+  closeObsModal();
+  const t = toast(`正在写入 ${path} …`, { spinner: true, duration: 1100 });
+  setTimeout(() => {
+    t.remove();
+    toast("✅ 已写入 Obsidian vault", { duration: 2400 });
+  }, 1150);
+});
+
+/* ================================================================
+   init + keyboard shortcut: g l → 书库 tab
+   ================================================================ */
+updateContextUI();
+
+let gPressed = false;
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input, textarea")) return;
+  if (e.key === "g") { gPressed = true; setTimeout(() => gPressed = false, 600); return; }
+  if (gPressed && e.key === "l") switchLeftTab("library");
+});
+</script>
+</body>
+</html>
