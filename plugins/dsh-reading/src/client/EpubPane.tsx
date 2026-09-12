@@ -1,4 +1,6 @@
 import { useEffect, useImperativeHandle, useRef } from 'react'
+// Side-effect import: registers the <foliate-view> custom element.
+import 'foliate-js/view.js'
 import type { View, FoliateRelocateDetail, FoliateTocItem } from 'foliate-js/view.js'
 import { readingApi } from './api.ts'
 import type { ReadingPrefs } from './prefs.ts'
@@ -11,8 +13,8 @@ export interface EpubPaneHandle {
 
 export interface TocEntry { label: string; href: string; depth: number }
 
-export function flattenToc(items: FoliateTocItem[] | undefined, depth = 0): TocEntry[] {
-  if (items === undefined) return []
+export function flattenToc(items: FoliateTocItem[] | undefined | null, depth = 0): TocEntry[] {
+  if (items == null) return []
   return items.flatMap(item => [
     { label: item.label, href: item.href, depth },
     ...flattenToc(item.subitems, depth + 1),
@@ -44,6 +46,8 @@ function applyPrefsToView(view: View, prefs: ReadingPrefs): void {
 
 interface Props {
   bookId: string
+  /** Original file name — foliate-js sniffs the format from it. */
+  fileName: string
   prefs: ReadingPrefs
   /** Restore target: epubcfi string from persisted progress, if any. */
   initialCfi?: string | undefined
@@ -52,7 +56,7 @@ interface Props {
   paneRef: React.RefObject<EpubPaneHandle | null>
 }
 
-export function EpubPane({ bookId, prefs, initialCfi, onRelocate, onReady, paneRef }: Props) {
+export function EpubPane({ bookId, fileName, prefs, initialCfi, onRelocate, onReady, paneRef }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<View | null>(null)
   const onRelocateRef = useRef(onRelocate)
@@ -96,7 +100,9 @@ export function EpubPane({ bookId, prefs, initialCfi, onRelocate, onReady, paneR
       try {
         const blob = await (await fetch(readingApi.bookFileUrl(bookId))).blob()
         if (cancelled) return
-        await view.open(blob)
+        // foliate-js sniffs CBZ/FB2 by file name — a bare fetch Blob has none.
+        const file = new File([blob], fileName || `${bookId}.epub`, { type: blob.type })
+        await view.open(file)
         if (cancelled) return
         viewRef.current = view
         onReadyRef.current(flattenToc(view.book?.toc))
@@ -111,11 +117,13 @@ export function EpubPane({ bookId, prefs, initialCfi, onRelocate, onReady, paneR
     return () => {
       cancelled = true
       view.removeEventListener('relocate', onRelocateEvent)
-      view.close()
+      // A view whose open() failed partway (or never ran) has no live renderer;
+      // foliate's destroy() walks renderer internals and throws on null.
+      try { view.close() } catch { /* partially-open view */ }
       view.remove()
       viewRef.current = null
     }
-  }, [bookId, initialCfi])
+  }, [bookId, fileName, initialCfi])
 
   return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
 }

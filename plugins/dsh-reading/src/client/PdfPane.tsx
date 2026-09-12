@@ -23,7 +23,6 @@ interface Props {
 interface PdfDoc {
   numPages: number
   getPage(page: number): Promise<PdfPage>
-  destroy(): Promise<void>
 }
 
 interface PdfPage {
@@ -111,14 +110,17 @@ export function PdfPane({ bookId, prefs, initialPage, onProgress, paneRef }: Pro
     if (container === null) return
     let cancelled = false
     let doc: PdfDoc | null = null
+    // pdf.js v6: destroy() lives on the loading task, not the document proxy.
+    let loadingTask: { destroy(): Promise<void> } | null = null
 
     ;(async () => {
       try {
         const data = await (await fetch(readingApi.bookFileUrl(bookId))).arrayBuffer()
         if (cancelled) return
-        const loading = (pdfjs.getDocument as (params: Record<string, unknown>) => { promise: Promise<unknown> })({ data, isEvalSupported: false })
+        const loading = (pdfjs.getDocument as (params: Record<string, unknown>) => { promise: Promise<unknown>; destroy(): Promise<void> })({ data, isEvalSupported: false })
+        loadingTask = loading
         doc = await loading.promise as unknown as PdfDoc
-        if (cancelled) { void doc.destroy(); return }
+        if (cancelled) { void loading.destroy(); return }
         docRef.current = doc
         const fragment = document.createDocumentFragment()
         for (let page = 1; page <= doc.numPages; page++) {
@@ -159,7 +161,7 @@ export function PdfPane({ bookId, prefs, initialPage, onProgress, paneRef }: Pro
       renderedRef.current.clear()
       renderingRef.current.clear()
       initialScrollDone.current = false
-      if (doc !== null) void doc.destroy()
+      if (loadingTask !== null) void loadingTask.destroy()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId, initialPage])

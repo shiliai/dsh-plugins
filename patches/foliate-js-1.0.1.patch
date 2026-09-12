@@ -1,0 +1,139 @@
+diff --git a/paginator.js b/paginator.js
+index 95c4d0dae16bd96c3ace91bbd87fd1bea1c9f571..1fbb4366e137440638b53469f27346d4c5c5a5fa 100644
+--- a/paginator.js
++++ b/paginator.js
+@@ -84,6 +84,8 @@ const getBoundingClientRect = target => {
+ }
+ 
+ const getVisibleRange = (doc, start, end, mapRect) => {
++    // dsh-reading: the view may be detached while a scroll event is in flight.
++    if (!doc?.body) return null
+     // first get all visible nodes
+     const acceptNode = node => {
+         const name = node.localName?.toLowerCase()
+@@ -193,6 +195,8 @@ const makeMarginals = (length, part) => Array.from({ length }, () => {
+ })
+ 
+ const setStylesImportant = (el, styles) => {
++    // dsh-reading: a racing relayout can run after the document was detached.
++    if (!el) return
+     const { style } = el
+     for (const [k, v] of Object.entries(styles)) style.setProperty(k, v, 'important')
+ }
+@@ -245,6 +249,13 @@ class View {
+         return new Promise(resolve => {
+             this.#iframe.addEventListener('load', () => {
+                 const doc = this.document
++                // dsh-reading: an aborted navigation (view replaced mid-load or
++                // blob revoked) fires `load` with a null contentDocument; treat
++                // it as a cancelled load instead of crashing on doc.* access.
++                if (!doc) {
++                    resolve()
++                    return
++                }
+                 afterLoad?.(doc)
+ 
+                 // it needs to be visible for Firefox to get computed style
+@@ -334,6 +345,8 @@ class View {
+         const { width, height, margin } = this.#layout
+         const vertical = this.#vertical
+         const doc = this.document
++        // dsh-reading: the document may be gone in a racing relayout.
++        if (!doc?.body) return
+         for (const el of doc.body.querySelectorAll('img, svg, video')) {
+             // preserve max size if they are already set
+             const { maxHeight, maxWidth } = doc.defaultView.getComputedStyle(el)
+@@ -352,7 +365,10 @@ class View {
+         }
+     }
+     expand() {
+-        const { documentElement } = this.document
++        // dsh-reading: the observer can fire after the view was detached.
++        const doc = this.document
++        if (!doc?.documentElement) return
++        const { documentElement } = doc
+         if (this.#column) {
+             const side = this.#vertical ? 'height' : 'width'
+             const otherSide = this.#vertical ? 'width' : 'height'
+@@ -408,7 +424,9 @@ class View {
+         return this.#overlayer
+     }
+     destroy() {
+-        if (this.document) this.#observer.unobserve(this.document.body)
++        // dsh-reading: disconnect() also covers the case where the document is
++        // already gone (detached iframe) and unobserve(body) cannot run.
++        this.#observer.disconnect()
+     }
+ }
+ 
+@@ -561,6 +579,8 @@ export class Paginator extends HTMLElement {
+         this.addEventListener('touchmove', this.#onTouchMove.bind(this), opts)
+         this.addEventListener('touchend', this.#onTouchEnd.bind(this))
+         this.addEventListener('load', ({ detail: { doc } }) => {
++            // dsh-reading: null doc when the section load was aborted.
++            if (!doc) return
+             doc.addEventListener('touchstart', this.#onTouchStart.bind(this), opts)
+             doc.addEventListener('touchmove', this.#onTouchMove.bind(this), opts)
+             doc.addEventListener('touchend', this.#onTouchEnd.bind(this))
+@@ -585,6 +605,8 @@ export class Paginator extends HTMLElement {
+                 this.next()
+         }, 700)
+         this.addEventListener('load', ({ detail: { doc } }) => {
++            // dsh-reading: null doc when the section load was aborted.
++            if (!doc) return
+             let isPointerSelecting = false
+             doc.addEventListener('pointerdown', () => isPointerSelecting = true)
+             doc.addEventListener('pointerup', () => isPointerSelecting = false)
+@@ -978,10 +1000,13 @@ export class Paginator extends HTMLElement {
+         await this.#scrollToPage(newPage + 1, reason)
+     }
+     #getVisibleRange() {
+-        if (this.scrolled) return getVisibleRange(this.#view.document,
++        // dsh-reading: the view may be destroyed while scroll events debounce.
++        const doc = this.#view?.document
++        if (!doc) return null
++        if (this.scrolled) return getVisibleRange(doc,
+             this.start + this.#margin, this.end - this.#margin, this.#getRectMapper())
+         const size = this.#rtl ? -this.size : this.size
+-        return getVisibleRange(this.#view.document,
++        return getVisibleRange(doc,
+             this.start - size, this.end - size, this.#getRectMapper())
+     }
+     #afterScroll(reason) {
+@@ -1021,6 +1046,9 @@ export class Paginator extends HTMLElement {
+             }
+             const beforeRender = this.#beforeRender.bind(this)
+             await view.load(src, afterLoad, beforeRender)
++            // dsh-reading: an aborted load (view replaced mid-navigation, blob
++            // revoked) leaves no document; keep the prior state and bail out.
++            if (!view.document) return
+             this.dispatchEvent(new CustomEvent('create-overlayer', {
+                 detail: {
+                     doc: view.document, index,
+@@ -1145,18 +1173,22 @@ export class Paginator extends HTMLElement {
+ 
+         // NOTE: needs `requestAnimationFrame` in Chromium
+         requestAnimationFrame(() => {
+-            this.#replaceBackground(this.#view.docBackground, this.columnCount)
++            // dsh-reading: the view may be destroyed before the frame runs.
++            this.#replaceBackground(this.#view?.docBackground, this.columnCount)
+         })
+ 
+         // needed because the resize observer doesn't work in Firefox
+-        this.#view?.document?.fonts?.ready?.then(() => this.#view.expand())
++        const view = this.#view
++        view?.document?.fonts?.ready?.then(() => view.expand())
+     }
+     focusView() {
+-        this.#view.document.defaultView.focus()
++        // dsh-reading: the view may be gone (closed mid-navigation).
++        this.#view?.document?.defaultView?.focus()
+     }
+     destroy() {
+         this.#observer.unobserve(this)
+-        this.#view.destroy()
++        // dsh-reading: destroy can run before any section was displayed.
++        this.#view?.destroy()
+         this.#view = null
+         this.sections[this.#index]?.unload?.()
+         this.#mediaQuery.removeEventListener('change', this.#mediaQueryListener)

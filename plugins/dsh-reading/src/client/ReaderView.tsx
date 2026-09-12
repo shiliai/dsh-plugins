@@ -118,7 +118,7 @@ export function ReaderView({ book, store }: Props) {
           ) : book.format === 'pdf' ? (
             <PdfPane key={book.id} bookId={book.id} prefs={prefs} initialPage={initialPage} onProgress={onPdfProgress} paneRef={pdfRef} />
           ) : (
-            <EpubPane key={book.id} bookId={book.id} prefs={prefs} initialCfi={initialCfi} onRelocate={onEpubRelocate} onReady={setToc} paneRef={epubRef} />
+            <EpubPane key={book.id} bookId={book.id} fileName={book.fileName} prefs={prefs} initialCfi={initialCfi} onRelocate={onEpubRelocate} onReady={setToc} paneRef={epubRef} />
           )}
           {book.format === 'epub' && (
             <div className={css.readerNav}>
