@@ -12,6 +12,10 @@ const plugins = [
     packageName: '@dsh-plugins/dsh-obsidian',
   },
   {
+    directory: 'plugins/dsh-reading',
+    packageName: '@dsh-plugins/dsh-reading',
+  },
+  {
     directory: 'plugins/dsh-remote',
     packageName: '@dsh-plugins/dsh-remote',
   },
@@ -46,6 +50,6 @@ for (const plugin of plugins) {
   assert.ok(readme.includes(`github:shiliai/dsh-plugins#path:/${plugin.directory}`))
 }
 assert.ok(readme.includes('github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater'))
-assert.ok(readme.includes('git+ssh://git@github.com/shiliai/dsh-plugins.git'))
+assert.ok(readme.includes('git+ssh://<PRIVATE_EMAIL>/shiliai/dsh-plugins.git'))
 
 console.log(`verified ${plugins.length} independently versioned GitHub-source plugins`)
