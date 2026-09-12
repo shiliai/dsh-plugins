@@ -24,9 +24,11 @@ const DEFAULT_WIDTHS: ReadingWidths = { library: 248, chat: 400 }
 interface Props {
   store: ReadingStore
   close(): void
+  addArticleContext(article: Article): Promise<void>
+  addObsidianReadingContext(): Promise<void>
 }
 
-export function Workbench({ store, close }: Props) {
+export function Workbench({ store, close, addArticleContext, addObsidianReadingContext }: Props) {
   const state = store.useSnapshot()
   const [anchor, setAnchor] = useState<ConversationAnchor | null>(() => findConversationAnchor())
   const [tab, setTab] = useState<LeftTab>('library')
@@ -143,7 +145,7 @@ export function Workbench({ store, close }: Props) {
 
       {/* Middle column: reader */}
       <section className={css.readerColumn} style={paneStyle(readerRect)} aria-label="阅读栏">
-        {article !== null ? <ArticleReader article={article} /> : state.current === null ? (
+        {article !== null ? <ArticleReader article={article} addArticleContext={addArticleContext} addObsidianReadingContext={addObsidianReadingContext} /> : state.current === null ? (
           <div className={css.readerEmpty}>
             <p>📖 从左侧书库选择一本书开始阅读</p>
             <p className={css.readerEmptyHint}>右栏为当前对话，阅读时选中文本即可与 agent 互动（M3）。</p>

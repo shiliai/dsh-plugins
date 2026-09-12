@@ -3,6 +3,8 @@ import ExternalLink from 'lucide-react/dist/esm/icons/external-link'
 import RefreshCw from 'lucide-react/dist/esm/icons/refresh-cw'
 import Send from 'lucide-react/dist/esm/icons/send'
 import Clock from 'lucide-react/dist/esm/icons/clock'
+import MessageSquarePlus from 'lucide-react/dist/esm/icons/message-square-plus'
+import NotebookTabs from 'lucide-react/dist/esm/icons/notebook-tabs'
 import type { Article } from '../contracts.ts'
 import { readingApi } from './api.ts'
 import css from './styles.module.css?dsh-inline'
@@ -93,11 +95,16 @@ export function ReadLaterView({ onOpen }: Props) {
   )
 }
 
-interface ReaderProps { article: Article }
+interface ReaderProps {
+  article: Article
+  addArticleContext(article: Article): Promise<void>
+  addObsidianReadingContext(): Promise<void>
+}
 
 /** Minimal article reader. HTML is sanitized by the server adapter before delivery. */
-export function ArticleReader({ article }: ReaderProps) {
+export function ArticleReader({ article, addArticleContext, addObsidianReadingContext }: ReaderProps) {
   const [progress, setProgress] = useState(0)
+  const [contextStatus, setContextStatus] = useState<string | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     let active = true
@@ -119,15 +126,23 @@ export function ArticleReader({ article }: ReaderProps) {
   }
   useEffect(() => () => { if (timer.current !== null) clearTimeout(timer.current) }, [])
 
+  const runContextAction = async (action: () => Promise<void>, success: string) => {
+    setContextStatus(null)
+    try { await action(); setContextStatus(success) } catch (err) { setContextStatus(err instanceof Error ? err.message : String(err)) }
+  }
+
   return (
     <div className={css.articleReader}>
       <header className={css.articleToolbar}>
         <span className={css.readerTitle} title={article.title}>{article.title}</span>
+        <button className={css.toolButton} type="button" onClick={() => void runContextAction(() => addArticleContext(article), '已加入对话上下文')}><MessageSquarePlus size={13} /> 加入对话</button>
+        <button className={css.toolButton} type="button" onClick={() => void runContextAction(addObsidianReadingContext, '已注入 Obsidian reading') }><NotebookTabs size={13} /> 注入 Obsidian</button>
         <a className={css.articleLink} href={article.url} target="_blank" rel="noreferrer"><ExternalLink size={13} /> 原文</a>
       </header>
       <div className={css.articleContent} onScroll={onScroll}>
         {article.extractedHtml ? <div dangerouslySetInnerHTML={{ __html: article.extractedHtml }} /> : <p>正文提取中，暂时请打开原文阅读。</p>}
       </div>
+      {contextStatus !== null && <div className={css.contextStatus} role="status">{contextStatus}</div>}
       <footer className={css.readerProgress}><div className={css.readerProgressTrack}><div className={css.readerProgressFill} style={{ width: `${Math.round(progress * 1000) / 10}%` }} /></div><span className={css.readerProgressText}>{Math.round(progress * 100)}%</span></footer>
     </div>
   )
