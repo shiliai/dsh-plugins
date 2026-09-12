@@ -8,7 +8,7 @@ describe('WallabagAdapter', () => {
       calls.push(init === undefined ? { url: String(url) } : { url: String(url), init })
       if (String(url).endsWith('/oauth/v2/token')) return new Response(JSON.stringify({ access_token: 'token', expires_in: 3600 }), { status: 200 })
       if (String(url).includes('/entries.json') && init?.method === 'POST') return new Response(JSON.stringify({ id: 7 }), { status: 200 })
-      if (String(url).includes('/entries/7.json')) return new Response(JSON.stringify({ id: 7, url: 'https://example.com/a', title: 'An article', content: '<p>Read me</p>', is_archived: 0, created_at: '2026-01-01T00:00:00+00:00' }), { status: 200 })
+      if (String(url).includes('/entries/7?')) return new Response(JSON.stringify({ id: 7, url: 'https://example.com/a', title: 'An article', content: '<p>Read me</p>', is_archived: 0, created_at: '2026-01-01T00:00:00+00:00' }), { status: 200 })
       return new Response(JSON.stringify({ _embedded: { items: [{ id: 8, url: 'https://example.com/b', title: 'B', is_archived: 1 }] } }), { status: 200 })
     })
     const adapter = new WallabagAdapter({ origin: 'http://wallabag.local', clientId: 'client', clientSecret: 'secret', username: 'user', password: 'pass' }, fetchMock as typeof fetch)

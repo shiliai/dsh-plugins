@@ -40,7 +40,7 @@ export class WallabagAdapter {
   async listEntries(options: { page?: number; perPage?: number } = {}): Promise<Article[]> {
     const page = Math.max(1, Math.floor(options.page ?? 1))
     const perPage = Math.min(100, Math.max(1, Math.floor(options.perPage ?? 50)))
-    const payload = await this.request(`/entries.json?detail=full&page=${page}&perPage=${perPage}`)
+    const payload = await this.request(`/entries?detail=full&page=${page}&perPage=${perPage}`)
     const embedded = isRecord(payload) && isRecord(payload._embedded) ? (Array.isArray(payload._embedded.items) ? payload._embedded.items : payload._embedded.entries) : undefined
     const rows = Array.isArray(embedded) ? embedded : isRecord(payload) && Array.isArray(payload.entries) ? payload.entries : isRecord(payload) && Array.isArray(payload.items) ? payload.items : Array.isArray(payload) ? payload : []
     return rows.filter(isRecord).map(row => this.toArticle(row))
@@ -55,14 +55,14 @@ export class WallabagAdapter {
     const id = isRecord(entry) ? String(entry.id ?? '') : ''
     if (id === '') throw new ReadingError('Wallabag returned an invalid entry.', 'WALLABAG_RESPONSE', 502)
     // POST responses can omit extracted content; fetch the canonical entry once.
-    const fetched = await this.request(`/entries/${encodeURIComponent(id)}.json?detail=full`)
+    const fetched = await this.request(`/entries/${encodeURIComponent(id)}?detail=full`)
     if (!isRecord(fetched)) throw new ReadingError('Wallabag returned an invalid entry.', 'WALLABAG_RESPONSE', 502)
     return this.toArticle(fetched)
   }
 
   async getEntry(id: string): Promise<Article> {
     if (!/^\d+$/u.test(id) && !/^[-\w]+$/u.test(id)) throw new ReadingError('Entry id is invalid.', 'INVALID_ID', 400)
-    const fetched = await this.request(`/entries/${encodeURIComponent(id)}.json?detail=full`)
+    const fetched = await this.request(`/entries/${encodeURIComponent(id)}?detail=full`)
     if (!isRecord(fetched)) throw new ReadingError('Wallabag returned an invalid entry.', 'WALLABAG_RESPONSE', 502)
     return this.toArticle(fetched)
   }
