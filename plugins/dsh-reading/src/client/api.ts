@@ -2,6 +2,7 @@ import type { Annotation, Article, Locator, PublicBook, PublicBookWithProgress, 
 import type { OpdsBook } from '../opds-adapter.ts'
 
 const API = '/dsh-reading/api'
+export interface ReadingSettings { rootDir: string; createSessionOnOpen: boolean }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}${path}`, init)
@@ -18,9 +19,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const readingApi = {
+  settings: () => request<ReadingSettings>('/settings'),
+  updateSettings: (value: ReadingSettings) => request<ReadingSettings>('/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) }),
   library: () => request<{ books: PublicBookWithProgress[] }>('/library'),
   opdsBooks: () => request<{ source: string; books: OpdsBook[] }>('/opds/books'),
   importOpdsBook: (id: string) => request<{ book: PublicBook }>(`/opds/books/${encodeURIComponent(id)}/import`, { method: 'POST' }),
+  ensureBookProject: (id: string) => request<{ path: string; absolutePath: string }>(`/project/book/${encodeURIComponent(id)}`, { method: 'POST' }),
   book: (id: string) => request<{ book: PublicBookWithProgress }>(`/book/${encodeURIComponent(id)}`),
   bookFileUrl: (id: string) => `${API}/book/${encodeURIComponent(id)}/file`,
   importBook: (file: File) => request<{ book: PublicBook }>(`/import?filename=${encodeURIComponent(file.name)}`, {
@@ -53,4 +57,5 @@ export const readingApi = {
     body: JSON.stringify({ url }),
   }),
   wallabagEntry: (id: string) => request<{ article: Article }>(`/wallabag/entries/${encodeURIComponent(id.replace(/^wallabag:/u, ''))}`),
+  ensureArticleProject: (id: string) => request<{ path: string; absolutePath: string }>(`/project/article/${encodeURIComponent(id.replace(/^wallabag:/u, ''))}`, { method: 'POST' }),
 }

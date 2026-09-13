@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readdir, stat, writeFile } from 'node:fs/promises'
+import { access, mkdir, readdir, stat, writeFile } from 'node:fs/promises'
 import { basename, extname, join, relative } from 'node:path'
 import { BOOK_FORMATS, isBookFormat, type Book, type BookFormat, type BookWithProgress, type ReadingProgress } from './contracts.ts'
 
@@ -68,13 +68,13 @@ export class LocalLibrary {
     return books
   }
 
-  async importBook(data: Buffer, fileName: string): Promise<Book> {
+  async importBook(data: Buffer, fileName: string, directoryName?: string): Promise<Book> {
     const safeName = sanitizeFileName(fileName)
     const format = extname(safeName).slice(1).toLowerCase()
     if (!isBookFormat(format)) {
       throw new ReadingError(`Unsupported format: ${extname(safeName) || '(none)'}`, 'UNSUPPORTED_FORMAT', 415)
     }
-    const id = `local-${randomUUID().slice(0, 12)}`
+    const id = directoryName !== undefined && directoryName.trim() !== '' ? sanitizeDirectoryName(directoryName) : `local-${randomUUID().slice(0, 12)}`
     const dir = join(this.#booksDir, id)
     await mkdir(dir, { recursive: true })
     const filePath = join(dir, safeName)
@@ -90,6 +90,17 @@ export class LocalLibrary {
       fileSize: info.size,
       addedAt: info.birthtime.toISOString(),
     }
+  }
+
+  async cachedBook(directoryName: string, fileName: string): Promise<Book | undefined> {
+    const safeDir = sanitizeDirectoryName(directoryName)
+    const safeName = sanitizeFileName(fileName)
+    const filePath = join(this.#booksDir, safeDir, safeName)
+    try { await access(filePath) } catch { return undefined }
+    const info = await stat(filePath)
+    if (!info.isFile()) return undefined
+    const format = extname(safeName).slice(1).toLowerCase() as BookFormat
+    return { id: bookIdFor(relative(this.#dataDir, filePath)), source: 'local', title: titleFromFileName(safeName), format, filePath, fileName: safeName, fileSize: info.size, addedAt: info.birthtime.toISOString() }
   }
 
   async resolveFile(id: string): Promise<{ filePath: string; format: BookFormat; fileName: string; fileSize: number }> {
@@ -125,4 +136,10 @@ function sanitizeFileName(name: string): string {
     throw new ReadingError(`Unsupported format: ${extname(base) || '(none)'}`, 'UNSUPPORTED_FORMAT', 415)
   }
   return base
+}
+
+function sanitizeDirectoryName(name: string): string {
+  const value = name.replaceAll(/[\\/:*?"<>|]/gu, '_').replaceAll(/\s+/gu, '-').replaceAll(/-+/gu, '-').replace(/^-+|-+$/gu, '').slice(0, 120)
+  if (value === '' || value === '.' || value === '..') throw new ReadingError('Invalid directory name.', 'INVALID_NAME', 400)
+  return value
 }

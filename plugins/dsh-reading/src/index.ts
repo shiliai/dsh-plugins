@@ -7,6 +7,7 @@ import { LocalLibrary, ReadingError } from './library.ts'
 import { ReadingStateStore } from './state-store.ts'
 import { WallabagAdapter, type WallabagConfig } from './wallabag-adapter.ts'
 import { OpdsAdapter, type OpdsConfig } from './opds-adapter.ts'
+import { defaultProjectConfig, readProjectConfig, saveProjectConfig, type ReadingProjectConfig } from './project-cache.ts'
 
 export const name = 'dsh-reading'
 export const inject = ['webServer']
@@ -16,6 +17,8 @@ export interface Config {
   dataDir?: string | null
   wallabag?: WallabagConfig | null
   opds?: OpdsConfig | null
+  projectRoot?: string | null
+  createSessionOnOpen?: boolean
 }
 
 export async function apply(ctx: Context, config: Config): Promise<void> {
@@ -24,8 +27,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const store = await ReadingStateStore.create(dataDir)
   const wallabag = config.wallabag === null ? undefined : config.wallabag === undefined ? WallabagAdapter.fromEnv() : new WallabagAdapter(config.wallabag)
   const opds = config.opds === null ? undefined : config.opds === undefined ? OpdsAdapter.fromEnv() : new OpdsAdapter(config.opds)
+  const configFile = join(dataDir, 'reading-settings.json')
+  const fallback = { ...defaultProjectConfig(dataDir), ...(typeof config.projectRoot === 'string' && config.projectRoot.trim() !== '' ? { rootDir: expandHome(config.projectRoot) } : {}), ...(typeof config.createSessionOnOpen === 'boolean' ? { createSessionOnOpen: config.createSessionOnOpen } : {}) }
+  let projectConfig: ReadingProjectConfig = await readProjectConfig(configFile, fallback)
   ctx.effect(
-    () => registerReadingApi(ctx.webServer, library, store, wallabag, opds),
+    () => registerReadingApi(ctx.webServer, library, store, wallabag, opds, {
+      get: () => projectConfig,
+      update: async (next: ReadingProjectConfig) => { projectConfig = next; await saveProjectConfig(configFile, next) },
+    }),
     'dsh-reading: reading HTTP API',
   )
 }

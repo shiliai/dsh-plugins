@@ -8,18 +8,21 @@ import NotebookTabs from 'lucide-react/dist/esm/icons/notebook-tabs'
 import type { Article } from '../contracts.ts'
 import { readingApi } from './api.ts'
 import css from './styles.module.css?dsh-inline'
+import { ContextMenu } from './ContextMenu.tsx'
 
 interface Props {
   onOpen(article: Article): void
+  onSendMetadata(article: Article): Promise<void>
 }
 
 /** Wallabag-backed read-later list and URL importer. */
-export function ReadLaterView({ onOpen }: Props) {
+export function ReadLaterView({ onOpen, onSendMetadata }: Props) {
   const [articles, setArticles] = useState<Article[]>([])
   const [url, setUrl] = useState('')
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [menu, setMenu] = useState<{ article: Article; x: number; y: number } | null>(null)
 
   const refresh = async () => {
     setLoading(true)
@@ -82,7 +85,7 @@ export function ReadLaterView({ onOpen }: Props) {
         {loading && articles.length === 0 ? <div className={css.panelLoading}>加载中…</div> : null}
         {!loading && articles.length === 0 ? <div className={css.panelLoading}><Clock size={26} /><p>暂无稍后读。粘贴 URL 收藏一篇文章。</p></div> : null}
         {articles.map(article => (
-          <button key={article.id} type="button" className={css.articleCard} onClick={() => void openArticle(article)}>
+          <button key={article.id} type="button" className={css.articleCard} onClick={() => void openArticle(article)} onContextMenu={event => { event.preventDefault(); setMenu({ article, x: event.clientX, y: event.clientY }) }} title="右键打开操作菜单">
             <span className={css.articleMeta}>
               <span className={css.articleTitle}>{article.title || article.url}</span>
               <span className={css.articleSub}>{article.domain ?? article.url}{article.readingTimeMin ? ` · ${article.readingTimeMin} 分钟` : ''}</span>
@@ -91,6 +94,7 @@ export function ReadLaterView({ onOpen }: Props) {
           </button>
         ))}
       </div>
+      {menu !== null && <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} onSend={() => void onSendMetadata(menu.article)} onOpen={() => void openArticle(menu.article)} />}
     </div>
   )
 }

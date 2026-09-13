@@ -11,6 +11,7 @@ import type { ReadingStore } from './store.ts'
 import { LibraryView, NasLibraryView } from './LibraryView.tsx'
 import { ReaderView } from './ReaderView.tsx'
 import { ArticleReader, ReadLaterView } from './ReadLaterView.tsx'
+import { readingApi } from './api.ts'
 import { findConversationAnchor, type ConversationAnchor } from './workbench-anchor.ts'
 import { calculateReadingLayout, MIN_CHAT, MIN_LIBRARY, type ReadingWidths, type WorkbenchRect } from './workbench-geometry.ts'
 import css from './styles.module.css?dsh-inline'
@@ -26,10 +27,12 @@ interface Props {
   store: ReadingStore
   close(): void
   addArticleContext(article: Article): Promise<void>
+  addBookContext(book: PublicBookWithProgress): Promise<void>
   addObsidianReadingContext(): Promise<void>
+  openProjectSession(path: string): Promise<void>
 }
 
-export function Workbench({ store, close, addArticleContext, addObsidianReadingContext }: Props) {
+export function Workbench({ store, close, addArticleContext, addBookContext, addObsidianReadingContext, openProjectSession }: Props) {
   const state = store.useSnapshot()
   const [anchor, setAnchor] = useState<ConversationAnchor | null>(() => findConversationAnchor())
   const [tab, setTab] = useState<LeftTab>('library')
@@ -96,12 +99,11 @@ export function Workbench({ store, close, addArticleContext, addObsidianReadingC
   const onOpenBook = (book: PublicBookWithProgress) => {
     setArticle(null)
     store.flushProgress()
-    store.openBook(book)
+    void readingApi.ensureBookProject(book.id).then(result => { book.projectPath = result.path; return openProjectSession(result.absolutePath) }).catch(() => undefined).finally(() => store.openBook(book))
   }
 
   const onOpenArticle = (value: Article) => {
-    setArticle(value)
-    store.closeBook()
+    void readingApi.ensureArticleProject(value.id).then(result => { const enriched = { ...value, projectPath: result.path }; return openProjectSession(result.absolutePath).then(() => enriched) }).catch(() => value).then(enriched => { setArticle(enriched); store.closeBook() })
   }
 
   const beginResize = (key: keyof ReadingWidths, event: React.PointerEvent) => {
@@ -137,7 +139,7 @@ export function Workbench({ store, close, addArticleContext, addObsidianReadingC
             ))}
           </nav>
           <div className={css.leftBody}>
-            {tab === 'library' ? <LibraryView store={store} onOpen={onOpenBook} /> : tab === 'nas' ? <NasLibraryView store={store} /> : tab === 'readlater' ? <ReadLaterView onOpen={onOpenArticle} /> : (
+            {tab === 'library' ? <LibraryView store={store} onOpen={onOpenBook} onSendMetadata={addBookContext} /> : tab === 'nas' ? <NasLibraryView store={store} onSendMetadata={addBookContext} /> : tab === 'readlater' ? <ReadLaterView onOpen={onOpenArticle} onSendMetadata={addArticleContext} /> : (
               <div className={css.panelLoading}>批注中心将在 M3 接入。</div>
             )}
           </div>

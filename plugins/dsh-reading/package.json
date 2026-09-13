@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/dsh-reading",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Immersive reading workbench for DeepSeek Harness: EPUB/PDF reading with progress, OPDS library, Wallabag read-later, and Obsidian export",
   "license": "MIT",
   "repository": {
@@ -54,6 +54,7 @@
         "@deepseek-ai/dsh-client-ui-layout",
         "@deepseek-ai/dsh-client-ui-sidebar",
         "@deepseek-ai/dsh-client-ui-slots"
+        ,"@deepseek-ai/dsh-client-ui-settings-plugins"
       ]
     }
   },
@@ -64,6 +65,7 @@
     "@deepseek-ai/dsh-client-ui-layout": "0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-sidebar": "0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-slots": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-settings-plugins": "0.1.0-rc.6",
     "@deepseek-ai/dsh-host-webserver": "0.1.0-rc.6",
     "react": ">=18.2.0"
   },
@@ -74,6 +76,7 @@
     "@deepseek-ai/dsh-client-ui-layout": { "optional": true },
     "@deepseek-ai/dsh-client-ui-sidebar": { "optional": true },
     "@deepseek-ai/dsh-client-ui-slots": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-settings-plugins": { "optional": true },
     "@deepseek-ai/dsh-host-webserver": { "optional": true },
     "react": { "optional": true }
   },

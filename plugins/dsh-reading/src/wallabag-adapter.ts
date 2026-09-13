@@ -20,6 +20,7 @@ export class WallabagAdapter {
   readonly #config: WallabagConfig
   #bearerToken: string | undefined
   #expiresAt = 0
+  #entriesCache: { articles: Article[]; at: number } | undefined
 
   constructor(config: WallabagConfig, private readonly fetchImpl: typeof fetch = fetch) {
     let origin: URL
@@ -44,6 +45,7 @@ export class WallabagAdapter {
   async listEntries(options: { page?: number; perPage?: number } = {}): Promise<Article[]> {
     const page = Math.max(1, Math.floor(options.page ?? 1))
     const perPage = Math.min(100, Math.max(1, Math.floor(options.perPage ?? 50)))
+    if (page === 1 && this.#entriesCache !== undefined && Date.now() - this.#entriesCache.at < 60_000) return this.#entriesCache.articles
     const all: Record<string, unknown>[] = []
     let current = page
     for (let count = 0; count < 20; count += 1) {
@@ -55,7 +57,9 @@ export class WallabagAdapter {
       if (rows.length === 0 || total === undefined || all.length >= total || rows.length < perPage) break
       current += 1
     }
-    return all.map(row => this.toArticle(row))
+    const articles = all.map(row => this.toArticle(row))
+    if (page === 1) this.#entriesCache = { articles, at: Date.now() }
+    return articles
   }
 
   async importUrl(url: string): Promise<Article> {

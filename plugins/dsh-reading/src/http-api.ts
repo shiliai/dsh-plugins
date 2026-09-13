@@ -1,12 +1,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createReadStream } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { copyFile, mkdir, stat, writeFile } from 'node:fs/promises'
 import type { WebServer } from '@deepseek-ai/dsh-host-webserver'
 import type { Annotation, Locator, ReadingProgress } from './contracts.ts'
 import { LocalLibrary, ReadingError } from './library.ts'
 import { ReadingStateStore } from './state-store.ts'
 import { WallabagAdapter } from './wallabag-adapter.ts'
 import { OpdsAdapter } from './opds-adapter.ts'
+import { articleMetadata, bookMetadata, projectDirectory, relativeProjectPath, type ReadingProjectConfig, writeProjectMetadata } from './project-cache.ts'
 
 const API_PREFIX = '/dsh-reading/api'
 const MAX_IMPORT_BYTES = 512 * 1024 * 1024
@@ -19,13 +20,13 @@ const MIME_BY_FORMAT: Record<string, string> = {
   azw: 'application/vnd.amazon.ebook',
 }
 
-export function registerReadingApi(webServer: WebServer, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter): () => void {
+export function registerReadingApi(webServer: WebServer, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter, project?: { get(): ReadingProjectConfig; update(value: ReadingProjectConfig): Promise<void> }): () => void {
   return webServer.register({
     kind: 'prefix',
     path: API_PREFIX,
     handler: async (request, response) => {
       try {
-        await route(request, response, library, store, wallabag, opds)
+        await route(request, response, library, store, wallabag, opds, project)
       } catch (error) {
         sendError(response, error)
       }
@@ -33,7 +34,7 @@ export function registerReadingApi(webServer: WebServer, library: LocalLibrary, 
   })
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter, project?: { get(): ReadingProjectConfig; update(value: ReadingProjectConfig): Promise<void> }): Promise<void> {
   const url = new URL(request.url ?? '/', 'http://dsh.local')
   const endpoint = url.pathname.slice(API_PREFIX.length) || '/'
 
@@ -51,6 +52,33 @@ async function route(request: IncomingMessage, response: ServerResponse, library
     return
   }
 
+  if (endpoint === '/settings' && project !== undefined) {
+    if (request.method === 'GET') { sendJson(response, 200, project.get()); return }
+    if (request.method === 'PUT') {
+      const body = await readJson(request, 32 * 1024)
+      if (!isRecord(body) || typeof body.rootDir !== 'string' || body.rootDir.trim() === '') throw new ReadingError('rootDir is required.', 'INVALID_BODY', 400)
+      const next = { rootDir: body.rootDir.trim(), createSessionOnOpen: body.createSessionOnOpen === true }
+      await project.update(next); sendJson(response, 200, next); return
+    }
+  }
+
+  const projectBook = /^\/project\/book\/([^/]+)$/u.exec(endpoint)
+  if (projectBook !== null && request.method === 'POST' && project !== undefined) {
+    const bookId = decodeURIComponent(projectBook[1]!)
+    const book = (await library.listBooks(store.snapshot.progress)).find(item => item.id === bookId)
+    if (book === undefined) throw new ReadingError('Book not found.', 'NOT_FOUND', 404)
+    const cfg = project.get(); const dir = projectDirectory(cfg, 'books', book.id, book.title); await mkdir(dir, { recursive: true })
+    const target = `${dir}/${book.fileName}`
+    try { await stat(target) } catch { await copyFile(book.filePath, target) }
+    const path = relativeProjectPath(cfg.rootDir, dir); await writeProjectMetadata(dir, bookMetadata(book, path)); sendJson(response, 200, { path, absolutePath: dir }); return
+  }
+
+  const projectArticle = /^\/project\/article\/([^/]+)$/u.exec(endpoint)
+  if (projectArticle !== null && request.method === 'POST' && project !== undefined && wallabag !== undefined) {
+    const article = await wallabag.getEntry(decodeURIComponent(projectArticle[1]!)); const cfg = project.get(); const dir = projectDirectory(cfg, 'articles', article.id, article.title); await mkdir(dir, { recursive: true })
+    const path = relativeProjectPath(cfg.rootDir, dir); await writeProjectMetadata(dir, articleMetadata(article, path)); const plain = (article.extractedHtml ?? '').replace(/<[^>]+>/gu, ' ').replace(/\s+/gu, ' ').trim(); await writeFile(`${dir}/article.md`, `# ${article.title}\n\nSource: ${article.url}\n\n${plain}\n`, 'utf8'); sendJson(response, 200, { path, absolutePath: dir }); return
+  }
+
   if (request.method === 'GET' && endpoint === '/opds/books') {
     if (opds === undefined) throw new ReadingError('OPDS is not configured.', 'OPDS_UNAVAILABLE', 503)
     sendJson(response, 200, { source: opds.name, books: await opds.listBooks() })
@@ -59,7 +87,12 @@ async function route(request: IncomingMessage, response: ServerResponse, library
   const opdsImport = /^\/opds\/books\/([^/]+)\/import$/u.exec(endpoint)
   if (opdsImport !== null && opdsImport[1] !== undefined && request.method === 'POST') {
     if (opds === undefined) throw new ReadingError('OPDS is not configured.', 'OPDS_UNAVAILABLE', 503)
-    sendJson(response, 200, { book: toPublicBook(await opds.importBook(decodeURIComponent(opdsImport[1]), library)) })
+    const imported = await opds.importBook(decodeURIComponent(opdsImport[1]), library)
+    if (project !== undefined) {
+      const dir = projectDirectory(project.get(), 'books', imported.id, imported.title)
+      await writeProjectMetadata(dir, bookMetadata(imported, relativeProjectPath(project.get().rootDir, dir)))
+    }
+    sendJson(response, 200, { book: toPublicBook(imported) })
     return
   }
 
@@ -89,7 +122,15 @@ async function route(request: IncomingMessage, response: ServerResponse, library
     if (request.method === 'POST') {
       const body = await readJson(request, 32 * 1024)
       if (!isRecord(body) || typeof body.url !== 'string' || body.url.trim() === '') throw new ReadingError('Request body requires url.', 'INVALID_BODY', 400)
-      sendJson(response, 200, { article: await wallabag.importUrl(body.url) })
+      const article = await wallabag.importUrl(body.url)
+      if (project !== undefined) {
+        const dir = projectDirectory(project.get(), 'articles', article.id, article.title)
+        await writeProjectMetadata(dir, articleMetadata(article, relativeProjectPath(project.get().rootDir, dir)))
+        const { writeFile } = await import('node:fs/promises')
+        const plain = (article.extractedHtml ?? '').replace(/<[^>]+>/gu, ' ').replace(/\s+/gu, ' ').trim()
+        await writeFile(`${dir}/article.md`, `# ${article.title}\n\nSource: ${article.url}\n\n${plain}\n`, 'utf8')
+      }
+      sendJson(response, 200, { article })
       return
     }
   }
@@ -97,6 +138,13 @@ async function route(request: IncomingMessage, response: ServerResponse, library
   if (articleMatch !== null && articleMatch[1] !== undefined && request.method === 'GET') {
     if (wallabag === undefined) throw new ReadingError('Wallabag is not configured.', 'WALLABAG_UNAVAILABLE', 503)
     const article = await wallabag.getEntry(decodeURIComponent(articleMatch[1]))
+    if (project !== undefined) {
+      const dir = projectDirectory(project.get(), 'articles', article.id, article.title)
+      await writeProjectMetadata(dir, articleMetadata(article, relativeProjectPath(project.get().rootDir, dir)))
+      const { writeFile } = await import('node:fs/promises')
+      const plain = (article.extractedHtml ?? '').replace(/<[^>]+>/gu, ' ').replace(/\s+/gu, ' ').trim()
+      await writeFile(`${dir}/article.md`, `# ${article.title}\n\nSource: ${article.url}\n\n${plain}\n`, 'utf8')
+    }
     sendJson(response, 200, { article })
     return
   }

@@ -20,6 +20,8 @@ export interface Book {
   fileSize: number
   addedAt: string
   convertedTo?: { path: string; at: string }
+  /** Stable project path relative to the Reading workspace root. */
+  projectPath?: string
 }
 
 export type Locator =
@@ -76,4 +78,6 @@ export interface Article {
   isArchived: boolean
   savedAt: string
   extractedHtml?: string
+  /** Stable project path relative to the Reading workspace root. */
+  projectPath?: string
 }

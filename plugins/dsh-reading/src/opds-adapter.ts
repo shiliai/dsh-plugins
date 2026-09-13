@@ -101,9 +101,13 @@ export class OpdsAdapter {
     const books = await this.listBooks()
     const book = books.find(item => item.id === id)
     if (book === undefined) throw new ReadingError('OPDS book not found.', 'NOT_FOUND', 404)
+    const stableDir = `${id.replace(/^opds:/u, 'opds')}-${book.title}`
+    const fileName = `${book.title}.${book.format}`
+    const cached = await library.cachedBook(stableDir, fileName)
+    if (cached !== undefined) return cached
     const response = await this.request(book.href)
     const data = Buffer.from(await response.arrayBuffer())
-    return library.importBook(data, `${book.title}.${book.format}`)
+    return library.importBook(data, fileName, stableDir)
   }
 
   private async request(url: string): Promise<Response> {
