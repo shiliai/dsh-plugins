@@ -121,13 +121,17 @@ export class WallabagAdapter {
     const id = String(row.id ?? '')
     if (id === '') throw new ReadingError('Wallabag returned an invalid entry.', 'WALLABAG_RESPONSE', 502)
     const url = typeof row.url === 'string' ? row.url : ''
+    const originalUrl = typeof row.origin_url === 'string' ? row.origin_url : typeof row.original_url === 'string' ? row.original_url : url
     const title = typeof row.title === 'string' && row.title !== '' ? row.title : url || `Wallabag entry ${id}`
     const archived = row.is_archived === true || row.is_archived === 1 || row.is_archived === '1'
     const savedAt = typeof row.created_at === 'string' ? row.created_at : new Date().toISOString()
     const readingTime = typeof row.reading_time === 'number' ? row.reading_time : undefined
     const rawHtml = typeof row.content === 'string' ? row.content : typeof row.content_html === 'string' ? row.content_html : undefined
     const html = rawHtml === undefined ? undefined : sanitizeHtml(rawHtml)
-    return { id: `wallabag:${id}`, source: 'wallabag', url, title, ...(typeof row.domain_name === 'string' ? { domain: row.domain_name } : {}), ...(readingTime !== undefined ? { readingTimeMin: readingTime } : {}), isArchived: archived, savedAt, ...(html !== undefined ? { extractedHtml: html } : {}) }
+    const tags = Array.isArray(row.tags) ? row.tags.map(tag => isRecord(tag) ? tag.label ?? tag.slug : tag).filter((tag): tag is string => typeof tag === 'string' && tag.trim() !== '') : undefined
+    const publishedAt = typeof row.published_at === 'string' ? row.published_at : undefined
+    const updatedAt = typeof row.updated_at === 'string' ? row.updated_at : undefined
+    return { id: `wallabag:${id}`, source: 'wallabag', url, originalUrl, title, ...(typeof row.domain_name === 'string' ? { domain: row.domain_name } : {}), ...(tags !== undefined ? { tags } : {}), ...(publishedAt !== undefined ? { publishedAt } : {}), ...(updatedAt !== undefined ? { updatedAt } : {}), ...(readingTime !== undefined ? { readingTimeMin: readingTime } : {}), isArchived: archived, savedAt, ...(html !== undefined ? { extractedHtml: html } : {}) }
   }
 }
 

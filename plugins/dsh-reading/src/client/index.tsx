@@ -39,7 +39,7 @@ function appendContext(draft: string, block: string): string {
 }
 
 function articleContext(article: Article): string {
-  return ['[Reading item]', 'kind: article', `title: ${JSON.stringify(article.title)}`, `url: ${JSON.stringify(article.url)}`, `articleId: ${JSON.stringify(article.id)}`, `projectPath: ${JSON.stringify(article.projectPath ?? '')}`].join('\n')
+  return ['[Reading item]', 'kind: article', `title: ${JSON.stringify(article.title)}`, `url: ${JSON.stringify(article.url)}`, `originalUrl: ${JSON.stringify(article.originalUrl ?? article.url)}`, `articleId: ${JSON.stringify(article.id)}`, `domain: ${JSON.stringify(article.domain ?? '')}`, `tags: ${JSON.stringify(article.tags ?? [])}`, `createdAt: ${JSON.stringify(article.savedAt)}`, `publishedAt: ${JSON.stringify(article.publishedAt ?? '')}`, `updatedAt: ${JSON.stringify(article.updatedAt ?? '')}`, `isArchived: ${JSON.stringify(article.isArchived)}`, `readingTimeMin: ${JSON.stringify(article.readingTimeMin ?? null)}`, `source: ${JSON.stringify(article.source)}`, `projectPath: ${JSON.stringify(article.projectPath ?? '')}`, 'The article is cached at projectPath/article.md; use that file for the full reading text.'].join('\n')
 }
 
 function bookContext(book: { id: string; title: string; format: string; fileName: string; projectPath?: string }): string {
@@ -57,7 +57,9 @@ export function apply(ctx: ClientContext): void {
     ctx.sessions.open(sessionId)
   }
 
-  ctx.slots.register({ name: 'settings.plugins.tab', id: 'dsh-reading', order: 50, label: 'Reading', inject: () => ({}) }, ReadingSettingsPanel)
+  // The settings plugin contributes this slot at runtime; older client UI
+  // typings do not include the plural alias yet.
+  ctx.slots.register({ name: 'settings.plugins.tab', id: 'dsh-reading', order: 50, label: 'Reading', inject: () => ({}) } as never, ReadingSettingsPanel)
 
   const currentInput = () => {
     const sessionId = ctx.sessions.list.getSnapshot().current

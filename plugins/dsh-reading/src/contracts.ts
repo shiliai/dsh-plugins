@@ -74,6 +74,11 @@ export interface Article {
   url: string
   title: string
   domain?: string
+  /** Original source URL (kept distinct for integrations that rewrite url). */
+  originalUrl?: string
+  tags?: string[]
+  publishedAt?: string
+  updatedAt?: string
   readingTimeMin?: number
   isArchived: boolean
   savedAt: string

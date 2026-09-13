@@ -54,5 +54,5 @@ export function bookMetadata(book: Pick<Book, 'id' | 'title' | 'author' | 'forma
 }
 
 export function articleMetadata(article: Article, path: string): Record<string, unknown> {
-  return { kind: 'article', id: article.id, title: article.title, url: article.url, domain: article.domain, savedAt: article.savedAt, path, cachedAt: new Date().toISOString() }
+  return { kind: 'article', id: article.id, title: article.title, url: article.url, originalUrl: article.originalUrl ?? article.url, domain: article.domain, tags: article.tags ?? [], savedAt: article.savedAt, publishedAt: article.publishedAt, updatedAt: article.updatedAt, isArchived: article.isArchived, readingTimeMin: article.readingTimeMin, source: article.source, path, contentFile: 'article.md', cachedAt: new Date().toISOString() }
 }
