@@ -8,6 +8,7 @@
     "exactOptionalPropertyTypes": true,
     "jsx": "react-jsx",
     "esModuleInterop": true,
+    "resolveJsonModule": true,
     "skipLibCheck": true,
     "declaration": true,
     "declarationMap": true,

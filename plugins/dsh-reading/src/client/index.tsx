@@ -9,6 +9,7 @@ import BookOpen from 'lucide-react/dist/esm/icons/book-open'
 import type { Article } from '../contracts.ts'
 import { ReadingStore } from './store.ts'
 import { readingApi, type ReadingSettings } from './api.ts'
+import { pluginVersion } from './version.ts'
 import { Workbench } from './Workbench.tsx'
 import css from './styles.module.css?dsh-inline'
 
@@ -22,7 +23,7 @@ function ReadingSettingsPanel() {
   if (draft === null) return <div style={{ padding: 16 }}>{status ?? '加载 Reading 设置…'}</div>
   const save = async () => { setStatus(null); try { const value = await readingApi.updateSettings(draft); setSettings(value); setDraft(value); setStatus('已保存') } catch (error) { setStatus(error instanceof Error ? error.message : String(error)) } }
   return <div style={{ padding: 16, maxWidth: 760 }}>
-    <h2 style={{ margin: '0 0 8px' }}>Reading</h2>
+    <h2 style={{ margin: '0 0 8px', display: 'flex', alignItems: 'baseline', gap: 8 }}>Reading <span style={{ fontSize: 12, fontWeight: 400, opacity: .55 }}>v{pluginVersion}</span></h2>
     <p style={{ opacity: .72, marginTop: 0 }}>配置项目缓存目录、数据源和打开项目时的会话行为。</p>
     <label style={{ display: 'block', margin: '18px 0 6px' }}>默认 workspace 根目录</label>
     <input style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px' }} value={draft.rootDir} onChange={event => setDraft({ ...draft, rootDir: event.target.value })} />
