@@ -1,6 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createReadStream } from 'node:fs'
-import { copyFile, mkdir, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, stat, writeFile, access, rename } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import type { WebServer } from '@deepseek-ai/dsh-host-webserver'
 import type { Annotation, Locator, ReadingProgress } from './contracts.ts'
 import { LocalLibrary, ReadingError } from './library.ts'
@@ -11,6 +13,7 @@ import { articleMetadata, bookMetadata, projectDirectory, relativeProjectPath, t
 
 const API_PREFIX = '/dsh-reading/api'
 const MAX_IMPORT_BYTES = 512 * 1024 * 1024
+const execFileAsync = promisify(execFile)
 
 const MIME_BY_FORMAT: Record<string, string> = {
   epub: 'application/epub+zip',
@@ -53,12 +56,12 @@ async function route(request: IncomingMessage, response: ServerResponse, library
   }
 
   if (endpoint === '/settings' && project !== undefined) {
-    if (request.method === 'GET') { sendJson(response, 200, project.get()); return }
+    if (request.method === 'GET') { sendJson(response, 200, { ...project.get(), sources: { wallabag: wallabag?.settings ?? null, opds: opds?.settings ?? null }, cache: { directory: 'DSH_HOME/cache/dsh-reading', staleWhileRevalidate: true, eviction: 'managed by host cache policy' } }); return }
     if (request.method === 'PUT') {
       const body = await readJson(request, 32 * 1024)
       if (!isRecord(body) || typeof body.rootDir !== 'string' || body.rootDir.trim() === '') throw new ReadingError('rootDir is required.', 'INVALID_BODY', 400)
       const next = { rootDir: body.rootDir.trim(), createSessionOnOpen: body.createSessionOnOpen === true }
-      await project.update(next); sendJson(response, 200, next); return
+      await project.update(next); sendJson(response, 200, { ...next, sources: { wallabag: wallabag?.settings ?? null, opds: opds?.settings ?? null }, cache: { directory: 'DSH_HOME/cache/dsh-reading', staleWhileRevalidate: true, eviction: 'managed by host cache policy' } }); return
     }
   }
 
@@ -70,7 +73,25 @@ async function route(request: IncomingMessage, response: ServerResponse, library
     const cfg = project.get(); const dir = projectDirectory(cfg, 'books', book.id, book.title); await mkdir(dir, { recursive: true })
     const target = `${dir}/${book.fileName}`
     try { await stat(target) } catch { await copyFile(book.filePath, target) }
-    const path = relativeProjectPath(cfg.rootDir, dir); await writeProjectMetadata(dir, bookMetadata(book, path)); sendJson(response, 200, { path, absolutePath: dir }); return
+    const path = relativeProjectPath(cfg.rootDir, dir)
+    const metadata = bookMetadata(book, path)
+    if (book.format === 'azw3' || book.format === 'mobi' || book.format === 'azw') {
+      const converted = `${dir}/${book.fileName.replace(/\.[^.]+$/u, '')}.epub`
+      try {
+        await access(converted)
+        ;(metadata as any).convertedTo = { path: `${path}/${converted.split('/').pop()}`, at: new Date().toISOString(), status: 'reused' }
+      } catch {
+        try {
+          const temp = `${converted}.tmp-${process.pid}-${Date.now()}`
+          await execFileAsync('ebook-convert', [target, temp], { timeout: 120000 })
+          await rename(temp, converted)
+          ;(metadata as any).convertedTo = { path: `${path}/${converted.split('/').pop()}`, at: new Date().toISOString(), status: 'converted' }
+        } catch (error) {
+          ;(metadata as any).conversion = { status: 'failed', error: error instanceof Error ? error.message : String(error), at: new Date().toISOString() }
+        }
+      }
+    }
+    await writeProjectMetadata(dir, metadata); sendJson(response, 200, { path, absolutePath: dir, metadata }); return
   }
 
   const projectArticle = /^\/project\/article\/([^/]+)$/u.exec(endpoint)

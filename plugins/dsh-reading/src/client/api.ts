@@ -2,7 +2,7 @@ import type { Annotation, Article, Locator, PublicBook, PublicBookWithProgress, 
 import type { OpdsBook } from '../opds-adapter.ts'
 
 const API = '/dsh-reading/api'
-export interface ReadingSettings { rootDir: string; createSessionOnOpen: boolean }
+export interface ReadingSettings { rootDir: string; createSessionOnOpen: boolean; sources?: { wallabag: { origin: string; timeoutMs: number; cacheTtlMs: number } | null; opds: { name: string; url: string; timeoutMs: number; cacheTtlMs: number } | null }; cache?: { directory: string; staleWhileRevalidate: boolean; eviction: string } }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}${path}`, init)

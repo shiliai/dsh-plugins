@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { access, mkdir, readdir, stat, writeFile } from 'node:fs/promises'
+import { access, mkdir, readdir, stat, writeFile, rename } from 'node:fs/promises'
 import { basename, extname, join, relative } from 'node:path'
 import { BOOK_FORMATS, isBookFormat, type Book, type BookFormat, type BookWithProgress, type ReadingProgress } from './contracts.ts'
 
@@ -78,7 +78,9 @@ export class LocalLibrary {
     const dir = join(this.#booksDir, id)
     await mkdir(dir, { recursive: true })
     const filePath = join(dir, safeName)
-    await writeFile(filePath, data)
+    const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`
+    await writeFile(tmp, data)
+    await rename(tmp, filePath)
     const info = await stat(filePath)
     return {
       id: bookIdFor(relative(this.#dataDir, filePath)),
@@ -88,6 +90,7 @@ export class LocalLibrary {
       filePath,
       fileName: safeName,
       fileSize: info.size,
+      checksum: createHash('sha256').update(data).digest('hex'),
       addedAt: info.birthtime.toISOString(),
     }
   }
@@ -106,6 +109,13 @@ export class LocalLibrary {
   async resolveFile(id: string): Promise<{ filePath: string; format: BookFormat; fileName: string; fileSize: number }> {
     const book = (await this.listBooks({})).find(item => item.id === id)
     if (book === undefined) throw new ReadingError('Book not found.', 'NOT_FOUND', 404)
+    if (book.format === 'azw3' || book.format === 'mobi' || book.format === 'azw') {
+      const epubPath = `${book.filePath.replace(/\.[^.]+$/u, '')}.epub`
+      try {
+        const info = await stat(epubPath)
+        if (info.isFile()) return { filePath: epubPath, format: 'epub', fileName: `${book.fileName.replace(/\.[^.]+$/u, '')}.epub`, fileSize: info.size }
+      } catch { /* conversion not available yet */ }
+    }
     return { filePath: book.filePath, format: book.format, fileName: book.fileName, fileSize: book.fileSize }
   }
 }
