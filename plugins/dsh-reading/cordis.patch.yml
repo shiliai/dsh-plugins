@@ -1,0 +1,6 @@
+- insert:
+    - id: dsh-reading
+      name: '@dsh-plugins/dsh-reading'
+      inject: [webServer]
+      config:
+        dataDir: !!js process.env.READING_DATA_DIR ?? null

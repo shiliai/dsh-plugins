@@ -67,6 +67,10 @@ declare module '@deepseek-ai/dsh-client-runtime/client' {
         }
       }
     }
+    workspaces: {
+      create(input: { path: string }): Promise<{ workspaceId: string }>
+      connectWorkspace(workspaceId: string): Promise<string>
+    }
     effect(disposer: () => (() => void), label: string): void
   }
 }

@@ -12,6 +12,10 @@ const plugins = [
     packageName: '@dsh-plugins/dsh-obsidian',
   },
   {
+    directory: 'plugins/dsh-reading',
+    packageName: '@dsh-plugins/dsh-reading',
+  },
+  {
     directory: 'plugins/dsh-remote',
     packageName: '@dsh-plugins/dsh-remote',
   },
