@@ -100,11 +100,29 @@ export function Workbench({ store, close, addArticleContext, addBookContext, add
   const onOpenBook = (book: PublicBookWithProgress) => {
     setArticle(null)
     store.flushProgress()
-    void readingApi.ensureBookProject(book.id).then(result => { book.projectPath = result.path; return openProjectSession(result.absolutePath) }).catch(() => undefined).finally(() => { setOpenBooks(items => items.some(item => item.id === book.id) ? items : [...items, book]); setArticle(null); store.openBook(book) })
+    void readingApi.ensureBookProject(book.id).then(result => {
+      const enriched = { ...book, projectPath: result.path }
+      return openProjectSession(result.absolutePath).then(() => enriched)
+    }).catch(() => book).then(async enriched => {
+      setOpenBooks(items => items.some(item => item.id === enriched.id) ? items : [...items, enriched])
+      setArticle(null)
+      store.openBook(enriched)
+      await addBookContext(enriched)
+    })
   }
 
   const onOpenArticle = (value: Article) => {
-    void readingApi.ensureArticleProject(value.id).then(result => { const enriched = { ...value, projectPath: result.path }; return openProjectSession(result.absolutePath).then(() => enriched) }).catch(() => value).then(enriched => { setOpenArticles(items => items.some(item => item.id === enriched.id) ? items : [...items, enriched]); setArticle(enriched); store.closeBook() })
+    void readingApi.ensureArticleProject(value.id).then(result => {
+      const enriched = { ...value, projectPath: result.path }
+      return openProjectSession(result.absolutePath).then(() => enriched)
+    }).catch(() => value).then(async enriched => {
+      setOpenArticles(items => items.some(item => item.id === enriched.id) ? items : [...items, enriched])
+      setArticle(enriched)
+      store.closeBook()
+      // When opening an article into a new conversation, carry the complete
+      // article metadata along so the first question has useful context.
+      await addArticleContext(enriched)
+    })
   }
 
   const beginResize = (key: keyof ReadingWidths, event: React.PointerEvent) => {

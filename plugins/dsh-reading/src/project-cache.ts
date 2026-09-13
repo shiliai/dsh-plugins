@@ -49,8 +49,8 @@ export async function saveProjectConfig(file: string, value: ReadingProjectConfi
   await rename(tmp, file)
 }
 
-export function bookMetadata(book: Pick<Book, 'id' | 'title' | 'author' | 'format' | 'fileName' | 'fileSize' | 'source'>, path: string): Record<string, unknown> {
-  return { kind: 'book', id: book.id, title: book.title, author: book.author, format: book.format as BookFormat, fileName: book.fileName, fileSize: book.fileSize, path, cachedAt: new Date().toISOString() }
+export function bookMetadata(book: Pick<Book, 'id' | 'title' | 'author' | 'format' | 'fileName' | 'fileSize' | 'source' | 'checksum'>, path: string): Record<string, unknown> {
+  return { kind: 'book', id: book.id, title: book.title, author: book.author, format: book.format as BookFormat, originalFormat: book.format as BookFormat, fileName: book.fileName, fileSize: book.fileSize, checksum: book.checksum, source: book.source, path, accessAt: new Date().toISOString(), cachedAt: new Date().toISOString() }
 }
 
 export function articleMetadata(article: Article, path: string): Record<string, unknown> {

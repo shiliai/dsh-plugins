@@ -3,6 +3,7 @@ import { ReadingError } from './library.ts'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
+import { readRemoteCache, writeRemoteCache } from './remote-cache.ts'
 
 export interface WallabagConfig {
   origin: string
@@ -21,6 +22,10 @@ export class WallabagAdapter {
   #bearerToken: string | undefined
   #expiresAt = 0
   #entriesCache: { articles: Article[]; at: number } | undefined
+
+  get settings(): { origin: string; timeoutMs: number; cacheTtlMs: number } {
+    return { origin: this.#config.origin, timeoutMs: this.#config.timeoutMs ?? 20_000, cacheTtlMs: 60_000 }
+  }
 
   constructor(config: WallabagConfig, private readonly fetchImpl: typeof fetch = fetch) {
     let origin: URL
@@ -47,6 +52,7 @@ export class WallabagAdapter {
     const perPage = Math.min(100, Math.max(1, Math.floor(options.perPage ?? 50)))
     if (page === 1 && this.#entriesCache !== undefined && Date.now() - this.#entriesCache.at < 60_000) return this.#entriesCache.articles
     const all: Record<string, unknown>[] = []
+    try {
     let current = page
     for (let count = 0; count < 20; count += 1) {
       const payload = await this.request(`/entries?detail=full&sort=created&order=desc&page=${current}&perPage=${perPage}`)
@@ -58,8 +64,15 @@ export class WallabagAdapter {
       current += 1
     }
     const articles = all.map(row => this.toArticle(row))
-    if (page === 1) this.#entriesCache = { articles, at: Date.now() }
+    if (page === 1) { this.#entriesCache = { articles, at: Date.now() }; void writeRemoteCache('wallabag', this.#config.origin, articles) }
     return articles
+    } catch (error) {
+      if (page === 1) {
+        const cached = await readRemoteCache<Article[]>('wallabag', this.#config.origin)
+        if (cached !== undefined) { this.#entriesCache = { articles: cached.value, at: cached.cachedAt }; return cached.value }
+      }
+      throw error
+    }
   }
 
   async importUrl(url: string): Promise<Article> {
