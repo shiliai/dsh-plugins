@@ -44,10 +44,18 @@ export class WallabagAdapter {
   async listEntries(options: { page?: number; perPage?: number } = {}): Promise<Article[]> {
     const page = Math.max(1, Math.floor(options.page ?? 1))
     const perPage = Math.min(100, Math.max(1, Math.floor(options.perPage ?? 50)))
-    const payload = await this.request(`/entries?detail=full&sort=created&order=desc&page=${page}&perPage=${perPage}`)
-    const embedded = isRecord(payload) && isRecord(payload._embedded) ? (Array.isArray(payload._embedded.items) ? payload._embedded.items : payload._embedded.entries) : undefined
-    const rows = Array.isArray(embedded) ? embedded : isRecord(payload) && Array.isArray(payload.entries) ? payload.entries : isRecord(payload) && Array.isArray(payload.items) ? payload.items : Array.isArray(payload) ? payload : []
-    return rows.filter(isRecord).map(row => this.toArticle(row))
+    const all: Record<string, unknown>[] = []
+    let current = page
+    for (let count = 0; count < 20; count += 1) {
+      const payload = await this.request(`/entries?detail=full&sort=created&order=desc&page=${current}&perPage=${perPage}`)
+      const embedded = isRecord(payload) && isRecord(payload._embedded) ? (Array.isArray(payload._embedded.items) ? payload._embedded.items : payload._embedded.entries) : undefined
+      const rows = (Array.isArray(embedded) ? embedded : isRecord(payload) && Array.isArray(payload.entries) ? payload.entries : isRecord(payload) && Array.isArray(payload.items) ? payload.items : Array.isArray(payload) ? payload : []).filter(isRecord)
+      all.push(...rows)
+      const total = isRecord(payload) && typeof payload.total === 'number' ? payload.total : undefined
+      if (rows.length === 0 || total === undefined || all.length >= total || rows.length < perPage) break
+      current += 1
+    }
+    return all.map(row => this.toArticle(row))
   }
 
   async importUrl(url: string): Promise<Article> {
