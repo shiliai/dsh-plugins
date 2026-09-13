@@ -36,6 +36,8 @@ export function Workbench({ store, close, addArticleContext, addBookContext, add
   const [anchor, setAnchor] = useState<ConversationAnchor | null>(() => findConversationAnchor())
   const [tab, setTab] = useState<LeftTab>('nas')
   const [article, setArticle] = useState<Article | null>(null)
+  const [openArticles, setOpenArticles] = useState<Article[]>([])
+  const [openBooks, setOpenBooks] = useState<PublicBookWithProgress[]>([])
   const [leftVisible, setLeftVisible] = useState(true)
   const [widths, setWidths] = useState<ReadingWidths>(() => loadWidths())
   const originalMargin = useRef<{ element: HTMLElement; left: string } | null>(null)
@@ -98,11 +100,11 @@ export function Workbench({ store, close, addArticleContext, addBookContext, add
   const onOpenBook = (book: PublicBookWithProgress) => {
     setArticle(null)
     store.flushProgress()
-    void readingApi.ensureBookProject(book.id).then(result => { book.projectPath = result.path; return openProjectSession(result.absolutePath) }).catch(() => undefined).finally(() => store.openBook(book))
+    void readingApi.ensureBookProject(book.id).then(result => { book.projectPath = result.path; return openProjectSession(result.absolutePath) }).catch(() => undefined).finally(() => { setOpenBooks(items => items.some(item => item.id === book.id) ? items : [...items, book]); setArticle(null); store.openBook(book) })
   }
 
   const onOpenArticle = (value: Article) => {
-    void readingApi.ensureArticleProject(value.id).then(result => { const enriched = { ...value, projectPath: result.path }; return openProjectSession(result.absolutePath).then(() => enriched) }).catch(() => value).then(enriched => { setArticle(enriched); store.closeBook() })
+    void readingApi.ensureArticleProject(value.id).then(result => { const enriched = { ...value, projectPath: result.path }; return openProjectSession(result.absolutePath).then(() => enriched) }).catch(() => value).then(enriched => { setOpenArticles(items => items.some(item => item.id === enriched.id) ? items : [...items, enriched]); setArticle(enriched); store.closeBook() })
   }
 
   const beginResize = (key: keyof ReadingWidths, event: React.PointerEvent) => {
@@ -147,6 +149,7 @@ export function Workbench({ store, close, addArticleContext, addBookContext, add
 
       {/* Middle column: reader */}
       <section className={css.readerColumn} style={paneStyle(readerRect)} aria-label="阅读栏">
+        {(openBooks.length + openArticles.length) > 0 && <div className={css.readerTabs}>{openBooks.map(item => <div key={'book' + item.id} className={css.readerTab}><button type="button" onClick={() => { setArticle(null); store.openBook(item) }}>{item.title}</button><button type="button" aria-label="关闭" onClick={() => { setOpenBooks(items => items.filter(value => value.id !== item.id)); if (state.current?.id === item.id) store.closeBook() }}>×</button></div>)}{openArticles.map(item => <div key={'article' + item.id} className={css.readerTab}><button type="button" onClick={() => { setArticle(item); store.closeBook() }}>{item.title || item.url}</button><button type="button" aria-label="关闭" onClick={() => { setOpenArticles(items => items.filter(value => value.id !== item.id)); if (article?.id === item.id) setArticle(null) }}>×</button></div>)}</div>}
         {article !== null ? <ArticleReader article={article} addArticleContext={addArticleContext} addObsidianReadingContext={addObsidianReadingContext} /> : state.current === null ? (
           <div className={css.readerEmpty}>
             <p>📖 从左侧书库选择一本书开始阅读</p>

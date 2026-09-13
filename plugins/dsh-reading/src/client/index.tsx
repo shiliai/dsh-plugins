@@ -57,7 +57,7 @@ export function apply(ctx: ClientContext): void {
     ctx.sessions.open(sessionId)
   }
 
-  ctx.slots.register({ name: 'settings.plugin.item', key: 'dsh-reading', id: 'dsh-reading', order: 50, label: 'Reading', inject: () => ({}) }, ReadingSettingsPanel)
+  ctx.slots.register({ name: 'settings.plugin.item', id: 'dsh-reading', key: 'dsh-reading', order: 50, label: 'Reading', inject: () => ({}) } as never, ReadingSettingsPanel)
 
   const currentInput = () => {
     const sessionId = ctx.sessions.list.getSnapshot().current
