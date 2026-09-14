@@ -1,6 +1,6 @@
 # dsh-reading
 
-Immersive reading workbench for DeepSeek Harness. Read EPUB / PDF (and soon AZW3/MOBI via conversion) side-by-side with the agent conversation, with local reading-progress persistence.
+Immersive reading workbench for DeepSeek Harness. Read EPUB / PDF side-by-side with the agent conversation; AZW3/MOBI/AZW files are converted to EPUB when the local conversion tool is available. Reading progress and project context persist locally.
 
 ## Status
 
@@ -19,11 +19,13 @@ Immersive reading workbench for DeepSeek Harness. Read EPUB / PDF (and soon AZW3
 
 ## Configuration
 
-Deployment-level config lives in `$DSH_HOME/.env` (non-secrets) and the top-level flat mapping in `$DSH_HOME/.credentials.yaml` (secrets). See `docs/plans/dsh-reading-v1.env.example` in the monorepo. M1 only uses:
+Deployment-level config lives in `$DSH_HOME/.env` (non-secrets) and the `refs:` mapping in `$DSH_HOME/.credentials.yaml` (secrets). See `docs/plans/dsh-reading-v1.env.example` in the monorepo. The DSH Settings → Plugins → Reading panel shows the active data-source endpoints and local cache policy; credentials are never displayed:
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `READING_DATA_DIR` | `~/.dsh/reading` | Books + `state.json` directory |
+| `READING_OPDS_0_URL` | — | OPDS/Calibre-Web catalogue URL |
+| `READING_OPDS_0_USERNAME` | — | OPDS username |
 | `READING_WALLABAG_URL` | — | Wallabag origin |
 | `READING_WALLABAG_CLIENT_ID` | — | OAuth client id (credential ref) |
 | `READING_WALLABAG_CLIENT_SECRET` | — | OAuth client secret (credential ref) |
