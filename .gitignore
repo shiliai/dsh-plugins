@@ -9,3 +9,6 @@ playwright-report/
 .e2e/
 /execution/
 .env
+.pnpm-store/
+.worktrees/
+onboarding-logs/
