@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>启动链路 · dsh 插件架构解构</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="index.html">dsh<span>·</span>架构解构</a>
+  <a href="index.html">总览</a>
+  <a href="cordis.html">Cordis 模型</a>
+  <a href="boot.html" class="active">启动链路</a>
+  <a href="services.html">宿主服务</a>
+  <a href="integration.html">集成机制</a>
+  <a href="plugins/plugin-wecom.html">wecom</a>
+  <a href="plugins/plugin-remote.html">remote</a>
+  <a href="plugins/plugin-reading.html">reading</a>
+  <a href="plugins/plugin-obsidian.html">obsidian</a>
+  <a href="plugins/plugin-file-attachment.html">file-attachment</a>
+  <a href="patterns.html">接口与模式</a><a href="walkthrough.html">插件实战</a>
+</nav>
+
+<main class="page">
+  <header class="hero">
+    <h1>启动链路：从回车到 URL 打印</h1>
+    <p class="sub">还原 <code>dsh --profile web</code> 敲下回车之后发生的一切。launcher 本体只有 8KB（<code>apps/cli/src/bin.js</code>）—— 它的全部工作是「选树、叠层、下传」，其余都是树内插件的事。</p>
+  </header>
+
+  <figure>
+    <svg viewBox="0 0 960 420" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, PingFang SC, sans-serif">
+      <defs><marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#98a2b3"/></marker></defs>
+      <style>.b{fill:#171a21;stroke:#2a2f3a;} .h{fill:#4d9fff;font-size:13px;font-weight:bold;} .d{fill:#98a2b3;font-size:11px;} .e{stroke:#98a2b3;stroke-width:1.2;fill:none;}</style>
+      <g>
+        <rect x="20" y="20" width="200" height="54" class="b" rx="10"/>
+        <text x="34" y="42" class="h">① launcher (apps/cli)</text>
+        <text x="34" y="60" class="d">解析 --profile/--patch/--dump-*</text>
+        <text x="34" y="70" class="d">其余参数原样下传</text>
+
+        <rect x="270" y="20" width="200" height="54" class="b" rx="10"/>
+        <text x="284" y="42" class="h">② 环境快照</text>
+        <text x="284" y="60" class="d">loadLayeredEnv：.env 两层叠加</text>
+        <text x="284" y="70" class="d">引导类变量拒绝，冻结快照</text>
+
+        <rect x="520" y="20" width="200" height="54" class="b" rx="10"/>
+        <text x="534" y="42" class="h">③ 组合 profile</text>
+        <text x="534" y="60" class="d">解析 bundles 补丁 + 用户层</text>
+        <text x="534" y="70" class="d">cordis.yml 重写为 []</text>
+
+        <rect x="770" y="20" width="170" height="54" class="b" rx="10"/>
+        <text x="784" y="42" class="h">④ cordis boot()</text>
+        <text x="784" y="60" class="d">root Context + Loader</text>
+        <text x="784" y="70" class="d">挂载整棵插件树</text>
+
+        <line x1="220" y1="47" x2="266" y2="47" class="e" marker-end="url(#arr3)"/>
+        <line x1="470" y1="47" x2="516" y2="47" class="e" marker-end="url(#arr3)"/>
+        <line x1="720" y1="47" x2="766" y2="47" class="e" marker-end="url(#arr3)"/>
+
+        <rect x="770" y="130" width="170" height="70" class="b" rx="10"/>
+        <text x="784" y="152" class="h">⑤ dsh-base 行激活</text>
+        <text x="784" y="170" class="d">sessions/tools/agents/llm</text>
+        <text x="784" y="182" class="d">sandbox/approval/settings</text>
+        <line x1="855" y1="74" x2="855" y2="126" class="e" marker-end="url(#arr3)"/>
+
+        <rect x="520" y="130" width="200" height="70" class="b" rx="10"/>
+        <text x="534" y="152" class="h">⑥ web-app 行激活</text>
+        <text x="534" y="170" class="d">web-startup 解析 flag → provide</text>
+        <text x="534" y="182" class="d">webserver 读 !!js 配置后 bind</text>
+        <line x1="766" y1="165" x2="724" y2="165" class="e" marker-end="url(#arr3)"/>
+
+        <rect x="270" y="130" width="200" height="70" class="b" rx="10"/>
+        <text x="284" y="152" class="h">⑦ 我们的插件行激活</text>
+        <text x="284" y="170" class="d">inject 就绪 → apply(ctx, config)</text>
+        <text x="284" y="182" class="d">注册工具 / 路由 / 监听</text>
+        <line x1="516" y1="165" x2="474" y2="165" class="e" marker-end="url(#arr3)"/>
+
+        <rect x="20" y="130" width="200" height="70" class="b" rx="10"/>
+        <text x="34" y="152" class="h">⑧ 就绪</text>
+        <text x="34" y="170" class="d">树沉降审计 → 打印 URL</text>
+        <text x="34" y="182" class="d">挂 patch watcher（live 层）</text>
+        <line x1="266" y1="165" x2="224" y2="165" class="e" marker-end="url(#arr3)"/>
+
+        <rect x="20" y="250" width="920" height="150" class="b" rx="10"/>
+        <text x="36" y="274" class="h">贯穿全程的三个事实</text>
+        <text x="36" y="298" class="d" font-size="12">· 树是「空根 + 补丁层」的和：profile 的 cordis.yml 每次启动被强制重写为 []，组合只发生在内存里的 applyEntryPatches</text>
+        <text x="36" y="322" class="d" font-size="12">· 行激活顺序 = 服务依赖图：inject 等待、!!js 在注入完成后求值 —— 写在 YAML 里的行顺序没有加载语义</text>
+        <text x="36" y="346" class="d" font-size="12">· --dump-config 与真实启动走同一个组合函数：看到的树 = 启动的树，不存在「dump 骗人」</text>
+        <text x="36" y="378" class="d" font-size="12" fill="#e0a458">URL 行打印 = 就绪信号：web-runtime 等 loader.await() 沉降后才打印，外部 supervisor 看到它才开始 RPC</text>
+      </g>
+    </svg>
+    <figcaption>图 3 · 启动八步。①-④ 是 launcher 的事，⑤-⑦ 全部发生在 Cordis 树内，由服务可用性驱动。</figcaption>
+  </figure>
+
+  <h2 id="steps">逐步细节</h2>
+
+  <h3>① launcher：只认识自己参数的游标</h3>
+  <p><code>parseDshArgs</code>（<code>apps/cli/src/args.ts:112</code>）只解析三组东西：<code>--profile &lt;name&gt;</code>、可重复的 <code>--patch &lt;path&gt;</code>（<strong>刻意非变参</strong>——变参会吞掉内层参数）、<code>--dump-config</code> / <code>--dump-default-config</code>。两个子命令：<code>web</code>（硬编码别名 = <code>--profile web</code>）和 <code>plugin</code>（转发 pnpm）。内层参数边界靠 <code>helpOption(false) + allowUnknownOption() + passThroughOptions()</code> 实现：<strong>launcher 不认识的第一个 token 起就是应用参数</strong>，连应用的 <code>-h</code> 都原样下传 —— 所以 <code>dsh web --help</code> 打印的是 web 应用自己的帮助。</p>
+  <div class="note"><span class="t">陷阱</span>应用参数的第一个 token 若恰好叫 <code>web</code> 或 <code>plugin</code> 会被 launcher 当成子命令截走（apps/cli/reference/README.md "App arguments"）。</div>
+
+  <h3>② 环境快照：.env 有边界</h3>
+  <p><code>loadLayeredEnv('dsh')</code>（<code>packages/boot/app-boot/src/index.ts:177-198</code>）依次解析调用目录的 <code>.env</code>（project 层）与 <code>$DSH_HOME/.env</code>（user 层），但<code>PATH</code>、<code>NODE_OPTIONS</code>、<code>GIT_*</code>、代理/TLS、一切 <code>DSH_*</code>/<code>XDG_*</code> 前缀<em>命中即抛错</em> —— 这些只能来自继承环境，防止 .env 劫持进程引导。每个值来自哪一层被冻成不可变快照，挂在树的 <code>launchEnvironment</code> 服务上。</p>
+
+  <h3>③ 组合 profile：双锚解析与空根</h3>
+  <ul>
+    <li><strong>安装闭包符号链接</strong>：启动时对 dsh 安装包依赖闭包做 BFS，在 <code>$DSH_HOME/profiles/node_modules/</code> 建幂等符号链接 —— 这是「内置插件永远来自安装」契约的运行时载体，同时让出树插件的 peer（同一个 cordis 实例！）全机器共享，服务注册表才不会劈叉。</li>
+    <li><strong>bundle 双锚解析</strong>：<code>dsh.profile.bundles</code> 列表逐项先从 dsh 安装解析、再从 profile 目录解析。所以 <code>@deepseek-ai/dsh-base</code> 恒与运行中的 dsh 同源；我们的插件（profile 的 pnpm 依赖）则从 profile 解析。</li>
+    <li><strong>模板自动初始化</strong>：profile 目录缺 <code>package.json</code> 时，<code>web</code>/<code>headless</code> 命中模板（<code>web: [dsh-base, dsh-web-app]</code>）自动初始化；其余 profile 报错提示 <code>dsh plugin add</code>。</li>
+    <li><strong>cordis.yml 恒为 []</strong>：每次启动强制重写（<code>PROFILE_ROOT_CONFIG</code>），防止 Loader 的写回机制把组合结果烤进文件。它的唯一意义是给 Loader 一个 include 根、把模块解析锚在 profile 目录。</li>
+  </ul>
+
+  <h3>④ 叠层与挂载</h3>
+  <p>组合发生在内存里：<code>composeEntries([bundlePatches…, profile.patches, homePatches, overlays])</code> 对<em>空列表</em>做一次 <code>applyEntryPatches</code> —— 与启动 include、与 <code>--dump-config</code> 用的是同一个函数。然后 <code>boot()</code>（<code>packages/boot/app-boot/src/index.ts:757-802</code>）建 root Context、提供 <code>dshHomePath</code>、装 Loader、注入两件 launcher 事实（<code>cmdlineArgs</code> 冻结 argv 快照、<code>launchEnvironment</code>），再以固定 id 挂载 root include。最后等树沉降并<em>审计</em>：没解析到模块的行、FAILED 的行、缺 inject 服务的行都会带名字抛错。</p>
+
+  <h3>⑤-⑦ 行的激活：flag 如何压过配置</h3>
+  <p>web 面的关键接力是「命令行服务」模式：<code>web-startup</code> 插件 <code>inject: ['cmdlineArgs']</code>，用自己的 commander 程序解析 <code>--host/--port</code> 后 <code>ctx.provide('webStartup', values)</code>；<code>webserver</code> 行声明 <code>inject: [webStartup]</code>，配置写 <code>host: !!js ctx.webStartup.host ?? '127.0.0.1'</code> —— <strong>flag 是优先级最高的临时配置</strong>，且 <code>--help</code> 时 provider 不发布服务，依赖行自然全部不激活，「打印 help 却绑了服务器」这类事故被服务依赖图在类型系统之外排除。<code>--host 0.0.0.0</code> 被 <code>web-startup</code> 直接拒绝（等于向全网暴露 RCE 面）。</p>
+
+  <h3>⑧ live 层：改 patch 文件不用重启</h3>
+  <p>启动完成后 launcher 兜底装一个 watch-only 的 HMR，精确 watch profile 与 home 两份 <code>cordis.patch.yml</code>；变更回调<strong>每次重新读取全部层</strong>并 <code>structuredClone</code>（include 按引用插入行，复用解析对象会让「删掉覆盖」失效），然后 <code>entry.update()</code> 事务性换树、失败回滚。这就是「编辑 cordis.patch.yml 热生效」的机制。</p>
+
+  <h2 id="layers">补丁层叠加顺序</h2>
+  <table>
+    <tr><th>#</th><th>层</th><th>说明</th></tr>
+    <tr><td>1</td><td>bundle 层 × N</td><td><code>dsh.profile.bundles</code> 列表顺序（dsh-base 恒第一）；我们的插件按安装顺序排在 web-app 之后</td></tr>
+    <tr><td>2</td><td>profile 的 <code>cordis.patch.yml</code></td><td>项目/个人层：<code>~/.local/dsh_home/profiles/web/cordis.patch.yml</code>（实机样本：obsidian 的 vaultRoot、wecom 的白名单都在这里覆盖）</td></tr>
+    <tr><td>3</td><td>home 的 <code>cordis.patch.yml</code></td><td>机器级偏好，压过 per-profile 层</td></tr>
+    <tr><td>4</td><td><code>--patch</code> overlay × N</td><td>argv 顺序；必须存在（缺失即报错）</td></tr>
+    <tr><td>5</td><td>launcher 派生 overlay</td><td>agent-presets 的 shipped-root、<code>DSH_TELEMETRY_DISABLED</code> 禁用补丁</td></tr>
+  </table>
+  <p>后层胜，同层按数组序。<strong>patch 按 id 整行替换 config、不做深合并</strong> —— 覆盖者必须复述想保留的每个键。</p>
+
+  <h2 id="patch-grammar">patch YAML 语法速查</h2>
+  <p>patch 文件 = 顶层 YAML 数组，每项一个 loader patch entry（<code>vendor/include/src/index.ts:145-156</code>）：</p>
+  <table>
+    <tr><th style="width:130px">字段</th><th>语义</th></tr>
+    <tr><td><code>id</code></td><td>定位目标行（含 group 子行，递归建索引）。非 insert 补丁必须带 id；未命中 → 警告并跳过</td></tr>
+    <tr><td><code>name</code></td><td>校验目标行的插件模块名，不符则整条补丁跳过</td></tr>
+    <tr><td><code>insert</code></td><td>追加行：无 id → 追加到顶层；有 id → 追加进该 group 行的 config 数组。新行立即进索引，同拍平列表里更晚的补丁可以打它</td></tr>
+    <tr><td><code>config</code></td><td><strong>整体替换</strong>目标行的 config，不深合并</td></tr>
+    <tr><td><code>disabled</code></td><td>替换行的禁用标志 —— overlay 关行的正道（「禁用而非删除」）</td></tr>
+    <tr><td><code>inject</code> / <code>intercept</code> / <code>isolate</code></td><td>替换对应 EntryOptions 字段</td></tr>
+    <tr><td><code>!!js expr</code></td><td>任意位置可用；挂载期在该行注入完成后 <code>with(ctx){eval}</code> 求值，可用 <code>ctx.&lt;服务&gt;</code>、<code>process.env</code>、<code>dshHomePath()</code></td></tr>
+  </table>
+  <div class="note"><span class="t">空文件陷阱</span>空/纯注释的 patch 文件会解析成 null（不是列表）而抛错；想表达「空层」请写 <code>[]</code>（packages/boot/app-boot/README.md）。</div>
+
+  <h2 id="plugin-cmd">dsh plugin：pnpm 的诚意转播</h2>
+  <p><code>dsh plugin --profile &lt;name&gt; &lt;pnpm args…&gt;</code> 不发明包管理器：全部 pnpm 动词在 profile 目录内原样执行。dsh 只贡献三件事：</p>
+  <ol>
+    <li><strong>首次初始化</strong>：写 profile 三件套（<code>package.json</code> + 空的 <code>cordis.patch.yml</code> + <code>pnpm-workspace.yaml</code>，后者固定 <code>nodeLinker: hoisted</code> 保证扁平 node_modules）；</li>
+    <li><strong>相对路径锚定</strong>：<code>add .</code> / <code>link:..</code> 重写为用户调用目录的绝对路径（pnpm 的 cwd 是 profile 目录）；</li>
+    <li><strong>安装对账</strong>：按安装结果（而非依赖 diff）更新 <code>dsh.profile.bundles</code> —— 新依赖解析出 <code>dsh.bundle.patch</code> 就追加为层，声明消失就移出。update 到「新版本才获得 dsh.bundle 声明」的包会自动激活。</li>
+  </ol>
+  <p>git 安装失败时，报错会直接给出 <code>allowBuilds</code> 指引（pnpm ≥10 拒绝运行 git 依赖的 <code>prepare</code> 脚本）。这个契约的完整展开在<a href="integration.html">集成机制</a>一章。</p>
+
+  <h2 id="dump">--dump-config：不启动看树</h2>
+  <p><code>dsh --profile web --dump-config</code> 与 boot 走<strong>同一个组合函数</strong>，对每个层前缀做快照再 diff，输出带 <code># == 来源, patched by 层</code> 注释的 YAML（可直接再加载），每行标注 origin 与 patchedBy；<code>!!js</code> 原样打印不求值；未命中任何行的补丁打到 stderr。变体 <code>--dump-default-config</code> 连 profile 用户层都不读 —— 层坏了也能看 bundle 层，这是坏层恢复的诊断入口。dump 拒绝携带应用参数：「dump 不跑应用的命令行 provider，印一棵与实际启动不同的树会误导」。</p>
+
+  <h2 id="why">设计意图的通俗解释</h2>
+  <ul>
+    <li><strong>一切皆 patch，根为空</strong> —— 把「产品由哪些插件构成」从代码问题变成数据问题：dump 可离线重现、用户层可覆盖任何行、bundle 之间靠 id 寻址而非相互 import。</li>
+    <li><strong>整行替换而非深合并</strong> —— 防幽灵默认值：若合并，bundle 后来新增的键会悄悄改变用户覆盖行的行为；整行替换迫使覆盖者显式复述，每行最终值永远只在唯一一层可见。</li>
+    <li><strong>launcher 不认识应用</strong> —— 新增一个带命令行的 app 不需要改 launcher 一行代码；每个 app 拥有自己的 --help。</li>
+    <li><strong>双锚解析</strong> —— 内置 bundle 与运行的 dsh 同源（不能运行 0.1.2 却加载用户 profile 里的旧版 base）；出树插件归 profile 的 pnpm 管。</li>
+    <li><strong>dump 与 boot 同函数</strong> —— 从机制上杜绝「dump 显示的树与实际启动不一致」这类最消耗信任的偏差。</li>
+  </ul>
+
+  <div class="pager">
+    <a href="cordis.html">← Cordis 模型</a>
+    <a href="services.html">下一章：宿主服务 →</a>
+  </div>
+</main>
+<footer class="foot">dsh 插件架构解构 · 生成于 2026-09-14 · 流程依据 apps/cli/src/{bin,args,profile-boot,plugin,dump-config}.ts 与 packages/boot/app-boot/src/</footer>
+</body>
+</html>

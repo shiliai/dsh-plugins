@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>集成机制 · dsh 插件架构解构</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="index.html">dsh<span>·</span>架构解构</a>
+  <a href="index.html">总览</a>
+  <a href="cordis.html">Cordis 模型</a>
+  <a href="boot.html">启动链路</a>
+  <a href="services.html">宿主服务</a>
+  <a href="integration.html" class="active">集成机制</a>
+  <a href="plugins/plugin-wecom.html">wecom</a>
+  <a href="plugins/plugin-remote.html">remote</a>
+  <a href="plugins/plugin-reading.html">reading</a>
+  <a href="plugins/plugin-obsidian.html">obsidian</a>
+  <a href="plugins/plugin-file-attachment.html">file-attachment</a>
+  <a href="patterns.html">接口与模式</a><a href="walkthrough.html">插件实战</a>
+</nav>
+
+<main class="page">
+  <header class="hero">
+    <h1>集成机制：插件如何被安装、声明与更新</h1>
+    <p class="sub">dsh 侧的机制（bundle/profile 双清单、安装对账、allowBuilds）× 我们仓库侧的实践（monorepo 子目录包、updater、bootstrap）。这一页解释我们 AGENTS.md 里每条纪律的「为什么」。</p>
+  </header>
+
+  <h2 id="dual">两个概念、两个清单：bundle 与 profile</h2>
+  <blockquote><span class="label">官方纪律</span>（docs/user/develop/basic/publish.md）A bundle is what you author and distribute; a profile is what a user boots with <code>dsh --profile &lt;name&gt;</code>. <strong>Nothing is both.</strong></blockquote>
+  <table>
+    <tr><th style="width:150px"></th><th>Bundle（我们写的）</th><th>Profile（用户侧的）</th></tr>
+    <tr><td>是什么</td><td>npm 包，携带一个配置层</td><td><code>$DSH_HOME/profiles/&lt;name&gt;</code> 目录，一份可运行的组合</td></tr>
+    <tr><td>清单</td><td><code>"dsh": { "bundle": { "patch": "./cordis.patch.yml" } }</code> —— 回答「这个包贡献什么」</td><td><code>"dsh": { "profile": { "bundles": […] } }</code> —— 回答「哪些 bundle 按什么顺序组合」</td></tr>
+    <tr><td>谁维护</td><td>插件作者</td><td><code>dsh plugin</code> 自动维护（用户永远不手写）</td></tr>
+    <tr><td>我们的实例</td><td><code>plugins/dsh-wecom/package.json</code> + <code>cordis.patch.yml</code></td><td><code>~/.local/dsh_home/profiles/web/package.json</code></td></tr>
+  </table>
+  <p>没有 <code>dsh.bundle</code> 声明的包也能装，但只作为普通依赖：dsh 会警告且不激活任何层 —— 这种格式留给「被插件包 import 的库」。</p>
+
+  <h2 id="patch">bundle 的 patch 文件：insert 即安装</h2>
+  <p>我们 5 个插件的 <code>cordis.patch.yml</code> 都是同一个模式 —— <code>insert</code> 一行、声明 inject、给默认配置（<code>!!js</code> 读环境变量）。对比：</p>
+  <table>
+    <tr><th>插件</th><th>inject</th><th>patch 里的关键默认值</th><th>安全姿态</th></tr>
+    <tr><td><code>dsh-wecom</code></td><td>tools, agents, agentDefaultModel, agentPresets, sessions, webServer</td><td>botId/botSecret ← <code>process.env</code>；三张白名单默认空；authWatchdog 默认开启</td><td>开箱即安全：零授权即零访问</td></tr>
+    <tr><td><code>dsh-remote</code></td><td>webServer</td><td>mode/origin/socket/state 全部 ← <code>DSH_REMOTE_*</code> 环境变量；另有 2 行<b>目录选择器能力替换</b> + 把内置 auto 选择器 <code>disabled: true</code></td><td>远程场景不暴露宿主全盘路径</td></tr>
+    <tr><td><code>dsh-reading</code></td><td>webServer</td><td>dataDir ← <code>READING_DATA_DIR</code> 或 null（走 env/默认链）</td><td>API 响应永不外泄文件路径</td></tr>
+    <tr><td><code>dsh-obsidian</code></td><td>webServer, tools, skills</td><td>vaultRoot ← <code>process.cwd()</code>（支持 <code>cd &lt;vault&gt; &amp;&amp; dsh web</code>）；mutationOrigin ← env</td><td>写操作 Origin 白名单 + symlink 监狱</td></tr>
+    <tr><td><code>dsh-file-attachment</code></td><td>webServer</td><td>纯限额默认值（25MiB/文件、10 文件/消息、24h TTL）</td><td>0700/0600 落盘 + 同源校验</td></tr>
+  </table>
+  <p>用户侧覆盖发生在 profile 的 <code>cordis.patch.yml</code>（后层胜，<strong>整行替换 config</strong>）。实机样本：覆盖 dsh-wecom 白名单时必须连 <code>botId/botSecret</code> 一起复述 —— 注释里就写着「a patch replaces the WHOLE row config」。</p>
+
+  <h2 id="install">安装契约：GitHub monorepo 子目录</h2>
+<pre><code><span class="c"># 1. 授权构建（pnpm ≥10 拒绝 git 依赖的 prepare 脚本；两种 Git source 归一化都要 trust）</span>
+dsh plugin --profile web config set --location=project --json allowBuilds \
+  <span class="s">'{"@dsh-plugins/dsh-wecom@git+https://github.com/shiliai/dsh-plugins.git":true, …}'</span>
+<span class="c">#   ↑ 对 git+ssh 归一化形态再写一条同样的键（完整可复制的 allowBuilds JSON</span>
+<span class="c">#     见根 README「Install from GitHub」一节）</span>
+
+<span class="c"># 2. 安装（pnpm 的 git-hosted specifier：克隆仓库，#path: 指向 monorepo 子目录）</span>
+dsh plugin --profile web add <span class="s">'github:shiliai/dsh-plugins#path:/plugins/dsh-wecom'</span>
+
+<span class="c"># 3. 重启 profile 生效</span></code></pre>
+  <p>整条链路的关键节点：</p>
+  <ul>
+    <li><strong>dsh 对 spec 零特殊处理</strong>：原样进 pnpm。<code>#path:</code> 是 pnpm 的子目录语法；dsh 只在安装后做对账（按<em>真实包名</em> <code>@dsh-plugins/dsh-wecom</code> 追加进 <code>dsh.profile.bundles</code>，与命令行 spec 解耦）。</li>
+    <li><strong>git 安装拉的是源码</strong>：pnpm 装完运行该包的 <code>prepare</code> 脚本自举构建 —— 所以我们的每个插件包必须有自包含的 <code>prepare</code>（不能假设兄弟 monorepo checkout 存在），产物覆盖 <code>main/types/exports/bin</code> 声明的全部文件。</li>
+    <li><strong>allowBuilds 是信任声明</strong>：等于「允许在安装期于本机执行这个包的代码」。官方建议同时 pin commit（<code>github:you/pkg#&lt;sha&gt;</code>）防止后续 push 静默改变运行内容。</li>
+  </ul>
+
+  <h2 id="update">更新：为什么必须走仓库 updater</h2>
+  <p>pnpm 的盲区：<strong>普通 <code>pnpm outdated</code> 检测不到 Git 依赖有了新 commit</strong>（它比的是版本 spec，而 <code>github:…#path:</code> 没有版本号）；本地 <code>link:</code>/tarball 安装更是完全无法被发现。所以更新走自研 updater，经 dsh 的 dlx 执行：</p>
+<pre><code>dsh plugin --profile web --config.dlx-cache-max-age=0 dlx \
+  <span class="s">'github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater'</span> check|update @dsh-plugins/dsh-wecom</code></pre>
+  <table>
+    <tr><th>机制</th><th>解决什么</th></tr>
+    <tr><td><code>--config.dlx-cache-max-age=0</code></td><td>dlx 默认复用缓存的 Git 快照；置 0 强制 pnpm 每次解析 updater 的当前 revision —— 否则 updater 本身可能跑旧逻辑</td></tr>
+    <tr><td>GitHub Contents API 比对</td><td>读仓库内各插件 package.json 的最新 SemVer，与已安装版本严格比较；本地比 GitHub 新（降级）直接报错 —— 回滚必须用更新前留存的本地 tarball</td></tr>
+    <tr><td>迁移状态机</td><td>依赖 spec 不指向 GitHub source 时判 <code>migration-required</code>，update 时先做一次性迁移 —— 解决「本地/link:/tarball 安装无法被发现」</td></tr>
+    <tr><td>configureBuildTrust</td><td>update 前自动为 <code>git+https</code> 与 <code>git+ssh</code> 两种归一化形态写 allowBuilds —— 这就是 AGENTS.md「Build trust 必须覆盖两种归一化」的出处</td></tr>
+    <tr><td>收敛复检</td><td>update 后重新 check，不收敛即抛错</td></tr>
+  </table>
+
+  <h2 id="bootstrap">bootstrap：跨机器一键引导</h2>
+  <p><code>scripts/dsh-bootstrap</code> 把上面所有契约串成幂等的五阶段：<strong>ensure-dsh → credentials（原子写 <code>.credentials.yaml</code>，mode 600）→ settings（便携模板物化为本机文件，绝不覆盖用户真实配置）→ plugins（先 ensureBuildTrust，安装一律走 <code>dsh plugin add</code>）→ update（先升 dsh 并冒烟验证，再升插件）</strong>。两个值得记住的设计：</p>
+  <ul>
+    <li>先升宿主再升插件的顺序有注释点明原因：<em>插件若对着更新的 core 解析，可能让 Web 出现重复的私有 scope 符号、会话无法绑定</em>；</li>
+    <li>入口的 <code>assertProfileSafe</code> 拒绝 npm/pnpm 双锁文件与 profile 私有 DSH core 包的混合状态。</li>
+  </ul>
+
+  <h2 id="restart">重启安全协议（TOOL_OUTCOME_UNKNOWN）</h2>
+  <p>我们 AGENTS.md 的第一条纪律背后是 Harness 的一条不变量：<strong>tool/call 先于 tool/result 落盘</strong>。如果在一个跑在 DSH 进程内的工具调用里杀掉/替换该进程，对应 result 永远缺失，会话恢复时就会出现 <code>TOOL_OUTCOME_UNKNOWN</code>。所以正确姿势是两阶段：</p>
+  <ol>
+    <li>部署命令跑完并<em>持久记录结果</em>；</li>
+    <li>由外部 supervisor / 独立终端重启 DSH，在新请求里验证健康与会话恢复。</li>
+  </ol>
+  <p>dsh-remote 的安装脚本把这个纪律工程化成 trap 式两阶段提交（失败自动还原）；wecom 面板的 /restart 只重建插件桥、绝不动 DSH 本体。</p>
+
+  <h2 id="matrix">5 个插件集成方式对比</h2>
+  <table>
+    <tr><th>插件</th><th>定位</th><th>inject（服务端）</th><th>agent 工具</th><th>HTTP API 前缀</th><th>client UI</th><th>与 agent 会话的关系</th></tr>
+    <tr><td><a href="plugins/plugin-wecom.html">dsh-wecom</a></td><td>企微常驻机器人桥</td><td>tools, agents, agentDefaultModel, agentPresets, sessions, webServer</td><td>1（wecom_send_message）</td><td>/dsh-wecom/api</td><td>状态面板（侧栏按钮 + overlay）</td><td><b>深</b>：每条消息一个回合，create/resume agent、双向镜像、问题卡路由</td></tr>
+    <tr><td><a href="plugins/plugin-reading.html">dsh-reading</a></td><td>沉浸式阅读工作台</td><td>webServer</td><td>0</td><td>/dsh-reading/api</td><td>设置 tab + 侧栏按钮 + 三栏工作台</td><td><b>浅</b>：内容以「草稿文本块」进对话，agent 用宿主文件工具拉全文</td></tr>
+    <tr><td><a href="plugins/plugin-obsidian.html">dsh-obsidian</a></td><td>笔记库工作台 + vault 技能</td><td>webServer, tools, skills</td><td>8（obsidian_*）</td><td>/dsh-obsidian/api</td><td>设置 tab + 工作台 + VaultBrowser + NotePanel</td><td><b>中</b>：工具直读 vault；内容经草稿块进上下文</td></tr>
+    <tr><td><a href="plugins/plugin-remote.html">dsh-remote</a></td><td>私有链接远程接入</td><td>webServer</td><td>0</td><td>/dsh-remote/api + 独立网关</td><td>Remote 状态面板</td><td><b>无</b>（传输/信任层，不碰 agent）</td></tr>
+    <tr><td><a href="plugins/plugin-file-attachment.html">dsh-file-attachment</a></td><td>纯文本模型的本地附件</td><td>webServer</td><td>0（刻意）</td><td>/dsh-file-attachment/api</td><td>输入区按钮 + 附件 dock</td><td><b>浅</b>：附件降维成 prompt 里的引用文本块</td></tr>
+  </table>
+
+  <h2 id="patterns">四种集成模式（按侵入度递增）</h2>
+  <div class="grid">
+    <div class="card"><h3>① 纯旁路（transport）</h3><p>只消费 webServer，自建 API + client UI，不碰 agent。代表：dsh-remote、dsh-reading、dsh-file-attachment。适合「给 Web UI 加一块独立功能」。</p></div>
+    <div class="card"><h3>② 提供工具（capability）</h3><p>在 ① 之上注册 <code>ctx.tools</code>，让模型获得新能力。代表：dsh-obsidian 的 8 个笔记工具、wecom 的出站推送。要点：工具自带安全边界（白名单/围栏/乐观锁）。</p></div>
+    <div class="card"><h3>③ 驱动回合（driver）</h3><p>成为「用户入口」：外部消息 → <code>agents.create/resume</code> → <code>agent.followup</code> → 读会话事件生成回复。代表：dsh-wecom。要点：会话映射、生命周期回收、与 web 通道共存。</p></div>
+    <div class="card"><h3>④ 接管交互（interaction）</h3><p>把宿主的交互原语路由到自己通道：注册 userQuestions 通道 provider，ask_user_question 以企微模板卡下发、答案作为工具结果回来。代表：dsh-wecom。这是最深的集成形态。</p></div>
+  </div>
+  <p>注意四层的共同点：<strong>没有一个改过宿主一行代码</strong> —— 全部通过 insert 行、inject、事件与服务注册完成。dsh-remote 对宿主 webServer 内部 socket 的唯一「接触」也只是一个防御性的错误吸收器（且被 AGENTS.md 列为每个 release 必须保留的行为）。代码层面的接口契约与设计模式另见<a href="patterns.html">接口与模式</a>专页。</p>
+
+  <div class="pager">
+    <a href="services.html">← 宿主服务</a>
+    <a href="plugins/plugin-wecom.html">下一章：dsh-wecom →</a>
+  </div>
+</main>
+<footer class="foot">dsh 插件架构解构 · 生成于 2026-09-14</footer>
+</body>
+</html>

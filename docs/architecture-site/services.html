@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>宿主服务面 · dsh 插件架构解构</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="index.html">dsh<span>·</span>架构解构</a>
+  <a href="index.html">总览</a>
+  <a href="cordis.html">Cordis 模型</a>
+  <a href="boot.html">启动链路</a>
+  <a href="services.html" class="active">宿主服务</a>
+  <a href="integration.html">集成机制</a>
+  <a href="plugins/plugin-wecom.html">wecom</a>
+  <a href="plugins/plugin-remote.html">remote</a>
+  <a href="plugins/plugin-reading.html">reading</a>
+  <a href="plugins/plugin-obsidian.html">obsidian</a>
+  <a href="plugins/plugin-file-attachment.html">file-attachment</a>
+  <a href="patterns.html">接口与模式</a><a href="walkthrough.html">插件实战</a>
+</nav>
+
+<main class="page">
+  <header class="hero">
+    <h1>宿主服务面：插件能 inject 到什么</h1>
+    <p class="sub">出树插件与宿主的全部交互都通过 <code>ctx</code> 上的服务与事件。本页逐个过核心服务的契约与「我们的插件怎么用它」。服务的权威文档由源码生成在 <code>docs/subsystems/*.md</code> —— 官方明确要求以生成区域 + TS 接口为准，不维护第二份静态清单。</p>
+  </header>
+
+  <figure>
+    <svg viewBox="0 0 960 380" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, PingFang SC, sans-serif">
+      <style>
+        .svc { fill:#171a21; stroke:#2a2f3a; rx:8; }
+        .svct { fill:#d7dce4; font-size:12.5px; }
+        .svcs { fill:#98a2b3; font-size:10.5px; }
+        .plug { fill:#12233a; stroke:#2f5f9e; rx:8; }
+        .ln { stroke:#3a6ea8; stroke-width:1; fill:none; stroke-dasharray:3,3; }
+      </style>
+      <rect x="330" y="140" width="300" height="90" class="plug" rx="8"/>
+      <text x="480" y="175" text-anchor="middle" fill="#7db4ef" font-size="15" font-weight="bold">出树插件（如 dsh-wecom）</text>
+      <text x="480" y="198" text-anchor="middle" class="svcs">export const inject = […]</text>
+      <text x="480" y="214" text-anchor="middle" class="svcs">apply(ctx, config) 里消费</text>
+      <!-- services ring -->
+      <g>
+        <rect x="30" y="30" width="180" height="60" class="svc" rx="8"/><text x="44" y="54" class="svct">ctx.tools</text><text x="44" y="72" class="svcs">工具注册 + 执行管线</text>
+        <rect x="240" y="20" width="180" height="60" class="svc" rx="8"/><text x="254" y="44" class="svct">ctx.agents</text><text x="254" y="62" class="svcs">create/resume AgentHandle</text>
+        <rect x="540" y="20" width="180" height="60" class="svc" rx="8"/><text x="554" y="44" class="svct">ctx.sessions</text><text x="554" y="62" class="svcs">事件溯源会话日志</text>
+        <rect x="750" y="30" width="180" height="60" class="svc" rx="8"/><text x="764" y="54" class="svct">ctx.webServer</text><text x="764" y="72" class="svcs">HTTP 路由 / upgrade / tapIndex</text>
+        <rect x="20" y="280" width="200" height="60" class="svc" rx="8"/><text x="34" y="304" class="svct">ctx.agentPresets</text><text x="34" y="322" class="svcs">preset 组合挂载 mount()</text>
+        <rect x="250" y="290" width="200" height="60" class="svc" rx="8"/><text x="264" y="314" class="svct">ctx.agentDefaultModel</text><text x="264" y="332" class="svcs">currentSelection() / save</text>
+        <rect x="480" y="290" width="220" height="60" class="svc" rx="8"/><text x="494" y="314" class="svct">ctx.sessionPersistence</text><text x="494" y="332" class="svcs">可选：JSONL/SQLite 持久化</text>
+        <rect x="730" y="280" width="200" height="60" class="svc" rx="8"/><text x="744" y="304" class="svct">ctx.skills</text><text x="744" y="322" class="svcs">技能 provider 注册表</text>
+      </g>
+      <g class="ln">
+        <line x1="120" y1="94" x2="360" y2="140"/>
+        <line x1="330" y1="82" x2="420" y2="140"/>
+        <line x1="630" y1="82" x2="540" y2="140"/>
+        <line x1="840" y1="94" x2="600" y2="140"/>
+        <line x1="120" y1="280" x2="380" y2="232"/>
+        <line x1="350" y1="290" x2="440" y2="232"/>
+        <line x1="590" y1="290" x2="520" y2="232"/>
+        <line x1="830" y1="280" x2="580" y2="232"/>
+      </g>
+      <text x="480" y="120" text-anchor="middle" fill="#98a2b3" font-size="11">虚线 = inject 声明的服务依赖（就绪后 apply 才运行）；可选服务用 ctx.get() 判空降级</text>
+    </svg>
+    <figcaption>图 4 · 出树插件与宿主服务面。每个服务都是一个 Service 子类，定义在宿主自己的包里，插件只是消费者。</figcaption>
+  </figure>
+
+  <h2 id="tools">tools — 工具注册表与执行管线</h2>
+  <p><code>ToolRuntime</code>（<code>packages/core/tools/src/index.ts:787</code>，<code>static inject: ['systemPrompt']</code>）。注册 API 与作用域：</p>
+  <ul>
+    <li><code>ctx.tools.register(definition)</code> —— 全局注册；若经 <code>agent.ctx</code> 注册则落在该 agent 作用域（scoped 遮蔽全局）；</li>
+    <li>scoped 面还有 <code>restrict(filter)</code>（allow/deny 过滤全局工具）、<code>guard(g)</code>（单调守卫：返回字符串即拒绝，不可被翻回允许）、<code>presentAs(mode)</code>。</li>
+  </ul>
+  <p><code>defineTool</code>（<code>packages/core/tools/src/schema.ts:545</code>）的核心设计是「<strong>规范值 + 渲染</strong>」分离：<code>execute</code> 返回 <code>output.schema</code> 声明的规范 JSON 值，<code>output.render(args, value)</code> 再投影成模型可见内容 —— 同一份结果可以既给模型又给 UI。可选的 <code>presentCall/presentResult</code> 声明 UI 卡片渲染意图（纯函数、重放安全）。执行管线事件（全部 scope 过滤）：<code>tools/pre-execute</code>（waterfall，allow/deny/ask）→ <code>tools/execute</code>（around，可换 signal）→ <code>tools/post-execute</code>（accept/replace/block）→ <code>tools/result</code>（emit，冻结观察）。</p>
+<pre><code><span class="c">// dsh-wecom 的出站工具 plugins/dsh-wecom/src/tools.ts:12-55</span>
+ctx.tools.register(defineTool({
+  name: <span class="s">'wecom_send_message'</span>,
+  description: <span class="s">'向企业微信单聊/群聊推送 Markdown 消息'</span>,
+  parameters: { chatId: {…, required: <span class="k">true</span>}, content: {…, required: <span class="k">true</span>} },
+  isConcurrencySafe: () =&gt; <span class="k">false</span>,   <span class="c">// 串行执行</span>
+  <span class="k">async</span> execute(args) {
+    <span class="k">if</span> (!isAllowed(args.chatId, outboundAllowChats)) <span class="k">throw</span> … <span class="c">// 默认拒绝</span>
+    <span class="k">return</span> { ok: <span class="k">true</span>, message: … }   <span class="c">// 规范值</span>
+  },
+  output: { schema: {…}, render: (_a, v) =&gt; [{ type: <span class="s">'text'</span>, text: … }] },
+}))</code></pre>
+
+  <h2 id="agents">agents — Agent 注册表与工厂</h2>
+  <p><code>AgentRegistry</code>（<code>packages/core/agent/src/index.ts:256</code>）。真正的构造由 <code>dsh-agent-loop</code> 通过 <code>setFactory</code> 注入。两个入口：</p>
+  <ul>
+    <li><code>ctx.agents.create(options): Promise&lt;AgentHandle&gt;</code> —— <code>sessionId</code>、<code>meta</code>（cwd/preset/origin…）、<code>agentOptions</code>（provider/model）、<code>seed</code>（fork 前缀）、<code>setup(agentCtx)</code>；</li>
+    <li><code>ctx.agents.resume({resumeSessionId, …})</code> —— 恢复持久化会话，要求 <code>sessionPersistence</code> 存在。</li>
+  </ul>
+  <p><strong>setup 的事务语义</strong>（<code>index.ts:114-132</code>）是理解插件如何「定制一个 agent」的关键：factory 先铸 agentCtx → await setup → 执行 setup 返回的同步 commit → 最后才发布 session 与 agent。setup 里注册的 scoped 工具、prompt section、preset 挂载都先于首次 prompt 组装存在；setup 抛错则整体回滚。<code>AgentHandle = { agent, dispose() }</code> —— 只有持有者能拆掉这个 agent。</p>
+<pre><code><span class="c">// dsh-wecom ensureAgent 的 setup（plugins/dsh-wecom/src/index.ts:614-741 精简）</span>
+<span class="k">const</span> selection = ctx.get(<span class="s">'agentDefaultModel'</span>).currentSelection()
+<span class="k">const</span> preset = <span class="k">await</span> resolvePreset(ctx.get(<span class="s">'agentPresets'</span>), …)
+<span class="k">const</span> created = <span class="k">await</span> agents.create({
+  sessionId, meta: { cwd, agentPreset: preset.id }, agentOptions: { provider, model },
+  setup: <span class="k">async</span> (agentCtx) =&gt; {
+    installModelSelection(agentCtx, { current: selection })  <span class="c">// 模型选择快照进 agent 作用域</span>
+    <span class="k">await</span> ctx.get(<span class="s">'agentPresets'</span>).mount(agentCtx, preset.id) <span class="c">// 挂载 preset 组合</span>
+  },
+})</code></pre>
+
+  <h2 id="model">agentDefaultModel / agentPresets</h2>
+  <p><code>AgentDefaultModelConfig</code>（<code>packages/core/agent-default-model/src/index.ts:64</code>）：<code>currentSelection(): { provider, model, reasoningEffort? }</code> 与 <code>saveSelection()</code>；有 settings 服务时挂 agent-default-model 命名空间让用户层实时覆盖。<code>installModelSelection(agentCtx, ref)</code>（从 <code>@deepseek-ai/dsh-agent</code> 导出）在 agent 作用域装两个 waterfall 监听（<code>system-prompt/assemble</code> 快照模型、<code>agent/request</code> 应用到请求），实现「并发切模型在下一步生效而不撕裂组装面」。</p>
+  <p><code>AgentPresets</code>（<code>packages/preset/agent-presets/src/index.ts:82</code>）：<strong>每个 preset 是一份 cordis.yml 组合</strong>，按 preset 挂载为常驻 scope（standing mount），文件变更启动下一代 mount、已加入的 session 留在原代。核心 API：<code>mount(agentCtx, id?)</code>（在 agent factory 的 setup 里调，失败回滚整个创建）、<code>composeFrom()</code>（子 agent 继承父组合）、<code>recompose()</code>、<code>list()/resolve()/copy()/remove()</code>。dsh-wecom 的 <code>/agent</code> 命令就是它的消费面。</p>
+
+  <h2 id="sessions">sessions — 事件溯源会话</h2>
+  <p><code>SessionStore</code>（<code>packages/core/session/src/index.ts:792</code>）。核心事实（文件头注释）：<strong>append-only 事件日志 + 内存 store + 派生的 LLM 消息史；持久化是插件的事</strong>。API 面：<code>create/prepare/enter/announce</code>、<code>flush(session)</code>（唯一 flush 入口，<code>session/flush</code> parallel 事件让持久化插件检查点）、<code>fork()</code>（从活 source 的完整回合前缀派生子会话）、<code>get/list</code>。</p>
+  <p>事件类型（<code>SessionEventMap</code>）是<strong>可 merge 扩展的</strong> —— 插件可以声明自己的会话事件类型，只要 lossless-JSON 可序列化。事件携带 <code>{ type, seq, time, data }</code>。这就是 dsh 那条架构铁律的落点：<em>model-visible means logged</em> —— 凡到达模型请求的输入必须能从日志重建（有运行时不变量断言），所以新的模型可见输入 = 扩展 SessionEventMap。</p>
+
+  <h2 id="persistence">sessionPersistence — 缝的样板</h2>
+  <p>抽象类 <code>SessionPersistence</code>（<code>packages/session/session-persistence/src/index.ts:84</code>）只定义契约：<code>locate/create/append/load/inspect/readFrom/list/listSnapshots</code>；实现有两个 Provider —— JSONL（默认，zstd 压缩帧）与 SQLite。web profile 装 JSONL 后端；<strong>headless profile 没有</strong>。消费方用可选依赖模式：dsh-wecom <code>ctx.get('sessionPersistence')</code> 判空降级（<code>plugins/dsh-wecom/src/index.ts:532</code>），定义结构子集接口 <code>SessionPersistenceLike</code> 而不是 import 实现。这是 Service Definition / Provider / Consumer 三角色分离的教科书案例。</p>
+
+  <h2 id="webserver">webServer — 裸 HTTP 路由表</h2>
+  <p><code>WebServer</code>（<code>packages/host/webserver/src/index.ts:59</code>）：node:http 裸服务器 + 路由表，<strong>不懂任何 harness 概念、不服务任何文件</strong>。API 只有四个：</p>
+  <table>
+    <tr><th>API</th><th>语义</th></tr>
+    <tr><td><code>register({kind, path, handler})</code></td><td>exact 或 prefix 路由；重复 (kind,path) 抛错；匹配「exact 优先、最长前缀胜」</td></tr>
+    <tr><td><code>registerUpgrade(route)</code></td><td>exact path 的 HTTP upgrade（WebSocket）</td></tr>
+    <tr><td><code>registerFallback(handler)</code></td><td>唯一席位：未被认领的请求（SPA dist 服务器占用）；第二个注册者抛错</td></tr>
+    <tr><td><code>tapIndex(transform)</code></td><td>index.html 变换管线（boot 清单注入走这里）</td></tr>
+  </table>
+  <p><strong>鉴权约定：dsh 没有全局鉴权中间件 —— 每个插件各自负责自己路由的信任检查。</strong>宿主自己的示范：<code>/api</code> 由 client-connection 注册并过 DNS-rebinding 信任栅栏（非同源/非信任 host 403，特权方法钉死 loopback）；静态前端 claim fallback 席位；插件自定义 API 的典型形状是「自定前缀 + POST 变更做 Origin/sec-fetch-site 校验」：</p>
+<pre><code><span class="c">// dsh-wecom /dsh-wecom/api（plugins/dsh-wecom/src/http-api.ts:8-58）</span>
+webServer.register({ kind: <span class="s">'prefix'</span>, path: <span class="s">'/dsh-wecom/api'</span>, handler })
+<span class="c">// GET 只读接口开放；POST（restart 等）isTrustedMutationRequest：</span>
+<span class="c">//   sec-fetch-site 必须 same-origin 且 Origin 严格等于 managementOrigin</span>
+<span class="c">// 响应统一 no-store / no-referrer / nosniff</span></code></pre>
+
+  <h2 id="client">Web 客户端扩展：client bundle 与 slots</h2>
+  <p>插件的浏览器侧如何被宿主发现？（<code>packages/client/modules/src/index.ts</code>）</p>
+  <ol>
+    <li>插件包在 <code>package.json</code> 声明 <code>dsh.client: { platform: 'web', inject: […], immediately? }</code> 且 <code>exports["./client"]</code> 存在；</li>
+    <li>宿主 <code>clientModules</code> 服务（inject: webServer + loader）扫描 loader entries，把每个 client bundle 暴露为 <code>/plugins/&lt;pkg&gt;/client.js?rev=&lt;sha1前12&gt;</code>（内容寻址缓存穿透）；</li>
+    <li><code>tapIndex</code> 把入口清单 <code>{ rev, entries: […] }</code> 注入 index.html 的 <code>window.__DSH_BOOT__</code>；</li>
+    <li>浏览器 shell 内核拉取执行 —— client 模块同样是 cordis 插件形状：<code>export const inject = ['slots']</code> + <code>apply(ctx: ClientContext)</code>，跑在<em>浏览器里的另一个 cordis 上下文</em>。</li>
+  </ol>
+  <p>浏览器侧的服务面由 <code>dsh-client-runtime</code> 提供：<code>ctx.slots</code>（SlotRegistry）、<code>ctx.conversation</code>（输入区）、<code>ctx.sessions</code> / <code>ctx.workspaces</code>、<code>ctx.layout</code>。槽位契约经 <code>SlotMap</code> 声明合并扩展，种类 <code>single|list|keyed|chain</code>、作用域 <code>root|session-maybe|session</code>。我们插件用过的槽位：</p>
+  <table>
+    <tr><th>槽位</th><th>类型</th><th>用途</th><th>我们的用法</th></tr>
+    <tr><td><code>settings.plugins.tab</code></td><td>list</td><td>插件设置页里的一个 tab</td><td>reading / obsidian 的设置面板（含版本条）</td></tr>
+    <tr><td><code>sidebar.footer.action</code></td><td>list</td><td>侧栏底部动作按钮</td><td>wecom 面板入口、reading 书本按钮、obsidian 工作台</td></tr>
+    <tr><td><code>shell.overlay</code></td><td>list</td><td>全屏浮层</td><td>wecom / reading / obsidian 的工作台 portal</td></tr>
+    <tr><td><code>conversation.input.left</code> / <code>.dock</code></td><td>list / session</td><td>输入区左侧 / 停靠区</td><td>file-attachment 的回形针按钮与附件 dock</td></tr>
+    <tr><td><code>sidebar.workspaces</code></td><td>single</td><td>侧栏工作区区</td><td>obsidian 的 VaultBrowser</td></tr>
+    <tr><td><code>conversation</code> / <code>conversation.session</code> / <code>details</code></td><td>—</td><td>对话区相关</td><td>obsidian NotePanel 按会话状态动态选位</td></tr>
+  </table>
+  <p>工作台叠加范式（reading/obsidian 共用）：<code>createPortal</code> + 在宿主 DOM 探测 <code>[data-phase]</code> 锚点 + 纯函数几何模块（可单测）—— <strong>不修改宿主布局代码，宿主壳对插件零感知</strong>。</p>
+
+  <h2 id="skills">skills — 技能 provider 注册表</h2>
+  <p><code>ctx.skills.registerProvider((control) =&gt; provider)</code>（<code>packages/skill/skill/src/index.ts:391</code>），rank 越低越优先。dsh-obsidian 在全局层注册一个 provider（rank 300），实例经 <code>setStore</code> 跟随当前 vault —— 「全局注册、闭包换库」，vault 切换时调宿主 <code>invalidate()</code> 触发重列，技能集合动态跟随工作区而不重复注册。</p>
+
+  <h2 id="turnflow">串起来：一个回合的流水线</h2>
+<pre><code>turn/start
+  认领下一步输入 + 一条排队消息
+  组装 prompt sections + tool schemas
+  → agent/pre-step      拒绝 | 改写 enter(messages)     [waterfall —— 决定模型看到什么]
+     step/start
+     追加 user/message（落日志）
+     从日志投影模型历史 deriveMessages()
+     agent/request → llm/stream → assistant/chunk* → assistant/message
+     tool/call* → tools/pre-execute → tools/execute → tools/post-execute → tool/result*
+     step/end
+  → agent/turn-stopping                                    [serial，无 next()]
+turn/end</code></pre>
+  <p><code>turn/*</code>、<code>step/*</code>、<code>user/message</code>、<code>assistant/*</code>、<code>tool/*</code> 是<em>持久会话事件</em>；<code>agent/pre-step</code>、<code>agent/request</code>、<code>llm/stream</code>、<code>tools/*</code> 是<em>活的扩展点</em>（waterfall，必须调 next() 委托）。dsh-wecom 的 ask_user_question 卡片路由正是挂在这个体系上：宿主的 ask_user_question 工具在 <code>agent/pre-step</code> 读「本轮触发消息」的通道路由，把提问转给对应通道的 provider。</p>
+
+  <div class="pager">
+    <a href="boot.html">← 启动链路</a>
+    <a href="integration.html">下一章：集成机制 →</a>
+  </div>
+</main>
+<footer class="foot">dsh 插件架构解构 · 生成于 2026-09-14</footer>
+</body>
+</html>

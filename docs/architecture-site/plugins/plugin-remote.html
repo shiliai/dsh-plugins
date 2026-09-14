@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dsh-remote · dsh 插件架构解构</title>
+<link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="../index.html">dsh<span>·</span>架构解构</a>
+  <a href="../index.html">总览</a>
+  <a href="../cordis.html">Cordis 模型</a>
+  <a href="../boot.html">启动链路</a>
+  <a href="../services.html">宿主服务</a>
+  <a href="../integration.html">集成机制</a>
+  <a href="plugin-wecom.html">wecom</a>
+  <a href="plugin-remote.html" class="active">remote</a>
+  <a href="plugin-reading.html">reading</a>
+  <a href="plugin-obsidian.html">obsidian</a>
+  <a href="plugin-file-attachment.html">file-attachment</a>
+  <a href="../patterns.html">接口与模式</a><a href="../walkthrough.html">插件实战</a>
+</nav>
+
+<main class="page">
+  <header class="hero">
+    <h1>dsh-remote：私有链接远程接入</h1>
+    <p class="sub">把只绑在 127.0.0.1 的 dsh Web，经 SSH Unix-socket 反向隧道 + VPS 上的 Nginx 边缘，以「URL fragment 内 256-bit bearer」的私链形式安全暴露给远程浏览器。它是纯传输/信任层插件 —— 不注册工具、不碰 agent。</p>
+    <div class="meta">v0.3.3 · inject: [webServer] · 配套：dsh-remote-edge（VPS 布线器 bin）、install-dsh-remote-instance.sh（节点安装器）</div>
+  </header>
+
+  <figure>
+    <svg viewBox="0 0 960 260" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, PingFang SC, sans-serif">
+      <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4d9fff"/></marker></defs>
+      <style>.rb{fill:#171a21;stroke:#2a2f3a;} .rh{fill:#4d9fff;font-size:12px;font-weight:bold;} .rt{fill:#d7dce4;font-size:12px;} .rs{fill:#98a2b3;font-size:10.5px;} .re{stroke:#4d9fff;stroke-width:1.2;fill:none;}</style>
+      <rect x="20" y="90" width="160" height="80" class="rb" rx="10"/>
+      <text x="34" y="114" class="rh">远程浏览器</text>
+      <text x="34" y="136" class="rs">https://&lt;id&gt;.dsh.…</text>
+      <text x="34" y="152" class="rs">#/access/&lt;43字符token&gt;</text>
+      <rect x="240" y="90" width="160" height="80" class="rb" rx="10"/>
+      <text x="254" y="114" class="rh">VPS Nginx 边缘</text>
+      <text x="254" y="136" class="rs">dsh-remote-edge/hub 编排</text>
+      <text x="254" y="152" class="rs">通配符证书 · 离线 503 页</text>
+      <rect x="460" y="90" width="200" height="80" class="rb" rx="10"/>
+      <text x="474" y="114" class="rh">RemoteGateway</text>
+      <text x="474" y="136" class="rs">127.0.0.1:port（本机）</text>
+      <text x="474" y="152" class="rs">票据换 cookie · 反代 · 降权</text>
+      <rect x="720" y="90" width="220" height="80" class="rb" rx="10"/>
+      <text x="734" y="114" class="rh">宿主 dsh Web</text>
+      <text x="734" y="136" class="rs">127.0.0.1:3280（webServer）</text>
+      <text x="734" y="152" class="rs">/api RPC + events WebSocket</text>
+      <line x1="180" y1="130" x2="236" y2="130" class="re" marker-end="url(#ar)"/>
+      <line x1="400" y1="130" x2="456" y2="130" class="re" marker-end="url(#ar)"/>
+      <text x="428" y="120" text-anchor="middle" class="rs" font-size="10">ssh -R</text>
+      <line x1="660" y1="130" x2="716" y2="130" class="re" marker-end="url(#ar)"/>
+      <text x="688" y="120" text-anchor="middle" class="rs" font-size="10">http-proxy + ws</text>
+      <text x="480" y="220" text-anchor="middle" class="rs">TunnelSupervisor：远端清陈旧 socket → spawn ssh -N -R → 稳定延迟 750ms → 远端 chmod 0660 → online；指数退避 × 抖动，generation 计数使旧代失效</text>
+    </svg>
+    <figcaption>图 6 · dsh-remote 链路。边缘网关运行在本机进程内（插件自己起的第二个 HTTP 服务），VPS 只做反代。</figcaption>
+  </figure>
+
+  <h2 id="apply">apply 的三件事</h2>
+  <pre><code><span class="c">// plugins/dsh-remote/src/index.ts:11-26</span>
+<span class="k">export const</span> inject = [<span class="s">'webServer'</span>]
+<span class="k">export function</span> apply(ctx: Context, config: RemoteConfig) {
+  installWebServerSocketCompatibility(ctx.webServer)  <span class="c">// ① 宿主 socket 兼容层</span>
+  remoteService.start(ctx.webServer, config)          <span class="c">// ② 网关 + 隧道 + 状态</span>
+  registerRemoteApi(ctx.webServer, service, …)        <span class="c">// ③ 管理 API</span>
+  <span class="k">return</span> () =&gt; { … }                                   <span class="c">// ctx.effect 统一释放</span>
+}</code></pre>
+  <p><strong>① 是全插件唯一的「摸宿主内部」时刻</strong>：给 webServer 的 http.Server 每个连接挂空错误吸收器 —— DSH 在 close 时先移除了 upgrade 错误处理器，浏览器 reload 的迟到 transport error 会击穿进程。AGENTS.md 把「保留 commit d9022d1 的迟到 socket 保护」列为每个 release 的铁律，并有 dsh-compat 的自动化回归（建 upgrade 后 <code>resetAndDestroy</code>，确认进程仍存活）。</p>
+
+  <h2 id="gateway">边缘网关的信任模型</h2>
+  <table>
+    <tr><th>面</th><th>行为</th><th>鉴权</th></tr>
+    <tr><td>POST /__dsh_remote/session</td><td>票据换 cookie：私链 token → <code>__Host-dsh_remote</code> 会话 cookie（version.HMAC）；launchTicket → 经 Unix socket 找宿主侧 Go 程序赎回 → owner grant cookie（8h TTL、≤16 个、<strong>只存 SHA-256 digest</strong>）</td><td>Origin 必须严格等于 remoteOrigin；body ≤1KB 精确两键</td></tr>
+    <tr><td>GET /（未认证）</td><td>自举页：内联脚本从 URL <em>fragment</em> 取 token POST 换 cookie 后 <code>history.replaceState</code> 抹除 —— <strong>token 只出现在 fragment，永不进服务器日志/Referer/历史记录</strong></td><td>CSP <code>default-src 'none'; script-src 'nonce-…'</code></td></tr>
+    <tr><td>其余 HTTP</td><td>反代到 127.0.0.1:webServer.port</td><td>cookie 会话 + Origin 检查；无 Origin 仅放行 GET/HEAD/OPTIONS</td></tr>
+    <tr><td>WebSocket</td><td>仅 /api/events.mux、/api/events.host</td><td>cookie + Origin 双验；rotate 时踢掉旧会话 WS</td></tr>
+  </table>
+
+  <h2 id="degrade">远程降权：白名单反转</h2>
+  <p>网关在 RPC 层区分「本机回环」与「远程」两种消费者：</p>
+  <ul>
+    <li><strong>远程允许（以 loopback 权威代理）</strong>：<code>MODEL_CONFIGURATION_METHODS</code> —— settings.*、credentials.*、llm.discoverModels；</li>
+    <li><strong>远程一律 403</strong>：<code>LOOPBACK_ONLY_METHODS</code> —— agentPreset.*、host.pickDirectory、host.openPath 等文件系统/预设操作；</li>
+    <li>调用者自标头 <code>x-dsh-remote-*</code> 进入即剥除、转发前再剥鉴权 cookie —— 防伪造与夹带。</li>
+  </ul>
+  <p>这与宿主 packages/api 的 remotes 机制互补：api-remotes 用事件/方法白名单决定「什么能被远端消费」，dsh-remote 在其下一层决定「远端能不能到、以什么身份到」。客户端把 Settings 镜像切到 host 持久化也明确标注为「仅呈现态，网关从不以此作为授权事实」。</p>
+
+  <h2 id="ops">运维面与安装器</h2>
+  <ul>
+    <li><strong>管理 API</strong>（宿主 webServer 上，Origin 白名单）：GET status / POST rotate（轮换 token + sessionVersion 并踢旧 WS）/ POST reconnect。rotate 的落盘以<strong>原子 rename 为提交点</strong>：rename 前失败保旧链接，rename 后失败也报告已提交的新链接；所有比较 <code>timingSafeEqual</code>。</li>
+    <li><strong>配置即环境变量</strong>：mode/instanceId/baseDomain/sshTarget/socket/state/gatewayPort 全部 <code>DSH_REMOTE_*</code>，patch 文件是注入点；多实例模式下 origin/socket/state 都从 instanceId 派生。webServer 与网关<strong>必须绑 127.0.0.1</strong>，否则启动即抛。</li>
+    <li><strong>dsh-remote-edge</strong>（bin）：把 Python 编排器 + 模板 scp 到 VPS 的 mode-700 临时目录 sudo 执行后清理；Hub 模式管多实例注册表，instance add/remove 先 <code>nginx -t</code> 再原子 reload、失败自动还原。</li>
+    <li><strong>install-dsh-remote-instance.sh</strong>：备份回滚目录 → 按 SHA-256 留存 tarball → trap 式两阶段提交 → <code>dsh plugin add</code> → 写 systemd user unit → 轮询健康到 200 才提交；linger 需显式授权。</li>
+  </ul>
+
+  <h2 id="lessons">值得带走的设计点</h2>
+  <ul>
+    <li><strong>私链安全栈</strong>：fragment → HttpOnly <code>__Host-</code> cookie → history 抹除；cookie = <code>version.HMAC(token)</code>，轮换即全量失效；grant 明文永不落盘。</li>
+    <li><strong>对宿主韧性的责任</strong>：插件可以（也应当）为宿主的已知脆弱点提供防护层，但要把这类行为写进仓库纪律（AGENTS.md）并配自动化回归 —— 防护本身成为发布契约。</li>
+    <li><strong>patch 的能力替换用法</strong>：remote 的 cordis.patch.yml 不只 insert 自己，还把宿主的自动目录选择器 <code>disabled: true</code> 换成显式 browse 实现 —— 补丁层可以<em>换掉</em>产品的某块行为而不改宿主。</li>
+  </ul>
+
+  <div class="pager">
+    <a href="plugin-wecom.html">← dsh-wecom</a>
+    <a href="plugin-reading.html">下一章：dsh-reading →</a>
+  </div>
+</main>
+<footer class="foot">dsh 插件架构解构 · 生成于 2026-09-14 · 依据 plugins/dsh-remote/src/*</footer>
+</body>
+</html>

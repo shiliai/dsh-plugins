@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dsh-reading · dsh 插件架构解构</title>
+<link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="../index.html">dsh<span>·</span>架构解构</a>
+  <a href="../index.html">总览</a>
+  <a href="../cordis.html">Cordis 模型</a>
+  <a href="../boot.html">启动链路</a>
+  <a href="../services.html">宿主服务</a>
+  <a href="../integration.html">集成机制</a>
+  <a href="plugin-wecom.html">wecom</a>
+  <a href="plugin-remote.html">remote</a>
+  <a href="plugin-reading.html" class="active">reading</a>
+  <a href="plugin-obsidian.html">obsidian</a>
+  <a href="plugin-file-attachment.html">file-attachment</a>
+  <a href="../patterns.html">接口与模式</a><a href="../walkthrough.html">插件实战</a>
+</nav>
+
+<main class="page">
+  <header class="hero">
+    <h1>dsh-reading：沉浸式阅读工作台</h1>
+    <p class="sub">EPUB/PDF（AZW3/MOBI 经 Calibre 转换）阅读 + Wallabag 稍后读 + NAS Calibre-Web OPDS 书库 + MathJax 公式渲染的三栏工作台。它是「纯旁路」集成的代表：服务端只消费 webServer，内容进对话全靠客户端的草稿文本块。</p>
+    <div class="meta">v0.7.0 · inject: [webServer] · 零 agent 工具（刻意）</div>
+  </header>
+
+  <h2 id="cache">核心设计：四层缓存/状态</h2>
+  <table>
+    <tr><th>#</th><th>层</th><th>位置</th><th>策略</th></tr>
+    <tr><td>1</td><td>适配器内存缓存</td><td>进程内</td><td>Wallabag 60s / OPDS 5min TTL</td></tr>
+    <tr><td>2</td><td>磁盘缓存（remote-cache）</td><td><code>$DSH_HOME/cache/dsh-reading/&lt;ns&gt;/&lt;sha1(key)&gt;.json</code></td><td><strong>stale-while-revalidate</strong>：成功异步回写；远端失败回读旧值兜底。策略经 /settings API 向前端自描述</td></tr>
+    <tr><td>3</td><td>项目目录缓存（project-cache）</td><td><code>&lt;dataDir&gt;/workspaces/&lt;sha1前12&gt;-&lt;slug&gt;/</code></td><td>每本书/文章一个项目目录：原文件 + article.md + 原子写入的 metadata.json（含 AZW3→EPUB 转换结果复用）</td></tr>
+    <tr><td>4</td><td>状态库（state-store）</td><td><code>state.json</code></td><td>进度 + 批注；promise 链串行写、temp+rename 原子替换、快照 structuredClone 防泄漏；注释明确「留出换 SQLite 的余地」</td></tr>
+  </table>
+
+  <h2 id="http">HTTP API 要点</h2>
+  <p>前缀 <code>/dsh-reading/api</code>（kind: prefix）。约 15 个端点：library / settings / project（书与文章的项目化，AZW3/MOBI 调 <code>ebook-convert</code> 120s 超时）/ opds（书目 + import）/ progress / wallabag（列表 + 按 URL 收藏）/ annotations / <code>/book/:id/file</code>（<strong>Range/206 流式</strong>，PDF.js 必需）/ import（上传 ≤512MB）。</p>
+  <div class="note"><span class="t">服务端路径保密</span>所有书以 <code>PublicBook = Omit&lt;Book, 'filePath'&gt;</code> 返回 —— 文件系统路径永不出 API，文件只经 <code>/book/:id/file</code> 按 id 流出。书架 API 的泄露面为零。写操作同源策略：带 Origin 必须同源，无 Origin 放行（兼容非浏览器客户端）—— 与 obsidian 的「严格 mutationOrigin」形成对照，三种松紧对应三种威胁模型。</div>
+
+  <h2 id="context">内容如何进入对话上下文</h2>
+  <p>服务端与 session/agent <strong>零耦合</strong>，三条路径全在 client：</p>
+  <ol>
+    <li><strong>元数据块注入草稿</strong>：<code>articleContext()/bookContext()</code> 生成 <code>[Reading item]</code> 文本块（含 projectPath，并提示 <em>cached at projectPath/article.md; use that file for the full reading text</em>），经 <code>ctx.conversation.input.for(actx).setDraft()</code> 追加进当前会话输入 —— <strong>agent 随后用宿主自己的文件工具读全文</strong>。这就是「进上下文」的全部机制：插件不做 RAG、不改消息协议。</li>
+    <li><strong>跨插件上下文</strong>：fetch <code>/dsh-obsidian/api/context?kind=directory&amp;value=reading</code>，把 vault 的 reading 目录文件清单也追加进草稿 —— 插件间协作走各自公开的 HTTP API。</li>
+    <li><strong>打开即建会话</strong>（<code>createSessionOnOpen</code>）：<code>ctx.workspaces.create({path})</code> → connect → <code>ctx.sessions.open(sessionId)</code> —— 每本书/文章一个专属 workspace + 会话。</li>
+  </ol>
+
+  <h2 id="client">Web 客户端</h2>
+  <ul>
+    <li><strong>三个注册面</strong>：<code>settings.plugins.tab</code>（id dsh-reading、order 50，面板标题带 <code>v{pluginVersion}</code> —— 版本经 <code>import pkg from '../../package.json' with {type:'json'}</code> 构建期烘焙）；<code>sidebar.footer.action</code> 的书本按钮；<code>shell.overlay</code> 里 portal 挂载的三栏工作台。</li>
+    <li><strong>双阅读引擎</strong>：foliate-js（EPUB，进度 locator 是 cfi+chapterHref）与 PDF.js（worker 以 <code>?dsh-raw</code> 内联成 blob URL，locator 是 page+scrollRatio）；文章 locator 是 scrollRatio —— 三态 Locator 是进度系统的心脏。</li>
+    <li><strong>MathJax 懒加载</strong>：检测到 <code>\(...\)</code>/<code>\[...\]</code> 定界符才加载 mathjax-full（TeX 输入 + SVG 输出、无网络字体），TreeWalker 原地替换文本节点，编译失败回退字面量。</li>
+    <li><strong>Contextmenu</strong>：「发送元数据到当前对话 / 打开本篇新对话」—— 把工作台与对话流缝合的两个动作。</li>
+  </ul>
+
+  <h2 id="lessons">值得带走的设计点</h2>
+  <ul>
+    <li><strong>contracts.ts 是插件的类型级 API</strong>：同一份契约文件被 server 与 client 两侧 import —— 这是 dsh 宿主「宿主包发 .d.ts、消费方声明合并」模式在插件内部的缩小版。</li>
+    <li><strong>外部服务凭据分两路</strong>：环境变量或 <code>$DSH_HOME/.credentials.yaml</code> flat mapping；OAuth2 token 内存缓存提前 30s 过期；文章 HTML 过 sanitize（剥 script/iframe/on* 属性）。</li>
+    <li><strong>每层缓存的失效策略都自描述</strong>：/settings 把数据源与缓存策略摘要返回给前端 —— 调试「为什么没刷新」不用翻代码。</li>
+  </ul>
+
+  <div class="pager">
+    <a href="plugin-remote.html">← dsh-remote</a>
+    <a href="plugin-obsidian.html">下一章：dsh-obsidian →</a>
+  </div>
+</main>
+<footer class="foot">dsh 插件架构解构 · 生成于 2026-09-14 · 依据 plugins/dsh-reading/src/*</footer>
+</body>
+</html>

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dsh-wecom · dsh 插件架构解构</title>
+<link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="../index.html">dsh<span>·</span>架构解构</a>
+  <a href="../index.html">总览</a>
+  <a href="../cordis.html">Cordis 模型</a>
+  <a href="../boot.html">启动链路</a>
+  <a href="../services.html">宿主服务</a>
+  <a href="../integration.html">集成机制</a>
+  <a href="plugin-wecom.html" class="active">wecom</a>
+  <a href="plugin-remote.html">remote</a>
+  <a href="plugin-reading.html">reading</a>
+  <a href="plugin-obsidian.html">obsidian</a>
+  <a href="plugin-file-attachment.html">file-attachment</a>
+  <a href="../patterns.html">接口与模式</a><a href="../walkthrough.html">插件实战</a>
+</nav>
+
+<main class="page">
+  <header class="hero">
+    <h1>dsh-wecom：企微长连接机器人桥</h1>
+    <p class="sub">把企业微信变成 dsh 的用户入口：每条企微消息 = 一个 agent 回合，对话记忆与会话管理齐全，ask_user_question 以模板卡路由回企微。这是五个插件里集成最深的一个 —— 驱动回合 + 接管交互两种模式都用上了。</p>
+    <div class="meta">v0.5.2 · inject: [tools, agents, agentDefaultModel, agentPresets, sessions, webServer]（另可选消费 userQuestions / sessionPersistence / workspaceRegistry）</div>
+  </header>
+
+  <figure>
+    <svg viewBox="0 0 960 300" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, PingFang SC, sans-serif">
+      <defs><marker id="aw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3fb68b"/></marker></defs>
+      <style>.wb{fill:#171a21;stroke:#2a2f3a;} .wg{fill:#3fb68b;font-size:12px;font-weight:bold;} .wt{fill:#d7dce4;font-size:12px;} .ws{fill:#98a2b3;font-size:10.5px;} .we{stroke:#3fb68b;stroke-width:1.2;fill:none;}</style>
+      <rect x="20" y="90" width="180" height="120" class="wb" rx="10"/>
+      <text x="34" y="114" class="wg">企微用户</text>
+      <text x="34" y="136" class="wt">文本消息 / 模板卡点选</text>
+      <text x="34" y="156" class="ws">↓ WSClient 长连接</text>
+      <text x="34" y="172" class="ws">bot.ts 归一化 + 去重</text>
+      <text x="34" y="188" class="ws">lifecycle 鉴权(默认拒绝)</text>
+      <rect x="260" y="90" width="220" height="120" class="wb" rx="10"/>
+      <text x="274" y="114" class="wg">WecomAgentBridge</text>
+      <text x="274" y="136" class="wt">per-chat 串行队列</text>
+      <text x="274" y="156" class="ws">chatKey → ChatState → agent</text>
+      <text x="274" y="172" class="ws">idle 回收 / maxLiveChats</text>
+      <text x="274" y="188" class="ws">/命令系统(不开回合)</text>
+      <rect x="540" y="30" width="200" height="66" class="wb" rx="10"/>
+      <text x="554" y="52" class="wt">ctx.agents</text>
+      <text x="554" y="70" class="ws">create / resume + setup</text>
+      <text x="554" y="86" class="ws">(模型选择 + preset mount)</text>
+      <rect x="540" y="120" width="200" height="60" class="wb" rx="10"/>
+      <text x="554" y="142" class="wt">ctx.sessions</text>
+      <text x="554" y="160" class="ws">followup + flush + 事件后缀摘要</text>
+      <rect x="540" y="204" width="200" height="66" class="wb" rx="10"/>
+      <text x="554" y="226" class="wt">userQuestions(可选)</text>
+      <text x="554" y="244" class="ws">注册 wecom 通道 provider</text>
+      <text x="554" y="260" class="ws">模板卡 ⇄ 工具结果</text>
+      <rect x="800" y="120" width="140" height="60" class="wb" rx="10"/>
+      <text x="814" y="142" class="wt">webServer</text>
+      <text x="814" y="160" class="ws">/dsh-wecom/api 状态/重启</text>
+      <line x1="200" y1="150" x2="256" y2="150" class="we" marker-end="url(#aw)"/>
+      <line x1="480" y1="120" x2="536" y2="70" class="we" marker-end="url(#aw)"/>
+      <line x1="480" y1="150" x2="536" y2="150" class="we" marker-end="url(#aw)"/>
+      <line x1="480" y1="180" x2="536" y2="230" class="we" marker-end="url(#aw)"/>
+      <line x1="480" y1="165" x2="796" y2="152" class="we" marker-end="url(#aw)" stroke-dasharray="3,3"/>
+    </svg>
+    <figcaption>图 5 · dsh-wecom 集成图。实线 = inject 的服务依赖；虚线 = 可选消费（ctx.get 判空降级）。</figcaption>
+  </figure>
+
+  <h2 id="flow">一条消息的完整生命周期</h2>
+  <ol>
+    <li><strong>SDK 层</strong>：<code>@wecom/aibot-node-sdk</code> WSClient 负责 connect / 30s 心跳 / 无限重连（<code>bot.ts:87-97</code>）；</li>
+    <li><strong>归一化</strong>：帧 → <code>InboundMessage</code>，以 <code>botId:msgId</code> 去重（10 分钟 TTL 有界缓存）；</li>
+    <li><strong>鉴权</strong>：<code>isInboundAuthorized</code> —— 群聊双闸（allowChats 放行群 id <em>且</em> allowGroupSenders 放行 sender），单聊 allowChats 放行；未授权<strong>静默丢弃不回复</strong>；</li>
+    <li><strong>队列</strong>：每聊天一个 Promise 队列（同聊天严格串行、不同聊天并行）→ <code>evictIdle</code>（idleChatMs 默认 30min、maxLiveChats 默认 100）；</li>
+    <li><strong>/命令短路</strong>：<code>/help /new /cd /pwd /agent /status /sessions /attach /detach</code> 直接回复，不开 agent 回合；</li>
+    <li><strong>开回合</strong>：<code>ensureAgent</code> 拿活句柄 → 打「🤔 思考中…」流式占位 → <code>routeUserMessage(msg, {channel:'wecom', destination: chatKey})</code> 写入进程级路由注册表 → <code>agent.followup(userMessage)</code> + <code>agent.whenIdle()</code> + <code>sessions.flush()</code>；</li>
+    <li><strong>摘要回复</strong>：<code>summarizeTurn(事件, firstSeq)</code> 从会话事件后缀取最后一段 assistant 文本，<code>turn/end</code> 的 reason 决定 ok —— <strong>与浏览器看到的是同一份会话事实</strong>；同一 streamId 原位替换占位气泡。</li>
+  </ol>
+
+  <h2 id="session">会话模型：epoch、resume 与绑定</h2>
+  <ul>
+    <li><strong>会话 id 公式</strong>：<code>wecom:&lt;botId&gt;:&lt;chatType&gt;:&lt;chatId&gt;[:epoch]:&lt;generation&gt;</code>。默认带进程级 epoch（randomUUID）—— <strong>重启即新纪元，从不 resume</strong>；<code>resumeSessions: true</code> 是显式 opt-in，去掉 epoch 使 id 跨重启稳定，恢复时扫 <code>sessionPersistence.listSnapshots()</code> 找本插件命名空间下的最大 generation。</li>
+    <li><strong>web 会话绑定</strong>：<code>/attach</code>/<code>/sessions &lt;id&gt;</code>/<code>/new</code> 把聊天绑到既有 web 会话 —— 浏览器与机器人共享同一份对话日志。镜像双向：插件订阅全局 <code>session/event</code> 观察浏览器侧写入并推回企微；wecom→web 的写入在 <code>followup</code> <em>之前</em>打消息 id 自标记防回环。</li>
+    <li><strong>绑定持久化的顺序性</strong>：<code>/new /attach /detach /sessions</code> 全部 await 落盘后才回复，消灭「重启复活已 detach 的会话」竞态。</li>
+    <li><strong>一 live-agent 约束</strong>：目标会话正在浏览器里活 <code>agents.get()</code> 命中时，绑定后首条消息会报 <code>bound session is currently live in the browser</code> —— 这是宿主注册表的诚实反馈，不是 bug。</li>
+  </ul>
+
+  <h2 id="questions">问题卡片：最精妙的宿主协作</h2>
+  <p>agent 在回合里调用宿主的 <code>ask_user_question</code> 工具时，提问如何「长」在企微里？</p>
+  <ol>
+    <li>宿主 <code>dsh-user-questions</code> 服务支持多 provider：<code>registerProvider(channel, provider)</code>，<code>ask()</code> 按请求上的可信路由选 provider；</li>
+    <li>插件<strong>刻意本地复刻宿主同一套 wire 类型与同一个 <code>Symbol.for</code> 注册表键</strong>，于是 <code>routeUserMessage</code> 写入的路由能被宿主读到 —— 跨包协作靠进程内约定，不改宿主消息格式；</li>
+    <li>启动时 <code>registerProvider('wecom', { ask })</code>（校验 <code>supportsRouting === true</code>）—— 与浏览器的 web 通道<strong>同进程共存</strong>，企微消息开启的回合其提问必然回到企微；</li>
+    <li>下发模板卡（≤5 选项，不可卡片化则发编号文本并释放回合）→ 用户点选 → 四重校验（路由通道 / 目的地聊天 / live agent 归属 / 本轮授权 sender）→ 答案作为 <strong>ask_user_question 的工具结果</strong>回到同一会话 → 卡片置灰显示所选项。10 分钟超时。</li>
+  </ol>
+
+  <h2 id="tools">工具与 HTTP API</h2>
+  <table>
+    <tr><th>面</th><th>内容</th><th>安全</th></tr>
+    <tr><td>agent 工具 <code>wecom_send_message</code></td><td>主动推送 Markdown 到单聊/群聊（≤20000 字符）</td><td><code>outboundAllowChats</code> 默认拒绝；串行执行</td></tr>
+    <tr><td>GET /dsh-wecom/api/status</td><td>连接态、watchdog、能力位、脱敏 botId、诊断码（契约上绝不含 secret/帧）</td><td>只读</td></tr>
+    <tr><td>POST /dsh-wecom/api/restart</td><td>只重建企微桥与长连接（不动 DSH —— 重启安全协议）</td><td>sec-fetch-site same-origin + Origin === managementOrigin</td></tr>
+    <tr><td>GET/POST /dsh-wecom/api/wecom-cli-update</td><td>对比/安装 @wecom/cli 最新版</td><td>同上</td></tr>
+  </table>
+
+  <h2 id="security">安全设计清单</h2>
+  <ul>
+    <li><strong>三张默认拒绝白名单</strong>：allowChats / allowGroupSenders / outboundAllowChats，空 = 拒绝，<code>*</code> 仅显式放行全部单聊；</li>
+    <li><strong>路径围栏</strong>：<code>resolveAllowedDirectory</code> 先 realpath 再前缀匹配，同时封死 <code>..</code>、绝对路径逃逸与 symlink 逃逸；/cd、/new、ensureAgent 全过这道闸；</li>
+    <li><strong>日志卫生</strong>：机器人层日志只含 chatId/msgId/字节数，绝不含消息体与 token；SDK debug 日志（会序列化帧体）被强制丢弃；启动失败栈先替换 secret 再截断；</li>
+    <li><strong>authWatchdog</strong>：企微数据权限是 90 天定期授权、到期事件不走 WS 长连接 —— watchdog 观察连接生命周期分类降级（auth/connection），持续 ≥2min 且冷却 ≥1h 才告警（日志 + 常驻 bot 消息 + webhook），<em>只提取错误码、永不携带消息体</em>；主动续期扩展点 <code>notifyDataPermissionExpiry</code> 供指令回调接收器调用。</li>
+  </ul>
+
+  <h2 id="lessons">值得带走的设计点</h2>
+  <ul>
+    <li><strong>跨宿主协作的最小协议</strong>：复刻 wire 类型 + 共享 <code>Symbol.for</code> 注册表键 —— 不 fork 宿主、不改协议；宿主升级时只需复验结构兼容（插件有跨 dsh-session 版本的事件源探测链 <code>session.events → snapshotEvents() → ownEvents() → session.log</code>）。</li>
+    <li><strong>错误追踪分层</strong>：低层日志只落 safeErrorKind（防泄漏），「需要人诊断」的回合失败层才带 errorMessage + errorStack 落 error 级 —— 把「用户截图排查」变成「看日志排查」。</li>
+    <li><strong>重启安全</strong>：所有生命周期操作入串行队列、四阶段启动（create-bot → create-bridge → optional-capabilities → connect）失败产生稳定诊断码 STARTUP_&lt;STAGE&gt;；插件级 restart 读不到新的父进程环境，<code>WECOM_BOT_*</code> 改动必须重启 profile。</li>
+  </ul>
+
+  <div class="pager">
+    <a href="../integration.html">← 集成机制</a>
+    <a href="plugin-remote.html">下一章：dsh-remote →</a>
+  </div>
+</main>
+<footer class="foot">dsh 插件架构解构 · 生成于 2026-09-14 · 依据 plugins/dsh-wecom/src/* 与宿主 packages/interaction/user-questions</footer>
+</body>
+</html>

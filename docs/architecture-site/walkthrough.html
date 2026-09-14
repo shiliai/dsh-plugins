@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>插件实战 · dsh 插件架构解构</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="index.html">dsh<span>·</span>架构解构</a>
+  <a href="index.html">总览</a>
+  <a href="cordis.html">Cordis 模型</a>
+  <a href="boot.html">启动链路</a>
+  <a href="services.html">宿主服务</a>
+  <a href="integration.html">集成机制</a>
+  <a href="plugins/plugin-wecom.html">wecom</a>
+  <a href="plugins/plugin-remote.html">remote</a>
+  <a href="plugins/plugin-reading.html">reading</a>
+  <a href="plugins/plugin-obsidian.html">obsidian</a>
+  <a href="plugins/plugin-file-attachment.html">file-attachment</a>
+  <a href="patterns.html">接口与模式</a>
+  <a href="walkthrough.html" class="active">插件实战</a>
+</nav>
+
+<main class="page">
+  <header class="hero">
+    <h1>从零写一个 dsh 插件</h1>
+    <p class="sub">把前面所有机制串成一条可执行的路径。每一步都有官方文档或我们 5 个插件的源码作参照。</p>
+  </header>
+
+  <h2 id="minimal">① 最小骨架（5 分钟能跑）</h2>
+  <p>开发期根本不需要打包：一个 <code>--patch</code> 覆盖层指向本地模块即可（官方 docs/user/develop/basic/index.md）：</p>
+<pre><code><span class="c">// scratch-plugin/src/my-plugin.ts</span>
+<span class="k">import type</span> { Context } <span class="k">from</span> <span class="s">'@deepseek-ai/cordis'</span>
+
+<span class="k">export const</span> name = <span class="s">'hello-plugin'</span>
+<span class="k">export function</span> apply(ctx: Context) {
+  console.log(<span class="s">'[hello-plugin] plugin loaded!'</span>)
+}</code></pre>
+<pre><code><span class="c"># scratch-plugin/cordis.yml —— 试装覆盖层（路径必须绝对）</span>
+- insert:
+    - id: hello
+      name: <span class="s">'/abs/path/to/scratch-plugin/src/my-plugin.ts'</span>
+
+<span class="c"># 源码仓库内：pnpm dsh web --patch ./scratch-plugin/cordis.yml</span>
+<span class="c"># 安装版：    dsh web --patch ./scratch-plugin/cordis.yml</span></code></pre>
+  <p>改插件源码 → HMR 自动卸旧载新（一切注册自动回收）；改 cordis.yml → live 层重放组合。这就是「时空可组合」的开发体验。</p>
+
+  <h2 id="config">② 配置：凡是两个部署可能想设不同值的，都必须是配置字段</h2>
+<pre><code><span class="k">import</span> Schema <span class="k">from</span> <span class="s">'@deepseek-ai/schemastery'</span>
+
+<span class="k">export interface</span> Config { maxItems: <span class="k">number</span>; verbose?: <span class="k">boolean</span> }
+<span class="k">export const</span> Config: Schema&lt;Config&gt; = Schema.object({
+  maxItems: Schema.number().<span class="k">default</span>(50),   <span class="c">// 默认值写在 schema 上</span>
+  verbose: Schema.boolean().<span class="k">default</span>(<span class="k">false</span>),
+})
+<span class="k">export function</span> apply(ctx: Context, config: Config) { <span class="c">/* config 已校验、已填默认 */</span> }</code></pre>
+  <ul>
+    <li>Config 必须是 Schemastery schema（Standard Schema 接口），<strong>不能是普通对象</strong> —— 加载期校验失败即 fail loud；</li>
+    <li>测试标准：<em>cordis.yml 能否在不改代码的情况下改变这个值</em>；</li>
+    <li>环境变量不在代码里读 —— 在 <strong>cordis.patch.yml</strong> 里用 <code>!!js process.env.FOO ?? 'default'</code> 读（我们 5 个插件的统一做法：代码只认 config，patch 认环境）。</li>
+  </ul>
+
+  <h2 id="tool">③ 给模型一个工具</h2>
+<pre><code><span class="k">export const</span> inject = [<span class="s">'tools'</span>]
+<span class="k">export function</span> apply(ctx: Context, config: Config) {
+  ctx.tools.register(defineTool({
+    name: <span class="s">'vault_search'</span>,
+    description: <span class="s">'…'</span>,
+    parameters: { query: { type: <span class="s">'string'</span>, required: <span class="k">true</span> } },
+    <span class="k">async</span> execute(args, exec) {
+      <span class="c">// 观察(exec.signal)；返回规范 JSON 值</span>
+      <span class="k">return</span> { hits: [...] }
+    },
+    output: {
+      schema: { <span class="c">/* 规范值 schema */</span> },
+      render: (_a, v) =&gt; [{ type: <span class="s">'text'</span>, text: renderForModel(v) }],  <span class="c">// 模型可见内容</span>
+    },
+    presentResult: (a, r) =&gt; ({ <span class="c">/* UI 卡片意图（可选，纯函数、重放安全） */</span> }),
+  }))
+}</code></pre>
+  <p>参照：dsh-obsidian 的 8 个工具（<code>plugins/dsh-obsidian/src/tools.ts</code>）—— 注意每个工具自带安全边界（路径围栏、乐观锁、并发安全声明）。</p>
+
+  <h2 id="http">④ HTTP API：自定前缀 + 自做信任检查</h2>
+<pre><code><span class="k">export const</span> inject = [<span class="s">'webServer'</span>]
+<span class="k">export function</span> apply(ctx: Context, config: Config) {
+  ctx.effect(() =&gt; {
+    ctx.webServer.register({
+      kind: <span class="s">'prefix'</span>, path: <span class="s">'/my-plugin/api'</span>,
+      handler(req, res) { <span class="c">/* GET 开放；POST 校验 Origin/sec-fetch-site */</span> },
+    })
+  }, <span class="s">'my-plugin: http api'</span>)
+}</code></pre>
+  <ul>
+    <li>宿主<strong>没有全局鉴权中间件</strong>：每个路由的信任检查是插件自己的责任（参照 wecom 的 <code>isTrustedMutationRequest</code>、reading 的「有 Origin 必同源」、obsidian 的严格 mutationOrigin）；</li>
+    <li>响应记得 <code>Cache-Control: no-store</code> / <code>X-Content-Type-Options: nosniff</code>；</li>
+    <li>API 永不外泄文件系统路径（参照 reading 的 PublicBook 模式）。</li>
+  </ul>
+
+  <h2 id="ui">⑤ Web UI：声明 dsh.client，注册槽位</h2>
+<pre><code><span class="c">// package.json（节选）</span>
+{
+  <span class="s">"exports"</span>: { <span class="s">"."</span>: <span class="c">/* 宿主侧入口 */</span>, <span class="s">"./client"</span>: <span class="s">"./lib/client.js"</span> },
+  <span class="s">"dsh"</span>: { <span class="s">"client"</span>: { <span class="s">"platform"</span>: <span class="s">"web"</span>, <span class="s">"inject"</span>: [<span class="s">"@deepseek-ai/dsh-client-runtime"</span>] } }
+}</code></pre>
+<pre><code><span class="c">// src/client/index.tsx —— 浏览器里的 cordis 插件</span>
+<span class="k">export const</span> inject = [<span class="s">'slots'</span>]
+<span class="k">export function</span> apply(ctx: ClientContext): <span class="k">void</span> {
+  ctx.slots.inject(<span class="s">'settings.plugins.tab'</span>, () =&gt;
+    ctx.slots.register(
+      { name: <span class="s">'settings.plugins.tab'</span>, id: <span class="s">'my-plugin'</span>, order: 50, label: <span class="s">'My Plugin'</span> },
+      SettingsPanel))
+  ctx.effect(() =&gt; () =&gt; teardown(), <span class="s">'my-plugin: client surfaces'</span>)
+}</code></pre>
+  <ul>
+    <li>宿主扫描 <code>dsh.client</code> → 暴露 <code>/plugins/&lt;pkg&gt;/client.js?rev=&lt;sha1&gt;</code> → <code>__DSH_BOOT__</code> 注入 index.html —— 插件不需要碰前端构建；</li>
+    <li>设置页 tab 想显示版本：<code>import pkg from '../../package.json' with { type: 'json' }</code> 构建期烘焙（参照 5543721 的做法）；</li>
+    <li>浮层工作台范式：portal + 宿主 DOM 锚点 + 纯函数几何，不改宿主布局（参照 reading/obsidian 的 workbench-anchor）。</li>
+  </ul>
+
+  <h2 id="package">⑥ 打包成 bundle</h2>
+<pre><code>my-plugin/
+├── package.json       <span class="c"># dsh.bundle.patch + exports + prepare + peerDependencies</span>
+├── cordis.patch.yml   <span class="c"># insert 一行：id/name/inject/config（!!js 读环境）</span>
+├── lib/               <span class="c"># 构建产物：index.js + types + client.js（如含 UI）</span>
+└── src/</code></pre>
+  <table>
+    <tr><th>字段</th><th>要求</th></tr>
+    <tr><td><code>"dsh".bundle.patch</code></td><td>指向 cordis.patch.yml —— 有它才是 bundle，没有就是普通依赖（装了不激活）</td></tr>
+    <tr><td><code>main/types/exports</code></td><td>产物必须覆盖所有声明的入口（含 ./client 与 bin）</td></tr>
+    <tr><td><code>prepare</code></td><td><strong>git 安装必需</strong>：pnpm 装完源码后运行它自举构建；必须自包含（不假设兄弟目录的 monorepo checkout）</td></tr>
+    <tr><td><code>peerDependencies</code></td><td>锁宿主服务包版本（@deepseek-ai/cordis、dsh-agent、dsh-host-webserver…）—— 类型来自宿主随包发布的 .d.ts</td></tr>
+    <tr><td><code>version</code></td><td>严格 SemVer；改了行为就 bump，永不复用已发布版本（我们 AGENTS.md 的纪律）</td></tr>
+  </table>
+  <div class="note"><span class="t">出树工程的类型技巧</span>宿主对 Context 的声明合并在宿主编译单元内，插件工程看不到 —— 写一个本地 <code>dsh-shims.d.ts</code> 重建消费面的最小声明（参照 plugins/dsh-wecom/src/dsh-shims.d.ts）。这是官方 service.md「Declare its type」一节的实战形态。</div>
+
+  <h2 id="install">⑦ 安装、更新与发布</h2>
+  <ol>
+    <li><strong>试装</strong>：<code>dsh plugin --profile web add ./my-plugin</code>（本地路径）；</li>
+    <li><strong>公开安装</strong>：push 到 GitHub 后 <code>dsh plugin --profile web add 'github:you/repo#path:/plugins/my-plugin'</code>；先在 profile 的 allowBuilds 里信任 <strong>git+https 与 git+ssh 两种归一化形态</strong>（pnpm 打印什么就复制什么）；建议 pin <code>#&lt;sha&gt;</code>；</li>
+    <li><strong>验证树</strong>：<code>dsh --profile web --dump-config</code> 应能看到 <code># == my-plugin</code> 层；</li>
+    <li><strong>重启 profile</strong>（或等 live 层重放）→ 完成；</li>
+    <li><strong>更新</strong>：monorepo 多插件仓库配一个 updater（<code>--config.dlx-cache-max-age=0 dlx</code> + GitHub Contents API 比对，参照 scripts/dsh-plugin-updater）；plain pnpm outdated 检测不到 Git 依赖的新 commit；</li>
+    <li><strong>打 tag</strong>：插件 scoped tag（如 <code>dsh-wecom-v0.5.2</code>），先过 release:check。</li>
+  </ol>
+
+  <h2 id="checklist">发布前检查清单</h2>
+  <table>
+    <tr><th>维度</th><th>检查项</th></tr>
+    <tr><td>行为</td><td>可逆性：一切注册走 ctx / ctx.effect？卸载/HMR 后无残留（定时器 unref？连接关闭？）</td></tr>
+    <tr><td>配置</td><td>两个部署可能不同的值都进了 Config schema？环境变量只在 patch 里读？默认值安全（空白名单=拒绝）？</td></tr>
+    <tr><td>依赖</td><td>必需服务进 inject；可选服务 ctx.get 判空降级？目标 profile 缺服务时的行为可接受？</td></tr>
+    <tr><td>安全</td><td>HTTP 变更接口有 Origin 检查？路径操作有围栏（realpath + symlink）？日志不含 secret/消息体？错误信息可诊断（错误码/错误栈分层）？</td></tr>
+    <tr><td>宿主演进</td><td>对宿主内部结构的假设是否最小化并有版本探测（参照 wecom 的事件源探测链）？「摸宿主内部」的防护行为写进仓库纪律了吗？</td></tr>
+    <tr><td>打包</td><td>prepare 自包含可构建？产物覆盖全部入口？peerDependencies 锁版本？version 已 bump 且未复用？repository.url/directory 正确？</td></tr>
+    <tr><td>重启安全</td><td>插件的部署/重启操作绝不在 DSH 进程内的工具调用里执行（TOOL_OUTCOME_UNKNOWN 协议）？</td></tr>
+  </table>
+
+  <blockquote>
+    <span class="label">最后一个视角</span>写 dsh 插件的本质是：<strong>你写的不是「扩展某个应用的代码」，而是「给一棵插件树贡献一行配置 + 一个 Service 消费者」</strong>。你与官方 web-app、与模型适配器、与 agent 循环平起平坐 —— 这既是能力（你能做到官方插件做的一切），也是纪律（你要像官方作者一样对待可逆性、配置边界与安全默认）。
+  </blockquote>
+
+  <div class="pager">
+    <a href="plugins/plugin-file-attachment.html">← dsh-file-attachment</a>
+    <span></span>
+  </div>
+</main>
+<footer class="foot">dsh 插件架构解构 · 生成于 2026-09-14 · 官方教程：docs/user/develop/{basic,framework}/</footer>
+</body>
+</html>
