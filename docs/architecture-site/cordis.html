@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cordis 模型 · dsh 插件架构解构</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="index.html">dsh<span>·</span>架构解构</a>
+  <a href="index.html">总览</a>
+  <a href="cordis.html" class="active">Cordis 模型</a>
+  <a href="boot.html">启动链路</a>
+  <a href="services.html">宿主服务</a>
+  <a href="integration.html">集成机制</a>
+  <a href="plugins/plugin-wecom.html">wecom</a>
+  <a href="plugins/plugin-remote.html">remote</a>
+  <a href="plugins/plugin-reading.html">reading</a>
+  <a href="plugins/plugin-obsidian.html">obsidian</a>
+  <a href="plugins/plugin-file-attachment.html">file-attachment</a>
+  <a href="patterns.html">接口与模式</a><a href="walkthrough.html">插件实战</a>
+</nav>
+
+<main class="page">
+  <header class="hero">
+    <h1>Cordis：插件容器模型</h1>
+    <p class="sub">dsh 之下是 vendored 的 <a href="https://github.com/cordiverse/cordis" target="_blank">Cordis</a>（源码在 <code>vendor/cordis</code>，发布为 <code>@deepseek-ai/cordis</code>）。理解 dsh 先理解 Cordis —— 官方入门是 <code>docs/cordis-primer.md</code>（44 行），本页把它与源码实证合并。</p>
+  </header>
+
+  <h2 id="five">五个核心思想</h2>
+  <table>
+    <tr><th style="width:190px">概念</th><th>含义</th><th>源码依据</th></tr>
+    <tr>
+      <td><strong>插件 = Service</strong></td>
+      <td>插件是一个实现 <code>Plugin</code> 形状的模块：函数形 / 对象形 / 类形三种（函数形最常用，类形用于「向别人提供服务」）。</td>
+      <td><code>vendor/cordis/lib/types/registry.d.ts:48</code>；<code>Plugin.Function | Plugin.Constructor | Plugin.Object</code></td>
+    </tr>
+    <tr>
+      <td><strong>Context = 服务仓库</strong></td>
+      <td>Context 是运行时代理，服务以稳定的 <code>ctx.&lt;key&gt;</code>（如 <code>ctx.tools</code>、<code>ctx.sessions</code>）对外暴露；消费方按 <em>key</em> 找服务而不是 import 具体实现。</td>
+      <td><code>vendor/cordis/lib/types/context.d.ts:36-40</code>；类型由声明合并挂上：<code>declare module '@deepseek-ai/cordis' { interface Context { tools: ToolRuntime } }</code></td>
+    </tr>
+    <tr>
+      <td><strong>inject 声明依赖</strong></td>
+      <td>插件列出的必需服务全部就绪后才会加载 —— 装载顺序是<em>数据</em>（服务需求），不是手工引导序列。</td>
+      <td><code>vendor/cordis/lib/types/registry.d.ts:56-58</code></td>
+    </tr>
+    <tr>
+      <td><strong>类型化事件</strong></td>
+      <td>服务间通信走事件总线，四种派发模式（见下）；事件名经 TS 声明合并获得类型，dsh 用 <code>@mode</code> JSDoc 标注把声明与派发点交给生成目录校验。</td>
+      <td><code>vendor/cordis/lib/types/events.d.ts:25</code>；<code>docs/cordis-primer.md:31-39</code></td>
+    </tr>
+    <tr>
+      <td><strong>注册即可逆 effect</strong></td>
+      <td>一切注册（工具、监听器、路由、定时器）都装入当前 Fiber，卸载时逆序执行 disposer。reload 与 teardown 因此可预测。</td>
+      <td><code>vendor/cordis/lib/types/fiber.d.ts:41-51</code></td>
+    </tr>
+  </table>
+
+  <h2 id="shapes">插件的三种形态</h2>
+<pre><code><span class="c">// ① 函数形（dsh 插件最常用；我们的 5 个插件全是这种）</span>
+<span class="k">export const</span> name = <span class="s">'dsh-wecom'</span>
+<span class="k">export const</span> inject = [<span class="s">'tools'</span>, <span class="s">'agents'</span>, <span class="s">'sessions'</span>, <span class="s">'webServer'</span>]
+<span class="k">export interface</span> Config { <span class="f">logLevel</span>?: <span class="k">string</span> }
+<span class="k">export const</span> Config = Schema.object({ <span class="f">logLevel</span>: Schema.string().<span class="k">default</span>(<span class="s">'info'</span>) })
+<span class="k">export function</span> <span class="f">apply</span>(ctx: Context, config: Config) { <span class="c">/* 注册能力 */</span> }
+
+<span class="c">// ② 对象形</span>
+<span class="k">export default</span> { name: <span class="s">'x'</span>, inject: [<span class="s">'tools'</span>], apply(ctx) { <span class="c">/*…*/</span> } }
+
+<span class="c">// ③ 类形 —— 提供服务给其他插件时用</span>
+<span class="k">export default class</span> MetricsService <span class="k">extends</span> Service {
+  <span class="k">static</span> inject = [<span class="s">'llm'</span>]
+  <span class="f">constructor</span>(ctx: Context) { <span class="k">super</span>(ctx, <span class="s">'metrics'</span>) <span class="c">// 立即 ctx.provide('metrics', this)</span> }
+  record(event: <span class="k">string</span>, v: <span class="k">number</span>) { <span class="c">/*…*/</span> }
+}</code></pre>
+  <p>loader 的 <code>unwrapExports</code>（<code>vendor/loader/src/index.ts:193-201</code>）做 ESM/CJS 互操作，所以命名导出和 default 导出都合法。插件元数据（<code>Plugin.Base</code>）共五个字段：<code>name</code>（诊断/日志名）、<code>Config</code>（Standard Schema 校验器，dsh 用 Schemastery，加载前校验并填默认值）、<code>inject</code>（必需服务）、<code>provide</code>（提供的服务名）、<code>intercept</code>（消费服务时的拦截配置）。</p>
+
+  <h2 id="fiber">Fiber 生命周期状态机</h2>
+  <p>每个已加载的插件实例拥有一个 <strong>Fiber</strong>（<code>vendor/cordis/lib/types/fiber.d.ts:67-74</code>）：</p>
+  <figure>
+    <svg viewBox="0 0 860 150" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, PingFang SC, sans-serif">
+      <defs><marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#98a2b3"/></marker></defs>
+      <style>.st { fill:#171a21; stroke:#2a2f3a; } .lbl{fill:#d7dce4; font-size:14px;} .note{fill:#98a2b3; font-size:11px;} .edge{stroke:#98a2b3; stroke-width:1.2; fill:none;}</style>
+      <g font-size="13">
+        <rect x="20" y="40" width="110" height="40" class="st" rx="8"/><text x="52" y="65" class="lbl">PENDING</text><text x="30" y="105" class="note">等依赖服务就绪</text>
+        <rect x="200" y="40" width="110" height="40" class="st" rx="8"/><text x="230" y="65" class="lbl">LOADING</text><text x="212" y="105" class="note">apply() 执行中</text>
+        <rect x="380" y="40" width="100" height="40" class="st" rx="8"/><text x="406" y="65" class="lbl">ACTIVE</text><text x="388" y="105" class="note">运行中</text>
+        <rect x="550" y="40" width="130" height="40" class="st" rx="8"/><text x="576" y="65" class="lbl">UNLOADING</text><text x="560" y="105" class="note">逆序跑 disposer</text>
+        <rect x="750" y="40" width="100" height="40" class="st" rx="8"/><text x="768" y="65" class="lbl">DISPOSED</text>
+        <line x1="130" y1="60" x2="196" y2="60" class="edge" marker-end="url(#arr2)"/>
+        <line x1="310" y1="60" x2="376" y2="60" class="edge" marker-end="url(#arr2)"/>
+        <line x1="480" y1="60" x2="546" y2="60" class="edge" marker-end="url(#arr2)"/>
+        <line x1="680" y1="60" x2="746" y2="60" class="edge" marker-end="url(#arr2)"/>
+        <path d="M 420 36 C 430 10, 340 10, 262 36" class="edge" marker-end="url(#arr2)" fill="none"/>
+        <text x="300" y="16" class="note" font-size="12">apply 抛错 → FAILED</text>
+      </g>
+    </svg>
+    <figcaption>图 2 · Fiber 状态机。关键性质：依赖服务消失时 ACTIVE → DISPOSED 自动卸载，服务回归时自动重载（docs/user/develop/framework/index.md:36-38）。</figcaption>
+  </figure>
+  <p><code>ctx.plugin(plugin, config)</code> 返回 Fiber（可 await 等待加载完成，配置校验失败会 reject）；<code>fiber.dispose()</code> 卸载并等清理结束；<code>fiber.update(config)</code> 走 <code>internal/update</code> waterfall —— <strong>HMR 正是借这个口子介入的</strong>。清理语义上有一个容易踩的坑：多个异步 disposer 并发执行、无串行完成保证，<em>顺序敏感的清理必须收进单个 <code>ctx.effect()</code> 里自己 await</em>。dsh 标准写法是生成器 effect：</p>
+<pre><code>ctx.effect(<span class="k">function</span>* () {
+  <span class="k">yield</span> disposerA  <span class="c">// 卸载时逆序执行；生成器中途抛错，已 yield 的也会回滚</span>
+  <span class="k">yield</span> disposerB
+})
+<span class="c">// 真实用例：ToolRuntime 的注册回收 packages/core/tools/src/index.ts:951-971</span></code></pre>
+
+  <h2 id="events">事件系统：四种派发模式</h2>
+  <table>
+    <tr><th>模式</th><th>等待？</th><th>顺序</th><th>返回值</th><th>dsh 典型用法</th></tr>
+    <tr><td><code>emit</code></td><td>否</td><td>注册序观察</td><td>无</td><td><code>tools/result</code>（冻结的终局观察）、<code>session/event</code>（追加流）</td></tr>
+    <tr><td><code>waterfall</code></td><td>否</td><td>注册序</td><td>有（洋葱式）</td><td><code>agent/pre-step</code>（决定模型看到什么）、<code>tools/pre-execute</code>（allow/deny/ask）</td></tr>
+    <tr><td><code>parallel</code></td><td>是</td><td>并行</td><td>无</td><td><code>session/flush</code>（持久化检查点）</td></tr>
+    <tr><td><code>serial</code> / <code>bail</code></td><td>是 / 同步</td><td>注册序</td><td>首个非空值终止</td><td>单决策事件，如策略短路</td></tr>
+  </table>
+  <p><strong>waterfall 是 around 中间件</strong>：监听者收到 <code>(...args, next)</code>，必须调用 <code>next()</code> 委托下游，不调用即短路（这正是拦截与网关语义的设计）。协作式监听者的惯例是改共享请求/决策对象后委托。dsh 的三条事件域（docs/architecture.md:53-61）：</p>
+  <ul>
+    <li><strong>Session 事件</strong>：<code>turn/*</code>、<code>step/*</code>、<code>user/message</code>、<code>assistant/*</code>、<code>tool/*</code> —— 追加进持久日志的<em>事实</em>；要观察它们监听 <code>session/event</code> 并检查 <code>event.type</code>（dsh-wecom 镜像 web 消息正是这么做的）。</li>
+    <li><strong>Agent 事件</strong>（<code>agent/*</code>）：携带活的 Agent —— inbox、step、request、continuation，用于观察或拦截<em>进行中的</em>工作。</li>
+    <li><strong>能力事件</strong>（<code>fs/*</code>、<code>tools/*</code>、<code>telemetry/*</code>）：把策略与适配器挂到能力缝上，不 import 循环。</li>
+  </ul>
+  <p>事件类型同样靠声明合并获得类型：</p>
+<pre><code><span class="k">declare module</span> <span class="s">'@deepseek-ai/cordis'</span> {
+  <span class="k">interface</span> Events {
+    <span class="s">'my-plugin/ready'</span>: (payload: { id: <span class="k">string</span> }) =&gt; <span class="k">void</span>
+    <span class="s">'my-plugin/transform'</span>: (input: <span class="k">string</span>, next: () =&gt; Promise&lt;<span class="k">string</span>&gt;) =&gt; Promise&lt;<span class="k">string</span>&gt;
+  }
+}</code></pre>
+
+  <h2 id="service">提供与消费服务</h2>
+  <p>消费就是 <code>inject</code> + <code>ctx.&lt;key&gt;</code>；可选依赖则<em>不进 inject</em>、使用点 <code>ctx.get('x')</code> 判空降级。dsh 官方把这条称为插件的鲁棒性手段：可选服务（如 web profile 才有的 <code>sessionPersistence</code>）缺席时插件照常工作。</p>
+  <p>提供服务的完整契约（<code>docs/user/develop/framework/service.md</code>）：</p>
+  <ul>
+    <li><code>super(ctx, name)</code> 构造即 <code>ctx.provide(name, this)</code>，随 Fiber 卸载自动注销；</li>
+    <li>用声明合并给 <code>ctx</code> 补类型：<code>interface Context { metrics: MetricsService }</code>；</li>
+    <li>特殊静态符号：<code>Service.init</code>（构造后运行的实例方法）、<code>Service.check</code>（可用性谓词）、<code>Service.invoke</code>（可调用服务如 <code>ctx.logger()</code>）。</li>
+  </ul>
+  <p><strong>服务隔离（isolate）</strong>：cordis.yml 可以把同名服务隔离到不同 realm，让不同插件组看到不同实例 —— dsh 的 agent preset 机制整个建立在它上面（每个 preset 是一份 cordis.yml，按 preset 挂载为常驻 scope，agent 通过 scope 父子绑定加入组合，见 <code>packages/preset/agent-presets/src/index.ts:1-21</code>）。</p>
+
+  <h2 id="loader">三个加载器插件</h2>
+  <table>
+    <tr><th style="width:280px">包</th><th>角色</th></tr>
+    <tr><td><code>@deepseek-ai/cordis-plugin-loader</code></td><td>运行时插件树：持有 EntryTree，按 specifier import 模块、应用配置、维护运行中的插件图并随 entry 更新同步。核心 API：<code>loader.create/update/remove/resolve/await/locate</code>。</td></tr>
+    <tr><td><code>@deepseek-ai/cordis-plugin-include</code></td><td>文件化的 loader 树：读 <code>cordis.yml</code> / patch YAML，变成 loader entries（可写回）；支持按 id 的 patches（config 覆盖 + insert 行）和 <code>!!js</code> 表达式。</td></tr>
+    <tr><td><code>@deepseek-ai/cordis-plugin-hmr</code></td><td>热更新：watch 源文件、追踪模块图、清缓存、只重载受影响的 entry；框架级依赖变更时回退为进程重启。</td></tr>
+  </table>
+  <p><code>!!js</code> 的求值时机值得单独记住：解析期它只是 <code>{__jsExpr}</code> 节点；<strong>挂载期</strong>才在该行自己的 Fiber 上下文里求值（实现就是 <code>with (ctx) { eval(expr) }</code>，<code>vendor/loader/src/config/utils.ts:5</code>），且发生在该行 <code>inject</code> 的服务就绪<em>之后</em>。所以可以写 <code>ctx.webStartup.port ?? 3080</code>、<code>process.env.WECOM_BOT_ID ?? ''</code>、<code>dshHomePath('sessions')</code>。</p>
+
+  <div class="note"><span class="t">为什么 HMR 是安全的</span>因为「注册即可逆副作用」+「配置编辑 = 卸载旧实例再加载新实例」：改 profile 的 cordis.patch.yml 或插件源码，旧注册全部自动回收，新实例重跑 <code>apply</code> —— 不会残留旧实例的任何注册（docs/user/develop/basic/config.md:98-100）。</div>
+
+  <div class="pager">
+    <a href="index.html">← 总览</a>
+    <a href="boot.html">下一章：启动链路 →</a>
+  </div>
+</main>
+<footer class="foot">dsh 插件架构解构 · 生成于 2026-09-14</footer>
+</body>
+</html>

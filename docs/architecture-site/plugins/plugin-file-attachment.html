@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dsh-file-attachment · dsh 插件架构解构</title>
+<link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="../index.html">dsh<span>·</span>架构解构</a>
+  <a href="../index.html">总览</a>
+  <a href="../cordis.html">Cordis 模型</a>
+  <a href="../boot.html">启动链路</a>
+  <a href="../services.html">宿主服务</a>
+  <a href="../integration.html">集成机制</a>
+  <a href="plugin-wecom.html">wecom</a>
+  <a href="plugin-remote.html">remote</a>
+  <a href="plugin-reading.html">reading</a>
+  <a href="plugin-obsidian.html">obsidian</a>
+  <a href="plugin-file-attachment.html" class="active">file-attachment</a>
+  <a href="../patterns.html">接口与模式</a><a href="../walkthrough.html">插件实战</a>
+</nav>
+
+<main class="page">
+  <header class="hero">
+    <h1>dsh-file-attachment：文本即协议的本地附件</h1>
+    <p class="sub">给纯文本模型的会话加「本地文件附件」。核心洞察：<strong>附件可以降维成 prompt 里的一段结构化文本</strong> —— 文件名 + media type + 字节数 + 绝对 file:// URI，由 agent 自行决定用宿主本地工具还是 MCP 工具去读。最小的代码量换一个完整的产品能力。</p>
+    <div class="meta">v0.1.0 · inject: [webServer] · 零 agent 工具（spec 明确列为 Non-goal）</div>
+  </header>
+
+  <h2 id="position">与宿主 attachment 体系的关系：正交，不是桥接</h2>
+  <table>
+    <tr><th></th><th>宿主 ctx.attachments</th><th>本插件</th></tr>
+    <tr><td>定位</td><td>持久图像 seam</td><td>任意类型文件的临时附件</td></tr>
+    <tr><td>内容</td><td>PNG/JPEG/WebP/GIF，sha256 内容寻址，写入会话事件的 ImageAttachmentRef</td><td>任意 media type，落盘 <code>$DSH_HOME/attachments/tmp</code></td></tr>
+    <tr><td>进入模型的方式</td><td>原生 image block</td><td><strong>纯文本引用块</strong>（模型读 URI 后用工具拉取）</td></tr>
+    <tr><td>生命周期</td><td>持久、无 GC</td><td>24h TTL 定时清理</td></tr>
+  </table>
+  <p>两者不 inject 彼此、不产生 image block、不碰能力元数据 —— 只在「共用 <code>$DSH_HOME/attachments</code> 目录约定」上相遇（宿主 <code>v1/objects</code>，插件 <code>tmp</code>）。这是 dsh 生态里的典型判断题：<em>什么时候不该复用宿主既有服务</em> —— 当威胁模型与生命周期完全不同时，旁路扩展比强行桥接更干净。</p>
+
+  <h2 id="protocol">「文本即协议」的引用块</h2>
+  <pre><code>[Attached file: quarterly-report.xlsx]
+type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+size: 48213 bytes
+uri: file:///Users/chris/.local/dsh_home/attachments/tmp/3f2a…-quarterly-report.xlsx</code></pre>
+  <p>上传成功即由 client 把引用块写进会话输入草稿（<code>inputActions.setDraft</code>）。模型看到的是纯文本，它已经有了读文件的工具 —— <strong>插件不需要教会模型任何新东西</strong>。</p>
+
+  <h2 id="api">HTTP API 与存储</h2>
+  <table>
+    <tr><th>端点</th><th>用途</th></tr>
+    <tr><td>GET /limits</td><td>限额预检（25MiB/文件、10 文件/消息、100MiB/消息、24h TTL）</td></tr>
+    <tr><td>POST /upload</td><td><code>{files:[{name,mediaType,data:canonical base64}], existingFileIds}</code>；existingFileIds 支持「草稿里已有附件再追加」的批量一致性校验</td></tr>
+    <tr><td>DELETE /file</td><td>取消附件（删文件 + 摘引用块）</td></tr>
+  </table>
+  <p>存储细节（<code>file-store.ts</code>）：目录 0700、文件 0600、<code>wx</code> 独占创建；<code>&lt;uuid&gt;-&lt;清洗后显示名&gt;</code>；<strong>canonical base64 严格校验</strong>（重新编码必须与输入一致）；fileId 正则 + resolve 后不逃出 root 双检；saveBatch 任一失败回滚已写文件；TTL 按 mtime 清理，定时器 <code>unref()</code>。</p>
+
+  <h2 id="client">client 侧的完整闭环</h2>
+  <ul>
+    <li>两个槽位：<code>conversation.input.left</code> 回形针按钮、<code>conversation.input.dock</code> 附件 dock；</li>
+    <li>输入方式：文件选择 / 拖放 / <strong>剪贴板粘贴</strong>（document 捕获级 paste，同时读 clipboardData.files 与 items 按指纹去重）；</li>
+    <li>草稿与 dock 双向同步：草稿里引用块被用户删掉 → 同步删附件记录；删除按钮 → API 删文件 + 从草稿摘除引用块；</li>
+    <li>草稿附件状态<strong>按 session 隔离</strong>（draft-store）。</li>
+  </ul>
+
+  <h2 id="lessons">值得带走的设计点</h2>
+  <ul>
+    <li><strong>Non-goals 是 spec 的一部分</strong>：不改模型能力元数据、不产生原生图像 block、不自动调 MCP 工具 —— 三个「不做」保住了正交性，也把实现压到最小。</li>
+    <li><strong>写操作的 Origin 策略居中</strong>：Origin 必须存在且非 null，匹配 allowedOrigins 或与请求 Host 一致 —— 比 reading（无 Origin 放行）严、比 obsidian（严格等于配置值）松，又一次按威胁模型定制。</li>
+    <li><strong>限额即配置</strong>：root/allowedOrigins 刻意不在 patch 里给默认值，留给用户层覆盖 —— 「bundle 给安全默认，用户层给部署特化」。</li>
+  </ul>
+
+  <div class="pager">
+    <a href="plugin-obsidian.html">← dsh-obsidian</a>
+    <a href="../walkthrough.html">下一章：插件实战 →</a>
+  </div>
+</main>
+<footer class="foot">dsh 插件架构解构 · 生成于 2026-09-14 · 依据 plugins/dsh-file-attachment/src/*</footer>
+</body>
+</html>

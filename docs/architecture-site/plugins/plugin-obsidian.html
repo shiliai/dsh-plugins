@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dsh-obsidian · dsh 插件架构解构</title>
+<link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="../index.html">dsh<span>·</span>架构解构</a>
+  <a href="../index.html">总览</a>
+  <a href="../cordis.html">Cordis 模型</a>
+  <a href="../boot.html">启动链路</a>
+  <a href="../services.html">宿主服务</a>
+  <a href="../integration.html">集成机制</a>
+  <a href="plugin-wecom.html">wecom</a>
+  <a href="plugin-remote.html">remote</a>
+  <a href="plugin-reading.html">reading</a>
+  <a href="plugin-obsidian.html" class="active">obsidian</a>
+  <a href="plugin-file-attachment.html">file-attachment</a>
+  <a href="../patterns.html">接口与模式</a><a href="../walkthrough.html">插件实战</a>
+</nav>
+
+<main class="page">
+  <header class="hero">
+    <h1>dsh-obsidian：笔记库工作台 + vault 级技能</h1>
+    <p class="sub">直接操作本地 vault 目录（不要求 Obsidian 运行、无 URI、无 REST）：浏览器工作台浏览/编辑/预览、thoughts 收集箱、8 个 vault 限定的 agent 工具、以及跟随当前 vault 的 agent 技能。集成模式上它同时用了「提供工具」与「注册 provider」。</p>
+    <div class="meta">v0.5.0 · inject: [webServer, tools, skills]</div>
+  </header>
+
+  <h2 id="tools">8 个 agent 工具</h2>
+  <table>
+    <tr><th>工具</th><th>用途</th><th>要点</th></tr>
+    <tr><td><code>obsidian_list_notes</code></td><td>列 vault 内全部 .md</td><td>cursor/limit(1-500)/prefix 分页</td></tr>
+    <tr><td><code>obsidian_read_note</code></td><td>读单篇</td><td>返回 modifiedMs 供并发控制</td></tr>
+    <tr><td><code>obsidian_search_notes</code></td><td>全文+路径搜索</td><td>结果 <code>path:line: excerpt</code></td></tr>
+    <tr><td><code>obsidian_list_tags</code> / <code>obsidian_search_by_tag</code></td><td>标签索引与按标签查找</td><td>frontmatter + 行内 #tag；嵌套标签祖先链；15s TTL 缓存 + 代数失效</td></tr>
+    <tr><td><code>obsidian_write_note</code></td><td>创建/整篇替换</td><td>替换<strong>必须</strong>带 expectedModifiedMs（mtime 乐观锁）；diff 卡片渲染</td></tr>
+    <tr><td><code>obsidian_move_note</code> / <code>obsidian_delete_note</code></td><td>移动 / 物理删除</td><td>不覆盖已有；删除描述强调「仅在用户明确要求时调用」</td></tr>
+  </table>
+  <p>读类工具全部声明 <code>isConcurrencySafe: () =&gt; true</code>。</p>
+
+  <h2 id="vault">vault 安全监狱（把 LLM 当不可信调用方）</h2>
+  <p><code>VaultService</code> 是自研的「vault 限定 fs 层」，与宿主 fs/workspace 服务无关（inject 列表里没有它们）：</p>
+  <ul>
+    <li><strong>路径安全</strong>：拒绝 <code>\0</code>/反斜杠/绝对路径/<code>..</code>；<strong>逐段 lstat 拒绝 symlink</strong>；解析后再次 realpath 确认没逃出 vault；跳过 <code>.obsidian</code>/<code>.git</code>/<code>node_modules</code>；只处理 .md 与白名单图片；</li>
+    <li><strong>并发写</strong>：文件已存在而无 expectedModifiedMs → 409 NOTE_EXISTS；mtime 不符 → 409 NOTE_CONFLICT；临时文件 wx 写 + rename 原子替换；move 用 link+unlink；所有变更经 promise 链串行；</li>
+    <li><strong>HTTP 侧</strong>：一切变更操作要求 Origin 存在且严格等于配置的 <code>mutationOrigin</code>（normalizeOrigin 拒绝带 path/凭据的 Origin）。</li>
+  </ul>
+
+  <h2 id="skills">vault 级技能：全局注册、闭包换库</h2>
+  <p>技能存放在 <code>&lt;vault&gt;/.agents/skills/&lt;name&gt;/SKILL.md</code>，revision = 内容 sha256，create/update/delete 带碰撞检测与失败回滚。妙处在注册方式：</p>
+  <pre><code><span class="c">// plugins/dsh-obsidian/src/index.ts:52-57（精简）</span>
+<span class="c">// provider 注册在「全局层」—— 每个 agent 都能看到当前 vault 的技能；</span>
+<span class="c">// provider 实例不绑定具体 vault，切换 vault 时 setStore + 宿主 invalidate()</span>
+ctx.effect(() =&gt; ctx.skills.registerProvider((control) =&gt; provider), 'dsh-obsidian: skills')
+…
+onVaultChange: () =&gt; { rebuildStore(); provider.setStore(store); ctx.skills.invalidate?.() }</code></pre>
+  <p>技能集合<strong>动态跟随工作区</strong>而不重复注册；宿主技能注册表通过 invalidate 通知重列（SkillCoordinator 在每次变更后广播）。这套结构使「换一个 vault = 换一套 agent 技能」成为纯数据操作。</p>
+
+  <h2 id="client">Web 客户端：动态槽位选位</h2>
+  <ul>
+    <li>四个注册面：<code>settings.plugins.tab</code>（Obsidian skills 面板 + slim 版本条）、<code>sidebar.footer.action</code> 两个按钮（工作台 / Thoughts）、<code>sidebar.workspaces</code> 的 VaultBrowser（目录树 + 搜索 + 标签 + 换 vault）、以及 NotePanel 的<strong>动态挂载目标</strong> —— 按会话状态在 <code>conversation</code> / <code>conversation.session</code> / <code>details</code> 三个槽位间迁移，details 目标还会自动 <code>ctx.layout.openDetails()</code>。</li>
+    <li>工作台与 reading 同构：portal 叠加 + <code>[data-phase]</code> 锚点 + 纯函数几何；MarkdownPreview 用 marked + DOMPurify，双链 <code>[[...]]</code> 可点击跳转。</li>
+    <li>进上下文与 reading 同款：NotePanel「加入对话上下文」→ <code>[Obsidian context]</code> 文本块（type/vault/directory/absolutePath/recursive/文件清单）追加进草稿，agent 再用 obsidian_* 工具拉取真正内容。</li>
+    <li>thoughts 收集箱：GTD 式，存 vault 内隐藏目录的按日 md 文件，每条是 <code>- [ ] 文本 &lt;!-- dsh-thought id status created --&gt;</code> 标记行 —— 数据即 Markdown，用户在 Obsidian 里也能直接编辑。</li>
+  </ul>
+
+  <h2 id="lessons">值得带走的设计点</h2>
+  <ul>
+    <li><strong>patch 默认值即用法</strong>：cordis.patch.yml 里 <code>vaultRoot: !!js process.cwd()</code> —— 支持 <code>cd &lt;vault&gt; &amp;&amp; dsh web</code> 的直觉用法；正式部署在 profile 用户层用 <code>- id: dsh-obsidian, config: {vaultRoot: …}</code> 覆盖（记得整行复述）。</li>
+    <li><strong>乐观锁针对的是「模型并发」</strong>：expectedModifiedMs 不是给人用的 —— 是把 agent 的并发写变成结构化 409 的机制，与宿主工具管线的守卫语义互补。</li>
+    <li><strong>provider 的 rank 语义</strong>：rank 300 排在本地 provider 之后 —— 插件技能与宿主技能的关系是「补充」，注册表负责排序与失效，插件不抢占。</li>
+  </ul>
+
+  <div class="pager">
+    <a href="plugin-reading.html">← dsh-reading</a>
+    <a href="plugin-file-attachment.html">下一章：dsh-file-attachment →</a>
+  </div>
+</main>
+<footer class="foot">dsh 插件架构解构 · 生成于 2026-09-14 · 依据 plugins/dsh-obsidian/src/*</footer>
+</body>
+</html>

@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>接口与设计模式 · dsh 插件架构解构</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="index.html">dsh<span>·</span>架构解构</a>
+  <a href="index.html">总览</a>
+  <a href="cordis.html">Cordis 模型</a>
+  <a href="boot.html">启动链路</a>
+  <a href="services.html">宿主服务</a>
+  <a href="integration.html">集成机制</a>
+  <a href="patterns.html" class="active">接口与模式</a>
+  <a href="plugins/plugin-wecom.html">wecom</a>
+  <a href="plugins/plugin-remote.html">remote</a>
+  <a href="plugins/plugin-reading.html">reading</a>
+  <a href="plugins/plugin-obsidian.html">obsidian</a>
+  <a href="plugins/plugin-file-attachment.html">file-attachment</a>
+  <a href="walkthrough.html">插件实战</a>
+</nav>
+
+<main class="page">
+  <header class="hero">
+    <h1>接口与设计模式</h1>
+    <p class="sub">两部分：<a href="#interfaces">主要接口设计</a>（源码里的关键 TS 契约，保留原注释精髓）与 <a href="#patterns">设计模式目录</a>（dsh 反复使用的手法，每个配最小代码与我们插件的印证）。接口均摘自 <code>deepseek-harness@8534614a1</code>，有删节。</p>
+  </header>
+
+  <h2 id="interfaces">一、主要接口设计</h2>
+
+  <h3>1. Plugin.Base —— 插件元数据契约</h3>
+  <p>一切插件（官方的与我们写的）共享的五个元数据字段。这是整个体系最小的接口，也是「一切皆插件」的字面落点。</p>
+<pre><code><span class="c">// vendor/cordis/lib/types/registry.d.ts:52-63</span>
+<span class="k">export type</span> Plugin&lt;T = <span class="k">any</span>&gt; = Plugin.Function&lt;T&gt; | Plugin.Constructor&lt;T&gt; | Plugin.Object&lt;T&gt;
+
+<span class="k">export namespace</span> Plugin {
+  <span class="k">interface</span> Base&lt;T = <span class="k">any</span>&gt; {
+    <span class="c">/** 展示名：fiber 诊断与 logger 名 */</span>
+    name?: <span class="k">string</span>
+    <span class="c">/** Standard-schema 校验器：插件启动前校验 config（dsh 用 Schemastery）*/</span>
+    Config?: StandardSchemaV1&lt;<span class="k">any</span>, T&gt;
+    <span class="c">/** 所需服务：全部可用时才加载 */</span>
+    inject?: Inject
+    <span class="c">/** 本插件提供的服务名（Service 基类与 loader 都读它）*/</span>
+    provide?: <span class="k">string</span> | <span class="k">string</span>[]
+    <span class="c">/** 声明消费哪些服务的 intercept 配置 */</span>
+    intercept?: Dict&lt;<span class="k">boolean</span>&gt;
+  }
+}</code></pre>
+
+  <h3>2. Service 基类 —— 构造即注册</h3>
+<pre><code><span class="c">// vendor/cordis/lib/types/service.d.ts:9-54（节选）</span>
+<span class="k">export declare abstract class</span> Service&lt;<span class="k">out</span> T = never&gt; {
+  <span class="k">protected</span> ctx: Context
+  <span class="c">/** 特殊静态符号键 */</span>
+  <span class="k">static readonly</span> init: unique symbol    <span class="c">// 构造后运行的实例方法</span>
+  <span class="k">static readonly</span> check: unique symbol   <span class="c">// 可用性谓词，传给 ctx.provide()</span>
+  <span class="k">static readonly</span> invoke: unique symbol  <span class="c">// 可调用服务的函数体（如 ctx.logger()）</span>
+
+  <span class="c">/** 服务名 */</span>
+  name: <span class="k">string</span>
+
+  <span class="c">/** 以 name 注册进当前上下文；随所属 fiber 卸载自动注销 */</span>
+  <span class="f">constructor</span>(ctx: Context, name: <span class="k">string</span>)
+}</code></pre>
+  <p>关键设计：<code>super(ctx, name)</code> 一行同时完成「存储依赖」与「注册自己」—— 服务的生命周期由提供它的 fiber 拥有，没有独立的注销调用。</p>
+
+  <h3>3. ToolDefinition —— 规范值与展示分离</h3>
+  <p>工具接口最值得注意的是：<code>execute</code> 返回<strong>规范 JSON 值</strong>，模型可见内容由 <code>output.render</code> 纯函数投影，UI 卡片由 <code>presentCall/presentResult</code> 纯函数声明 —— 数据、模型视图、人视图三者分离。</p>
+<pre><code><span class="c">// packages/core/tools/src/index.ts:210-288（节选）</span>
+<span class="k">export interface</span> ToolOutputDefinition {
+  <span class="c">/** 规范值的 JSON Schema：每个成功返回都会被校验 */</span>
+  <span class="k">readonly</span> schema: JsonSchemaNode
+  <span class="c">/** 纯函数投影：参数 + 规范值 → 模型内容 */</span>
+  render(args: <span class="k">unknown</span>, value: JsonValue): ContentBlock[]
+}
+
+<span class="k">export interface</span> ToolDefinition <span class="k">extends</span> ToolSchema {
+  <span class="k">readonly</span> output: ToolOutputDefinition
+  <span class="c">/** 返回 output.schema 声明的规范值；异步工作必须观察 exec.signal */</span>
+  execute(args: <span class="k">unknown</span>, exec: ToolRunContext): Promise&lt;<span class="k">unknown</span>&gt;
+  <span class="c">/** 协作式超时预算（毫秒）。绝不发给模型 —— schemas() 只暴露 name/description/parameters */</span>
+  timeoutMs?: <span class="k">number</span>
+  <span class="c">/** 纯同步分类器：能否与兄弟工具调用并行（只有 true 才加入并行组）*/</span>
+  isConcurrencySafe?(args: <span class="k">unknown</span>): <span class="k">boolean</span>
+  <span class="c">/** PENDING 态的 UI 渲染意图。纯函数：直播流与会话回放都会调用，只许依赖 args */</span>
+  presentCall?(args: <span class="k">unknown</span>): ToolCallView | <span class="k">undefined</span>
+  <span class="c">/** COMPLETED 态的 UI 渲染意图。同样的纯函数/重放安全约束 */</span>
+  presentResult?(args: <span class="k">unknown</span>, result: ToolResult): ToolResultView | <span class="k">undefined</span>
+}</code></pre>
+
+  <h3>4. CreateAgentOptions / AgentHandle —— 事务性创建</h3>
+<pre><code><span class="c">// packages/core/agent/src/index.ts:80-175（节选）</span>
+<span class="k">export interface</span> CreateAgentOptions {
+  <span class="k">readonly</span> sessionId: SessionId
+  <span class="k">readonly</span> meta?: {
+    <span class="k">readonly</span> cwd?: <span class="k">string</span>
+    <span class="k">readonly</span> parentSession?: SessionId   <span class="c">// fork 血统</span>
+    <span class="k">readonly</span> seedLength?: <span class="k">number</span>          <span class="c">// seed 边界</span>
+    <span class="k">readonly</span> origin?: <span class="s">'subagent'</span>
+    <span class="k">readonly</span> delegationDepth?: <span class="k">number</span>
+    <span class="k">readonly</span> agentPreset?: <span class="k">string</span>
+  }
+  <span class="c">/** 初始回放/fork 历史：必须是自 seq 0 连续的「完整回合前缀」*/</span>
+  <span class="k">readonly</span> seed?: <span class="k">readonly</span> SessionEvent[]
+  <span class="k">readonly</span> agentOptions?: AgentOptions     <span class="c">// provider/model/…</span>
+  <span class="k">readonly</span> signal?: AbortSignal
+  <span class="c">/**
+   * 创建时对 agent 作用域世界的组合。factory 先铸 agentCtx、await setup、
+   * 再调用 setup 返回的同步 commit()，最后才发布 session 与 agent ——
+   * 观察者永远看不到「配置了一半的世界」。setup 抛错/commit 抛错/owner
+   * dispose 都会回滚整个作用域，两个 id 都不发布。
+   * setup 只组合、不驱动（Setup composes, it never drives）。
+   */</span>
+  <span class="k">readonly</span> setup?: AgentSetup
+}
+
+<span class="c">/** 句柄只暴露给创建者：只有持有者能拆掉这个 agent */</span>
+<span class="k">export interface</span> AgentHandle {
+  agent: Agent
+  dispose(): Promise&lt;<span class="k">void</span>&gt;
+}</code></pre>
+
+  <h3>5. SessionEvent —— 可扩展的事件溯源记录</h3>
+<pre><code><span class="c">// packages/core/session/src/types.ts:236-420（节选）</span>
+<span class="k">export interface</span> SessionEventMap {
+  <span class="s">'turn/start'</span>: { turn: <span class="k">number</span> }
+  <span class="s">'turn/end'</span>: { turn: <span class="k">number</span>; reason: TurnEndReason }
+  <span class="s">'step/start'</span>: { turn: <span class="k">number</span>; step: <span class="k">number</span> }
+  <span class="s">'user/message'</span>: { … }        <span class="c">// surface 事件：带 surfaceOp/sourceEventSeqs</span>
+  <span class="c">// …插件可经声明合并追加自己的事件类型（lossless-JSON 可序列化）</span>
+}
+
+<span class="k">export type</span> SessionEvent&lt;T <span class="k">extends</span> SessionEventType = SessionEventType&gt; = {
+  [K <span class="k">in</span> SessionEventType]: {
+    type: K
+    seq: <span class="k">number</span>      <span class="c">// 会话内单调序号</span>
+    time: <span class="k">number</span>     <span class="c">// Unix epoch 毫秒</span>
+    data: SessionEventMap[K]
+    <span class="c">/**
+     * 标记「读者不认识此类型时可安全跳过」。缺省 = 必需：
+     * 遇到不认识的必需事件必须拒绝重建会话而不是悄悄丢弃 ——
+     * 宁可过度拒绝，不可悄悄丢数据。
+     */</span>
+    ignorable?: <span class="k">boolean</span>
+  }
+}[T]</code></pre>
+
+  <h3>6. SessionPersistence —— 缝的抽象类</h3>
+<pre><code><span class="c">// packages/session/session-persistence/src/index.ts:84-130（节选）</span>
+<span class="k">export abstract class</span> SessionPersistence <span class="k">extends</span> Service {
+  <span class="f">constructor</span>(ctx: Context) { <span class="k">super</span>(ctx, <span class="s">'sessionPersistence'</span>) }
+
+  <span class="c">/** 解析（不物化）会话的后端工件位置；SQLite 类后端返回 undefined */</span>
+  <span class="k">abstract</span> locate(meta: SessionHeader): SessionLocation | <span class="k">undefined</span>
+  <span class="k">abstract readonly</span> supportsRawArtifacts: <span class="k">boolean</span>
+  <span class="c">/**
+   * append-only 且 seq 连续；append 只在持久化（durability）之后 resolve。
+   * load 对「中断的回合尾巴」做均衡修复，不重写已提交事件。
+   */</span>
+  <span class="k">abstract</span> create(meta: SessionHeader): <span class="k">void</span>
+  <span class="k">abstract</span> append(id: SessionId, events: <span class="k">readonly</span> SessionEvent[]): Promise&lt;<span class="k">void</span>&gt;
+  <span class="k">abstract</span> load(id: SessionId): Promise&lt;SessionEvent[]&gt;
+  <span class="k">abstract</span> list(): Promise&lt;SessionHeader[]&gt;
+  <span class="c">// …inspect / readFrom / listSnapshots / readRaw</span>
+}
+<span class="c">// 两个实现：session-persistence-jsonl（默认，zstd 压缩帧）、session-persistence-sqlite</span></code></pre>
+
+  <h3>7. WebRoute —— 最小的 HTTP 路由契约</h3>
+<pre><code><span class="c">// packages/host/webserver/src/index.ts:24-50（节选）</span>
+<span class="k">export type</span> WebRouteKind = <span class="s">'exact'</span> | <span class="s">'prefix'</span>
+
+<span class="k">export interface</span> WebRoute {
+  kind: WebRouteKind
+  <span class="c">/** 绝对路径，无尾斜杠 */</span>
+  path: <span class="k">string</span>
+  <span class="c">/** 拥有完整响应生命周期（可以 hold 住响应，如 SSE）*/</span>
+  handler: (req: IncomingMessage, res: ServerResponse) =&gt; <span class="k">void</span> | Promise&lt;<span class="k">void</span>&gt;
+}
+
+<span class="k">export interface</span> WebUpgradeRoute {
+  path: <span class="k">string</span>   <span class="c">// exact path 的 WebSocket 升级</span>
+  handler: (req, socket: Duplex, head: Buffer) =&gt; <span class="k">void</span> | Promise&lt;<span class="k">void</span>&gt;
+}
+
+<span class="k">export interface</span> Config {
+  host: <span class="s">'127.0.0.1'</span> | <span class="s">'0.0.0.0'</span>   <span class="c">// 类型系统里只这两个值</span>
+  port: <span class="k">number</span>                     <span class="c">// 0 = OS 分配</span>
+}</code></pre>
+  <p>注意 host 的类型：<strong>Config 类型本身就是安全文档</strong> —— 绑全网卡的决策被逼成显式选择，而 web-startup 更是在运行期直接拒绝 <code>0.0.0.0</code>。</p>
+
+  <h3>8. PatchOptions —— 组合层的解释器输入</h3>
+<pre><code><span class="c">// vendor/include/src/index.ts:145-156</span>
+<span class="k">export interface</span> PatchOptions {
+  id?: <span class="k">string</span>                 <span class="c">// 定位目标行（非 insert 补丁必须）</span>
+  insert?: EntryOptions[]      <span class="c">// 追加行（无 id → 顶层；有 id → 进该 group）</span>
+  name?: <span class="k">string</span>                <span class="c">// 校验目标行的插件模块名</span>
+  config?: <span class="k">any</span>                <span class="c">// 整行替换，不深合并</span>
+  group?: <span class="k">boolean</span> | <span class="k">null</span>
+  disabled?: <span class="k">boolean</span> | <span class="k">null</span>   <span class="c">// overlay 关行的正道</span>
+  inject?: <span class="k">any</span>
+  intercept?: <span class="k">any</span>
+  isolate?: <span class="k">any</span>
+  [key: <span class="k">string</span>]: <span class="k">any</span>          <span class="c">// 其余键直接覆写 EntryOptions 同名字段</span>
+}</code></pre>
+
+  <h3>9. SlotEntryDef —— 浏览器 UI 的槽位契约</h3>
+<pre><code><span class="c">// packages/client/ui-slots/src/index.ts:79-100（节选）</span>
+<span class="c">/** 槽位基数：单占 / 有序列表 / 按键分发 / 选择器路由链 */</span>
+<span class="k">export type</span> SlotKind = <span class="s">'single'</span> | <span class="s">'list'</span> | <span class="s">'keyed'</span> | <span class="s">'chain'</span>
+<span class="c">/** 数据上下文：全局 / 可能有会话 / 严格会话绑定 */</span>
+<span class="k">export type</span> SlotScope = <span class="s">'root'</span> | <span class="s">'session-maybe'</span> | <span class="s">'session'</span>
+
+<span class="k">export interface</span> SlotEntryDef {
+  kind: SlotKind
+  scope: SlotScope
+  owner?: <span class="k">object</span>   <span class="c">// owner 在 renderSlot 调用点传入的 props 份额</span>
+  keyProps?: Record&lt;<span class="k">string</span>, <span class="k">object</span>&gt;
+}
+<span class="c">// 槽位表经声明合并扩展：</span>
+<span class="c">// declare module '@deepseek-ai/dsh-client-ui-slots' { interface SlotMap { 'my.slot': {...} } }</span>
+<span class="c">// 注册：ctx.slots.register(options, component) → 返回注销函数</span></code></pre>
+
+  <h3>10. SkillProvider —— 发现/加载两段式</h3>
+<pre><code><span class="c">// packages/skill/skill/src/index.ts:248-276（节选）</span>
+<span class="k">export interface</span> SkillProvider {
+  <span class="k">readonly</span> name: <span class="k">string</span>
+  <span class="c">/** 列出候选（发现可异步、可 abort）；rank 越低越优先 */</span>
+  <span class="k">readonly</span> list: (options: SkillLookupOptions) =&gt;
+    Promise&lt;<span class="k">readonly</span> SkillCandidate[] | SkillProviderObservation&gt;
+  <span class="c">/** 加载完整技能体；返回 undefined 表示已不可加载 */</span>
+  <span class="k">readonly</span> get: (candidate: SkillCandidate, options: SkillLookupOptions) =&gt;
+    Promise&lt;SkillDefinition | <span class="k">undefined</span>&gt;
+}
+<span class="c">/** 注册作用域的生命周期能力：注册失败/注销时 abort；invalidate 触发重列 */</span>
+<span class="k">export interface</span> SkillProviderControl {
+  <span class="k">readonly</span> signal: AbortSignal
+  <span class="k">readonly</span> invalidate: () =&gt; <span class="k">void</span>
+}</code></pre>
+
+  <h3>11. UserQuestionService —— 通道路由</h3>
+<pre><code><span class="c">// packages/interaction/user-questions/src/index.ts:134-156（节选）</span>
+<span class="c">/** ctx.userQuestions：通道 provider + 按路由感知的 ask() */</span>
+<span class="k">export class</span> UserQuestionService <span class="k">extends</span> Service {
+  <span class="c">/** 特性探针：出树 provider 注册前检查（wecom 用它做能力探测）*/</span>
+  <span class="k">readonly</span> supportsRouting: <span class="k">true</span> = <span class="k">true</span>
+
+  <span class="c">// 重载 1：注册默认（Web）provider</span>
+  registerProvider(provider: UserQuestionProvider): () =&gt; <span class="k">void</span>
+  <span class="c">// 重载 2：注册通道 provider —— ask() 按请求上的可信路由 channel 分发</span>
+  registerProvider(channel: InteractionChannel, provider: UserQuestionProvider): () =&gt; <span class="k">void</span>
+}</code></pre>
+
+  <h3>12. dsh.client —— 插件 Web UI 的发现清单</h3>
+<pre><code><span class="c">// 插件 package.json（宿主 packages/client/modules/src/index.ts 消费）</span>
+{
+  <span class="s">"exports"</span>: { <span class="s">"."</span>: <span class="s">"./lib/index.js"</span>, <span class="s">"./client"</span>: <span class="s">"./lib/client.js"</span> },
+  <span class="s">"dsh"</span>: {
+    <span class="s">"bundle"</span>: { <span class="s">"patch"</span>: <span class="s">"./cordis.patch.yml"</span> },
+    <span class="s">"client"</span>: {
+      <span class="s">"platform"</span>: <span class="s">"web"</span>,
+      <span class="s">"inject"</span>: [<span class="s">"@deepseek-ai/dsh-client-runtime"</span>],  <span class="c">// client 侧的依赖包</span>
+      <span class="s">"immediately"</span>: <span class="k">false</span>                            <span class="c">// 是否首屏加载</span>
+    }
+  }
+}
+<span class="c">// 宿主侧：缺 exports["./client"] 而声明了 dsh.client → 加载即抛错（fail loud）</span></code></pre>
+
+  <h2 id="patterns">二、设计模式目录</h2>
+  <p>dsh 没有发明新名词，但它把一批经典模式用得非常一致。按「容器与组合 → 能力与扩展 → 数据与可靠性 → 面向模型」四组整理，每组模式给出：dsh 在哪用、最小代码、我们的插件哪里印证。</p>
+
+  <h3>组 A · 容器与组合</h3>
+
+  <h4>A1. IoC 容器 + 服务定位器（依赖倒置）</h4>
+  <p><strong>手法</strong>：能力不通过 import 具体实现获得，而是以稳定 key 挂在 <code>ctx</code> 上按需定位；依赖方向由 <code>inject</code> 声明，装载顺序是数据不是代码。</p>
+<pre><code><span class="k">export const</span> inject = [<span class="s">'tools'</span>, <span class="s">'webServer'</span>]   <span class="c">// 声明</span>
+<span class="k">export function</span> apply(ctx: Context) {
+  ctx.tools.register(…)                          <span class="c">// 定位使用</span>
+}</code></pre>
+  <p><strong>印证</strong>：reading 只 inject webServer，wecom inject 六个服务 —— 依赖面即集成面。</p>
+
+  <h4>A2. 声明合并做类型扩展点</h4>
+  <p><strong>手法</strong>：框架的 <code>Context</code>、<code>Events</code>、宿主的 <code>SlotMap</code>、<code>SessionEventMap</code> 全是 <code>interface</code>，插件用 TypeScript declaration merging 无侵入地补类型 —— <strong>扩展点即类型</strong>。</p>
+<pre><code><span class="k">declare module</span> <span class="s">'@deepseek-ai/cordis'</span> { <span class="k">interface</span> Context { tools: ToolRuntime } }
+<span class="k">declare module</span> <span class="s">'@deepseek-ai/cordis'</span> { <span class="k">interface</span> Events { <span class="s">'my/evt'</span>: (p: P) =&gt; <span class="k">void</span> } }
+<span class="k">declare module</span> <span class="s">'@deepseek-ai/dsh-client-ui-slots'</span> { <span class="k">interface</span> SlotMap { … } }
+<span class="k">declare module</span> <span class="s">'@deepseek-ai/dsh-session'</span> { <span class="k">interface</span> SessionEventMap { … } }</code></pre>
+  <p><strong>印证</strong>：我们插件里的 <code>dsh-shims.d.ts</code> —— 出树工程拿不到宿主编译单元内的增广，就自己重建消费面的最小声明。这套体系里「类型从哪来」是有明确答案的：宿主发 .d.ts + 消费方声明合并。</p>
+
+  <h4>A3. 洋葱中间件（around-dispatch / waterfall）</h4>
+  <p><strong>手法</strong>：拦截点不是回调钩子，而是 waterfall 事件 —— 监听者收 <code>(...args, next)</code>，调 <code>next()</code> 委托、不调即短路。拦截与网关语义内建在派发机制里。</p>
+<pre><code><span class="c">// dsh-base 的 approval 策略监听 tools/pre-execute（示意）</span>
+ctx.on(<span class="s">'tools/pre-execute'</span>, (exec, next) =&gt; {
+  <span class="k">if</span> (!policy.allows(exec.name)) <span class="k">return</span> { decision: <span class="s">'deny'</span> }  <span class="c">// 不调 next = 短路</span>
+  <span class="k">return</span> next()                                                <span class="c">// 委托下游</span>
+})</code></pre>
+  <p><strong>印证</strong>：宿主的 ask_user_question 工具在 <code>agent/pre-step</code> 读触发消息路由 —— 我们没有写任何「钩子注入」代码，路由信息穿透完全靠这个机制。</p>
+
+  <h4>A4. RAII / Effect 系统</h4>
+  <p><strong>手法</strong>：一切注册都是 effect，持有 disposer；卸载逆序回收。资源管理从「记得清理」变成「注册即登记清理」。</p>
+<pre><code>ctx.effect(() =&gt; {
+  <span class="k">const</span> timer = setInterval(sweep, interval); timer.unref?.()
+  <span class="k">return</span> () =&gt; clearInterval(timer)      <span class="c">// 卸载时运行</span>
+})
+<span class="c">// 顺序敏感时用生成器 effect：yield 的 disposer 逆序执行、中途抛错已 yield 的也回滚</span>
+ctx.effect(<span class="k">function</span>* () { <span class="k">yield</span> a; <span class="k">yield</span> b })</code></pre>
+  <p><strong>印证</strong>：file-attachment 的 TTL 定时器 <code>unref()</code> + ctx.effect 注销；wecom 面板 /restart 后旧监听无残留。</p>
+
+  <h4>A5. 声明式组合 / 配置解释器（整行替换）</h4>
+  <p><strong>手法</strong>：产品 = 补丁层对空根的求值。补丁按 id 寻址、整行替换、后层胜 —— 把「防幽灵默认值」做进语义。</p>
+<pre><code><span class="c"># 实机 ~/.local/dsh_home/profiles/web/cordis.patch.yml（节选）</span>
+- id: dsh-wecom          <span class="c"># 按 id 寻址任何一层（包括官方 bundle）的行</span>
+  config:                <span class="c"># 整行替换：必须复述 botId/botSecret</span>
+    botId: <span class="s">!!js process.env.WECOM_BOT_ID ?? ''</span>
+    allowChats: [<span class="s">'*'</span>]</code></pre>
+
+  <h4>A6. 命令行即服务</h4>
+  <p><strong>手法</strong>：launcher 把 argv 冻成 <code>cmdlineArgs</code> 服务；任何插件都能声明自己的 commander 程序解析它、再 <code>provide</code> 一个服务；依赖行用 <code>!!js ctx.该服务.port ?? 默认</code> 消费 —— <strong>flag 是最高优先级的临时配置</strong>，且 <code>--help</code> 时 provider 不发布服务、依赖行自然不激活。</p>
+<pre><code><span class="c">// 宿主 web-startup（packages/bundle/web-app/src/startup.ts）；dsh-web-app 的 cordis.patch.yml：</span>
+- id: webserver
+  inject: [webStartup]
+  config:
+    host: <span class="s">!!js ctx.webStartup.host ?? '127.0.0.1'</span>
+    port: <span class="s">!!js ctx.webStartup.port ?? 3080</span></code></pre>
+
+  <h3>组 B · 能力与扩展</h3>
+
+  <h4>B1. 端口-适配器三角色（能力缝）</h4>
+  <p><strong>手法</strong>：可替换能力拆成三个包角色 —— <strong>Definition</strong>（抽象类/接口）、<strong>Provider</strong>（实现，可换）、<strong>Consumer</strong>（常是模型工具）。消费者与提供者都只依赖 Definition 的类型。换 Provider = 换产品行为。</p>
+<pre><code>session-persistence（Definition）← session-persistence-jsonl / -sqlite（Provider）
+shell（Definition）              ← bash-local / pwsh / sandbox（Provider）
+skills（注册表）                  ← dsh-obsidian 的 vault 技能（我们加的 Provider，rank 300）</code></pre>
+
+  <h4>B2. 工厂 + 事务性 setup</h4>
+  <p><strong>手法</strong>：agent 创建的 setup/commit/rollback 三段（见上文接口 4）—— 「观察者永远看不到配置了一半的世界」。复杂初始化的原子性由框架保证，插件只写 <code>setup(agentCtx)</code>。</p>
+  <p><strong>印证</strong>：wecom 的 <code>ensureAgent</code> 在 setup 里装模型选择 + mount preset —— 若 mount 失败，整个 agent 创建回滚，聊天队列收到错误而不是拿到半成品 agent。</p>
+
+  <h4>B3. 通道 Provider 路由（Strategy + Registry）</h4>
+  <p><strong>手法</strong>：同一个抽象（提问交互）按「通道」注册多个实现，请求携带可信路由决定走哪个。</p>
+<pre><code>userQuestions.registerProvider(<span class="s">'wecom'</span>, { ask })   <span class="c">// 我们的通道实现</span>
+userQuestions.registerProvider(webProvider)          <span class="c">// 浏览器默认 —— 同进程共存</span>
+<span class="c">// ask() 按 route.channel 分发；无 provider → NO_PROVIDER_FOR_ROUTE</span></code></pre>
+
+  <h4>B4. Symbol.for 共享进程级注册表</h4>
+  <p><strong>手法</strong>：跨包协作的「暗信道」—— 双方用同一个全局符号键拿同一个注册表，不需要共同 import 一个包。</p>
+<pre><code><span class="c">// 宿主 packages/interaction/user-questions/src/index.ts:35</span>
+<span class="k">const</span> registry = <span class="c">/* Symbol.for('@deepseek-ai/dsh-user-questions/interaction-route-registry') */</span>
+<span class="c">// 我们 plugins/dsh-wecom/src/questions.ts:58 —— 刻意复刻同一键，共享同一注册表</span>
+routeUserMessage(msg, { channel: <span class="s">'wecom'</span>, destination: chatKey })  <span class="c">// 写</span>
+<span class="c">// 宿主 ask_user_question 在 agent/pre-step 读 —— 跨包语义打通，零协议改动</span></code></pre>
+  <div class="note"><span class="t">代价与纪律</span>这是强耦合的进程内约定：宿主改键名/结构就会断。所以 wecom 同时保留了能力探测（<code>supportsRouting === true</code> 才注册）与跨版本事件源探测链 —— 用「暗信道」时必须配套「握手」。</div>
+
+  <h3>组 C · 数据与可靠性</h3>
+
+  <h4>C1. 事件溯源 + 投影（Event Sourcing）</h4>
+  <p><strong>手法</strong>：会话 = append-only 事件日志；UI、模型历史、fork、恢复全是投影（<code>deriveMessages()</code>）。铁律：<em>model-visible means logged</em>，带运行时不变量断言。</p>
+<pre><code><span class="c">// dsh-wecom 的回合摘要 = 从事件后缀投影（plugins/dsh-wecom/src/frame.ts:16-42）</span>
+<span class="k">const</span> result = summarizeTurn(sessionEvents.slice(firstSeq), …)
+<span class="c">// 与浏览器看到的是同一份事实 —— 不存在「机器人回复和网页不一致」</span></code></pre>
+
+  <h4>C2. 每键串行队列（per-key promise chain）</h4>
+  <p><strong>手法</strong>：并发控制的最小实现 —— 按资源 key 串行、跨 key 并行，settle 后清理自身。</p>
+<pre><code><span class="c">// wecom 的聊天队列（index.ts:1223-1275）与 obsidian 的 mutate()、reading 的 state-store 写链</span>
+<span class="k">const</span> prev = queues.get(key) ?? Promise.resolve()
+<span class="k">const</span> next = prev.then(run).finally(() =&gt; { <span class="k">if</span> (queues.get(key) === next) queues.delete(key) })
+queues.set(key, next)</code></pre>
+
+  <h4>C3. 乐观锁</h4>
+  <p><strong>手法</strong>：把「并发写冲突」变成结构化 409，而不是 last-write-wins。</p>
+<pre><code><span class="c">// obsidian 写笔记：替换必须带 expectedModifiedMs（mtime）；技能 revision = 内容 sha256</span>
+<span class="k">if</span> (exists &amp;&amp; expectedModifiedMs === <span class="k">undefined</span>) <span class="k">throw</span> NOTE_EXISTS
+<span class="k">if</span> (stat.mtimeMs !== expectedModifiedMs) <span class="k">throw</span> NOTE_CONFLICT</code></pre>
+
+  <h4>C4. Stale-while-revalidate + 内容寻址缓存</h4>
+  <p><strong>手法</strong>：读旧值兜底、成功异步回写（reading 的 remote-cache）；静态资源以内容哈希做缓存穿透（宿主 <code>/plugins/&lt;pkg&gt;/client.js?rev=&lt;sha1前12&gt;</code>）。</p>
+<pre><code><span class="c">// plugins/dsh-reading/src/remote-cache.ts + wallabag-adapter.ts</span>
+<span class="k">try</span> { value = <span class="k">await</span> fetchRemote() } <span class="k">catch</span> { <span class="k">return</span> readCache(key) ?? rethrow }  <span class="c">// 兜底</span>
+queueWriteCache(key, value)                                                        <span class="c">// 异步回写</span></code></pre>
+
+  <h4>C5. 两阶段提交 + trap 回滚</h4>
+  <p><strong>手法</strong>：跨系统变更（安装/轮换/升级）先全部准备、后原子提交；任何阶段失败回滚到一致态。</p>
+<pre><code><span class="c"># install-dsh-remote-instance.sh：committed=true 之前任何失败触发 restore()</span>
+trap <span class="s">'[ "$committed" = true ] || restore'</span> EXIT
+…
+atomic_rename(<span class="s">"$tmp"</span>, <span class="s">"$state"</span>)   <span class="c"># dsh-remote 的 state rotate：rename 即提交点</span>
+committed=<span class="k">true</span></code></pre>
+
+  <h4>C6. 看门狗（降级分类 + 冷却）</h4>
+  <p><strong>手法</strong>：对「外部授权/连接的静默劣化」显式建模 —— 观察事件流 → 分类（auth/connection）→ 持续时间过滤（minDowntime 滤抖动）→ 冷却（alertCooldown 防风暴）→ 多目的地告警。</p>
+<pre><code><span class="c">// plugins/dsh-wecom/src/watchdog.ts：只提取错误码，永不携带消息体</span>
+classifyError(err)  <span class="c">// → 'auth' | 'connection'</span>
+degraded ≥ minDowntimeMs(120s) 且 距上次告警 ≥ alertCooldownMs(1h) → fireNow()</code></pre>
+
+  <h3>组 D · 面向模型的模式</h3>
+
+  <h4>D1. 文本即协议</h4>
+  <p><strong>手法</strong>：给模型新能力时，优先考虑「降维成 prompt 里的结构化文本」而不是新消息类型 —— 模型已有的工具（读文件）成为执行器。</p>
+<pre><code><span class="c">// file-attachment 的引用块；reading 的 [Reading item]；obsidian 的 [Obsidian context]</span>
+[Attached file: report.xlsx]
+type: application/vnd.…sheet
+size: 48213 bytes
+uri: file:///…/attachments/tmp/…-report.xlsx   <span class="c">← agent 用既有工具按 URI 自取</span></code></pre>
+  <p><strong>为什么</strong>：不做 RAG、不改消息协议、不碰 session 服务 —— 三个插件的「内容进上下文」收敛为同一个低侵入动作（往 <code>ctx.conversation.input</code> 草稿追加文本块）。</p>
+
+  <h4>D2. 展示与数据分离（工具的三重视图）</h4>
+  <p><strong>手法</strong>：<code>execute</code> 产出规范值 → <code>output.render</code> 投影给模型 → <code>presentCall/presentResult</code> 声明 UI 卡片。三个视图都是纯函数（重放安全），数据只有一份规范值。</p>
+<pre><code>execute(args) → { ok: <span class="k">true</span>, message: <span class="s">'…'</span> }      <span class="c">// 规范值（唯一事实）</span>
+output.render(_a, v) → [{ type: <span class="s">'text'</span>, text: … }] <span class="c">// 模型视图</span>
+presentResult(a, r) → { card: … }                  <span class="c">// 人视图（可缺省）</span></code></pre>
+  <p><strong>印证</strong>：obsidian 的 <code>obsidian_write_note</code> 新建渲染 diff 卡片、替换渲染 write 卡片 —— 都是 presentResult 的纯函数分支，不碰执行路径。</p>
+
+  <h4>D3. 默认拒绝的安全默认（deny-by-default）</h4>
+  <p><strong>手法</strong>：能力面（白名单、目录、出站目标）空 = 拒绝；<code>*</code> 必须显式写出来才放行全部。与「fail loud」配套：坏配置在加载期报错，而不是运行期降级。</p>
+<pre><code><span class="c">// wecom 三张白名单；remote 网关的 LOOPBACK_ONLY_METHODS；宿主 web-startup 拒绝 --host 0.0.0.0</span>
+isAllowed(target, list) { <span class="k">return</span> list.length &gt; 0 &amp;&amp; (list.includes(<span class="s">'*'</span>) || list.includes(target)) }</code></pre>
+
+  <blockquote>
+    <span class="label">怎么用这页</span>写插件时遇到设计决策，先问「dsh 自己在哪里解决过同类问题」—— 大概率本页有个模式可以直接套：并发用 C2、缓存用 C4、跨包协作用 B4（记得加握手）、给模型能力优先考虑 D1。模式的一致性本身就是 dsh 可维护性的来源。
+  </blockquote>
+
+  <div class="pager">
+    <a href="integration.html">← 集成机制</a>
+    <a href="plugins/plugin-wecom.html">dsh-wecom →</a>
+  </div>
+</main>
+<footer class="foot">dsh 插件架构解构 · 生成于 2026-09-14 · 接口摘自 deepseek-harness@8534614a1（有删节，以源码为准）</footer>
+</body>
+</html>

@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dsh 插件架构解构 · 总览</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="index.html">dsh<span>·</span>架构解构</a>
+  <a href="index.html" class="active">总览</a>
+  <a href="cordis.html">Cordis 模型</a>
+  <a href="boot.html">启动链路</a>
+  <a href="services.html">宿主服务</a>
+  <a href="integration.html">集成机制</a>
+  <a href="plugins/plugin-wecom.html">wecom</a>
+  <a href="plugins/plugin-remote.html">remote</a>
+  <a href="plugins/plugin-reading.html">reading</a>
+  <a href="plugins/plugin-obsidian.html">obsidian</a>
+  <a href="plugins/plugin-file-attachment.html">file-attachment</a>
+  <a href="patterns.html">接口与模式</a><a href="walkthrough.html">插件实战</a>
+</nav>
+
+<main class="page">
+  <header class="hero">
+    <h1>dsh 插件架构解构</h1>
+    <p class="sub">从我们自己的 5 个插件出发，理解 DeepSeek Harness 的设计思想与架构 —— 官方说「Everything is a plugin」，这份材料回答：<strong>它如何做到，以及我们的插件如何接上去</strong>。</p>
+    <div class="meta">
+      对照源码：deepseek-harness @ 8534614a1（codex/issue-57-routed-user-questions 分支，基线 tag dsh-v0.1.2-rc.1）·
+      本机安装 0.1.2-rc.1-local-issue57 · 生成于 2026-09-14
+    </div>
+  </header>
+
+  <h2 id="what">dsh 是什么</h2>
+  <p><strong>DeepSeek Harness（dsh）是一个 agent 运行时</strong>：它管理会话、驱动模型循环、执行工具、对外提供 Web UI / SDK / ACP 等入口。它没有把任何一个这些能力写死在内核里 —— 官方 README 的第一句定位就是 <em>an architecture where <strong>everything is a plugin</strong></em>，底层是 <a href="https://github.com/cordiverse/cordis" target="_blank">Cordis</a> 插件容器（其设计论文题为《A Programming Paradigm for Spatiotemporal Composability》）。模型适配器、工具注册表、会话日志、甚至 agent 循环本身，都是挂在同一棵插件树上的普通插件 —— 所以<em>每一个都可以被配置替换</em>。</p>
+  <blockquote>
+    <span class="label">官方原文</span>（docs/architecture.md:13）：There is no privileged core to patch: you extend dsh by mounting a plugin beside the others, and registrations are effects that unwind when their plugin unloads.
+    <br>—— 没有「需要打补丁的特权内核」：扩展 dsh 的唯一方式就是把一个插件挂到其他插件旁边；一切注册都是可逆的副作用（effect），插件卸载时自动展开回收。
+  </blockquote>
+  <p>进程结构上，一条 <code>dsh --profile web</code> 命令启动的是：<strong>launcher（apps/cli，8KB）→ profile 组合器 → Cordis 容器 → 约 100 个插件组成的树</strong>。launcher 只负责「选哪棵树、叠哪些层」，其余一切（解析 <code>--port</code>、绑定 HTTP、跑 agent）都发生在树内的插件里。</p>
+
+  <h2 id="panorama">全景架构图</h2>
+  <figure>
+    <svg viewBox="0 0 960 560" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, PingFang SC, sans-serif">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#98a2b3"/>
+        </marker>
+      </defs>
+      <style>
+        .box { fill:#171a21; stroke:#2a2f3a; rx:10; }
+        .box2 { fill:#10131a; stroke:#2a2f3a; }
+        .t { fill:#d7dce4; font-size:14px; }
+        .ts { fill:#98a2b3; font-size:11px; }
+        .th { fill:#4d9fff; font-size:13px; font-weight:bold; }
+        .tg { fill:#3fb68b; font-size:12px; font-weight:bold; }
+        .ln { stroke:#98a2b3; stroke-width:1.2; fill:none; }
+      </style>
+      <!-- our plugins layer -->
+      <rect x="20" y="20" width="920" height="96" class="box" rx="10"/>
+      <text x="36" y="42" class="th">我们维护的出树插件（plugins/ 目录，独立 npm 包 = dsh bundle）</text>
+      <g font-size="12" class="t">
+        <rect x="36" y="56" width="160" height="44" class="box2" rx="8"/><text x="52" y="74">dsh-wecom</text><text x="52" y="90" class="ts">企微桥 · agents/sessions/…</text>
+        <rect x="208" y="56" width="160" height="44" class="box2" rx="8"/><text x="224" y="74">dsh-reading</text><text x="224" y="90" class="ts">阅读工作台 · webServer</text>
+        <rect x="380" y="56" width="160" height="44" class="box2" rx="8"/><text x="396" y="74">dsh-obsidian</text><text x="396" y="90" class="ts">笔记库 · tools/skills</text>
+        <rect x="552" y="56" width="160" height="44" class="box2" rx="8"/><text x="568" y="74">dsh-remote</text><text x="568" y="90" class="ts">远程接入 · webServer</text>
+        <rect x="724" y="56" width="200" height="44" class="box2" rx="8"/><text x="740" y="74">dsh-file-attachment</text><text x="740" y="90" class="ts">临时附件 · webServer</text>
+      </g>
+      <text x="36" y="108" class="ts">每个包声明 dsh.bundle.patch → cordis.patch.yml，安装即成为 profile 里的一层补丁</text>
+
+      <line x1="480" y1="120" x2="480" y2="150" class="ln" marker-end="url(#arr)"/>
+
+      <!-- profile layer -->
+      <rect x="20" y="154" width="920" height="72" class="box" rx="10"/>
+      <text x="36" y="176" class="th">Profile（$DSH_HOME/profiles/web）—— 有序的补丁层叠加</text>
+      <g font-size="12">
+        <rect x="36" y="188" width="150" height="26" class="box2" rx="6"/><text x="52" y="205" class="t">① dsh-base</text>
+        <rect x="196" y="188" width="170" height="26" class="box2" rx="6"/><text x="212" y="205" class="t">② dsh-web-app</text>
+        <rect x="376" y="188" width="280" height="26" class="box2" rx="6"/><text x="392" y="205" class="t">③ 出树插件（顺序 = 安装顺序）</text>
+        <rect x="666" y="188" width="258" height="26" class="box2" rx="6"/><text x="682" y="205" class="t">④ 用户 cordis.patch.yml / home / --patch</text>
+      </g>
+
+      <line x1="480" y1="230" x2="480" y2="260" class="ln" marker-end="url(#arr)"/>
+
+      <!-- cordis -->
+      <rect x="20" y="264" width="920" height="86" class="box" rx="10"/>
+      <text x="36" y="286" class="th">Cordis 容器（vendor/cordis → @deepseek-ai/cordis）</text>
+      <text x="36" y="308" class="t">Loader（按行加载插件、inject 等待、!!js 配置求值）· Include（读 YAML 树）· HMR（热更新）· Fiber 状态机</text>
+      <text x="36" y="330" class="t">root Context = 服务仓库：ctx.tools / ctx.agents / ctx.sessions / ctx.llm / ctx.webServer …，声明合并提供类型</text>
+
+      <line x1="480" y1="354" x2="480" y2="384" class="ln" marker-end="url(#arr)"/>
+
+      <!-- services -->
+      <rect x="20" y="388" width="450" height="150" class="box" rx="10"/>
+      <text x="36" y="410" class="th">dsh-base：能力底座（首个 bundle，恒在最底）</text>
+      <g class="ts" font-size="12">
+        <text x="36" y="434">ctx.sessions 事件溯源会话日志</text>
+        <text x="36" y="454">ctx.tools 工具注册表 + 执行管线</text>
+        <text x="36" y="474">ctx.agents / ctx.agentLoop agent 与循环</text>
+        <text x="36" y="494">ctx.llm 模型适配缝（DeepSeek provider）</text>
+        <text x="36" y="514">sandbox / approval / settings / credentials</text>
+      </g>
+      <rect x="490" y="388" width="450" height="150" class="box" rx="10"/>
+      <text x="506" y="410" class="th">dsh-web-app：浏览器面（第二个 bundle）</text>
+      <g class="ts" font-size="12">
+        <text x="506" y="434">ctx.webServer 裸 HTTP 路由表</text>
+        <text x="506" y="454">/api RPC 网关（Typert）+ events WebSocket</text>
+        <text x="506" y="474">静态前端 dist + /plugins/&lt;pkg&gt;/client.js 托管</text>
+        <text x="506" y="494">浏览器端 Cordis：ctx.slots / conversation / workspaces</text>
+        <text x="506" y="514">设置页 settings.plugins.tab 等槽位</text>
+      </g>
+    </svg>
+    <figcaption>图 1 · 一台运行中的 dsh --profile web：自上而下是「我们的插件 → profile 补丁层 → Cordis 容器 → 官方 bundle 提供的服务」。箭头含义：上层是下层数据的组合结果，而服务依赖则相反（上层插件 inject 下层服务）。</figcaption>
+  </figure>
+
+  <h2 id="philosophy">设计思想（从源码与文档中提炼）</h2>
+  <p>这十条是我们研究过程中反复被验证的「dsh 味道」，每一条都能在我们自己的插件里找到对应的实践：</p>
+  <table>
+    <tr><th style="width:230px">思想</th><th>含义</th><th>我们插件的印证</th></tr>
+    <tr>
+      <td><strong>1. 一切皆插件</strong></td>
+      <td>模型适配器、工具注册表、会话存储、agent 循环、Web 服务器都是插件，没有特权内核。</td>
+      <td>dsh-wecom 与官方 <code>web-startup</code> 插件在 Cordis 眼里没有区别，都是一行 entry。</td>
+    </tr>
+    <tr>
+      <td><strong>2. 组合即数据</strong></td>
+      <td>产品 = 插件树，而树 = 补丁层的和。根 <code>cordis.yml</code> 恒为 <code>[]</code>，一切行都由 patch 叠加而来。</td>
+      <td>实机 <code>~/.local/dsh_home/profiles/web/cordis.yml</code> 就是 <code>[]</code>；我们 5 个插件各自一个 <code>cordis.patch.yml</code>。</td>
+    </tr>
+    <tr>
+      <td><strong>3. 服务即依赖（inject）</strong></td>
+      <td>插件用 <code>inject</code> 声明消费哪些服务，框架等依赖就绪才挂载；顺序由数据表达，不写引导代码。</td>
+      <td>wecom 声明 <code>inject: [tools, agents, agentPresets, sessions, webServer…]</code>，reading 只需 <code>[webServer]</code>。</td>
+    </tr>
+    <tr>
+      <td><strong>4. 注册即可逆副作用</strong></td>
+      <td>一切经 <code>ctx</code> 的注册（工具/监听/路由/定时器）在卸载时自动回收，HMR 因此安全。</td>
+      <td>每个插件 <code>apply()</code> 末尾的 <code>ctx.effect(…)</code>；改 profile 的 patch 文件无需重启即可换行。</td>
+    </tr>
+    <tr>
+      <td><strong>5. 事件即扩展点</strong></td>
+      <td>拦截与观察走类型化事件（emit / waterfall / serial / parallel），不做侵入式钩子。</td>
+      <td>wecom 镜像 web 消息靠订阅全局 <code>session/event</code>；宿主 ask_user_question 的路由靠 <code>agent/pre-step</code>。</td>
+    </tr>
+    <tr>
+      <td><strong>6. 日志即真相</strong></td>
+      <td>Session log 是 append-only 事实流；<em>凡模型可见必已落日志</em>，UI/恢复/fork 全部从日志投影。</td>
+      <td>wecom 的回合摘要 <code>summarizeTurn()</code> 就是读会话事件后缀生成回复 —— 与浏览器看到的是同一份事实。</td>
+    </tr>
+    <tr>
+      <td><strong>7. 能力缝（seam）三角色</strong></td>
+      <td>可替换能力 = Service Definition（接口）+ Provider（实现）+ Consumer（常为模型工具），换 Provider 即换产品行为。</td>
+      <td>dsh-obsidian 的 skills provider（rank 300）只是往 <code>ctx.skills</code> 又挂了一个 Provider；sessionPersistence 可换 JSONL/SQLite。</td>
+    </tr>
+    <tr>
+      <td><strong>8. 整行替换的补丁语义</strong></td>
+      <td>patch 按 id 定位、整体替换 config、不深合并 —— 防止「幽灵默认值」，每行最终值只在唯一一层可见。</td>
+      <td>实机 profile 覆盖 dsh-wecom 白名单时必须复述 <code>botId/botSecret</code>，源码注释里就写着这条纪律。</td>
+    </tr>
+    <tr>
+      <td><strong>9. launcher 不认识应用</strong></td>
+      <td>launcher 只解析 <code>--profile/--patch/--dump-*</code>，其余参数原样下传；应用 flag 通过「命令行服务」压过配置。</td>
+      <td><code>port: !!js ctx.webStartup.port ?? 3080</code> —— 我们从未为支持任何 flag 改过宿主。</td>
+    </tr>
+    <tr>
+      <td><strong>10. fail loud 与安全默认</strong></td>
+      <td>配置坏在加载期、缺服务列名字、遥测默认可关、--host 0.0.0.0 直接拒绝；安全不在框架层假大空，而在每个插件各管各的路由信任。</td>
+      <td>wecom 空白名单=拒绝、remote 网关强制 127.0.0.1 + Origin 校验、obsidian 的 symlink 监狱。</td>
+    </tr>
+  </table>
+
+  <h2 id="map">本站导读</h2>
+  <div class="grid">
+    <a class="card" href="cordis.html"><h3>Cordis 模型</h3><p>插件容器的五个核心思想：Service、Context、inject、类型化事件、可逆副作用；Fiber 生命周期状态机与 HMR。</p></a>
+    <a class="card" href="boot.html"><h3>启动链路</h3><p>从回车到 URL 打印：launcher 参数边界、profile 组合、五层补丁叠加、Loader 挂载、命令行服务模式、live 重载。</p></a>
+    <a class="card" href="services.html"><h3>宿主服务</h3><p>插件能 inject 到什么：tools / agents / sessions / webServer / skills 等逐个契约，附典型用法与 file:line。</p></a>
+    <a class="card" href="integration.html"><h3>集成机制</h3><p>bundle/profile 双清单、安装与更新契约（GitHub 子目录、prepare + allowBuilds、updater、bootstrap）、5 插件对比总表。</p></a>
+    <a class="card" href="patterns.html"><h3>接口与模式</h3><p>源码里的关键 TS 接口契约（ToolDefinition / CreateAgentOptions / SessionEvent / WebRoute…）与 16 个反复使用的设计模式，每个配最小代码与插件印证。</p></a>
+    <a class="card" href="plugins/plugin-wecom.html"><h3>dsh-wecom</h3><p>企微长连接桥：每条消息一个 agent 回合、问题卡片跨宿主路由、双向会话镜像、授权看门狗。</p></a>
+    <a class="card" href="plugins/plugin-remote.html"><h3>dsh-remote</h3><p>私有链接接入：SSH 反向隧道 + 边缘网关、票据换 cookie、远程降权白名单、迟到 socket 错误防护。</p></a>
+    <a class="card" href="plugins/plugin-reading.html"><h3>dsh-reading</h3><p>阅读工作台：四层缓存、stale-while-revalidate、EPUB/PDF 双引擎、上下文以「草稿文本块」进对话。</p></a>
+    <a class="card" href="plugins/plugin-obsidian.html"><h3>dsh-obsidian</h3><p>笔记库工作台：vault 安全监狱、mtime 乐观锁、8 个 agent 工具、vault 级技能动态跟随。</p></a>
+    <a class="card" href="plugins/plugin-file-attachment.html"><h3>dsh-file-attachment</h3><p>文本即协议：给纯文本模型发文件 —— 附件降维成 prompt 里的引用块，与宿主图像 attachment 完全正交。</p></a>
+    <a class="card" href="walkthrough.html"><h3>插件实战</h3><p>把上面全部串起来：从零写一个 dsh 插件的完整路径 —— 骨架、工具、配置、HTTP API、Web UI、发布与安装。</p></a>
+  </div>
+
+  <h2 id="facts">本机环境事实（写作依据）</h2>
+  <table>
+    <tr><th>项</th><th>值</th></tr>
+    <tr><td>本机安装</td><td><code>~/.local/share/dsh-cli/releases/0.1.2-rc.1-local-issue57</code>（wrapper 固定 <code>DSH_HOME=~/.local/dsh_home</code>）</td></tr>
+    <tr><td>对照源码</td><td><code>~/project/deepseek-harness</code> @ <code>8534614a1</code>（codex/issue-57-routed-user-questions 分支，基线 tag <code>dsh-v0.1.2-rc.1</code>）</td></tr>
+    <tr><td>插件版本</td><td>wecom 0.5.2 · reading 0.7.0 · obsidian 0.5.0 · remote 0.3.3 · file-attachment 0.1.0</td></tr>
+    <tr><td>活样本 profile</td><td><code>~/.local/dsh_home/profiles/web</code>：bundles = base → web-app → 我们的 5 个插件 → dsh-better-sidebar</td></tr>
+    <tr><td class=""><strong>快照注意</strong></td><td>该源码快照中内置 bundle 只有 dsh-base / dsh-web-app / dsh-headless；官方 README 提到的 sdk / sdk-minimal / acp profile 属于更新的 master（0.1.3-alpha.1+），不影响链路结构。分析结论均已对照本机安装产物验证。</td></tr>
+  </table>
+
+  <div class="pager">
+    <span></span>
+    <a href="cordis.html">下一章：Cordis 模型 →</a>
+  </div>
+</main>
+<footer class="foot">dsh 插件架构解构 · 生成于 2026-09-14 · 源码引用基于 deepseek-harness@8534614a1</footer>
+</body>
+</html>
