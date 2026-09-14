@@ -18,6 +18,7 @@ export interface Book {
   filePath: string
   fileName: string
   fileSize: number
+  checksum?: string
   addedAt: string
   convertedTo?: { path: string; at: string }
   /** Stable project path relative to the Reading workspace root. */

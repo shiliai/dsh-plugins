@@ -9,6 +9,7 @@ import { VaultBrowser } from './VaultBrowser.tsx'
 import { VaultStore } from './store.ts'
 import { vaultApi } from './api.ts'
 import { appendVaultContext } from './context-reference.ts'
+import { pluginVersion } from './version.ts'
 import type { VaultContextKind } from '../contracts.ts'
 import { Workbench } from './Workbench.tsx'
 import { ThoughtsPanel } from './ThoughtsPanel.tsx'
@@ -19,7 +20,14 @@ export const inject = ['slots', 'layout', 'sessions', 'conversation']
 
 function ObsidianSkillsSettings({ store }: { store: VaultStore }) {
   const state = store.getSnapshot()
-  return <SkillBrowser store={store} root={state.vaultRoot} closeBrowser={() => undefined} wide expandSidebar={() => undefined} />
+  return <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+    <div style={{ padding: '8px 16px', fontSize: 12, opacity: .65, borderBottom: '1px solid rgba(127,127,127,.25)' }}>
+      Obsidian skills <span style={{ opacity: .8 }}>v{pluginVersion}</span>
+    </div>
+    <div style={{ flex: 1, minHeight: 0 }}>
+      <SkillBrowser store={store} root={state.vaultRoot} closeBrowser={() => undefined} wide expandSidebar={() => undefined} />
+    </div>
+  </div>
 }
 
 export type PanelTarget = 'conversation' | 'conversation.session' | 'details'

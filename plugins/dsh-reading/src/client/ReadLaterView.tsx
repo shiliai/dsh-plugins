@@ -7,6 +7,7 @@ import MessageSquarePlus from 'lucide-react/dist/esm/icons/message-square-plus'
 import NotebookTabs from 'lucide-react/dist/esm/icons/notebook-tabs'
 import type { Article } from '../contracts.ts'
 import { readingApi } from './api.ts'
+import { renderMathInPlace } from './math-render.ts'
 import css from './styles.module.css?dsh-inline'
 import { ContextMenu } from './ContextMenu.tsx'
 
@@ -110,6 +111,11 @@ export function ArticleReader({ article, addArticleContext, addObsidianReadingCo
   const [progress, setProgress] = useState(0)
   const [contextStatus, setContextStatus] = useState<string | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const contentRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const node = contentRef.current
+    if (node !== null) void renderMathInPlace(node)
+  }, [article.id, article.extractedHtml])
   useEffect(() => {
     let active = true
     void readingApi.progress().then(result => {
@@ -144,7 +150,7 @@ export function ArticleReader({ article, addArticleContext, addObsidianReadingCo
         <a className={css.articleLink} href={article.url} target="_blank" rel="noreferrer"><ExternalLink size={13} /> 原文</a>
       </header>
       <div className={css.articleContent} onScroll={onScroll}>
-        {article.extractedHtml ? <div dangerouslySetInnerHTML={{ __html: article.extractedHtml }} /> : <p>正文提取中，暂时请打开原文阅读。</p>}
+        {article.extractedHtml ? <div key={article.id} ref={contentRef} dangerouslySetInnerHTML={{ __html: article.extractedHtml }} /> : <p>正文提取中，暂时请打开原文阅读。</p>}
       </div>
       {contextStatus !== null && <div className={css.contextStatus} role="status">{contextStatus}</div>}
       <footer className={css.readerProgress}><div className={css.readerProgressTrack}><div className={css.readerProgressFill} style={{ width: `${Math.round(progress * 1000) / 10}%` }} /></div><span className={css.readerProgressText}>{Math.round(progress * 100)}%</span></footer>

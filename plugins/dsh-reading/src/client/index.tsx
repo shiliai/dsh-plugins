@@ -9,6 +9,7 @@ import BookOpen from 'lucide-react/dist/esm/icons/book-open'
 import type { Article } from '../contracts.ts'
 import { ReadingStore } from './store.ts'
 import { readingApi, type ReadingSettings } from './api.ts'
+import { pluginVersion } from './version.ts'
 import { Workbench } from './Workbench.tsx'
 import css from './styles.module.css?dsh-inline'
 
@@ -22,11 +23,14 @@ function ReadingSettingsPanel() {
   if (draft === null) return <div style={{ padding: 16 }}>{status ?? '加载 Reading 设置…'}</div>
   const save = async () => { setStatus(null); try { const value = await readingApi.updateSettings(draft); setSettings(value); setDraft(value); setStatus('已保存') } catch (error) { setStatus(error instanceof Error ? error.message : String(error)) } }
   return <div style={{ padding: 16, maxWidth: 760 }}>
-    <h2 style={{ margin: '0 0 8px' }}>Reading</h2>
-    <p style={{ opacity: .72, marginTop: 0 }}>配置项目缓存目录和打开项目时的会话行为。</p>
+    <h2 style={{ margin: '0 0 8px', display: 'flex', alignItems: 'baseline', gap: 8 }}>Reading <span style={{ fontSize: 12, fontWeight: 400, opacity: .55 }}>v{pluginVersion}</span></h2>
+    <p style={{ opacity: .72, marginTop: 0 }}>配置项目缓存目录、数据源和打开项目时的会话行为。</p>
     <label style={{ display: 'block', margin: '18px 0 6px' }}>默认 workspace 根目录</label>
     <input style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px' }} value={draft.rootDir} onChange={event => setDraft({ ...draft, rootDir: event.target.value })} />
     <label style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '18px 0' }}><input type="checkbox" checked={draft.createSessionOnOpen} onChange={event => setDraft({ ...draft, createSessionOnOpen: event.target.checked })} /> 打开书籍或文章时创建/切换到本篇对话</label>
+    <h3 style={{ margin: '24px 0 8px' }}>数据源</h3>
+    <p style={{ opacity: .72, fontSize: 13 }}>服务地址由部署环境提供，凭据不会显示在浏览器中。</p>
+    <div style={{ fontSize: 13, lineHeight: 1.7 }}><div>Wallabag：{draft.sources?.wallabag?.origin ?? '未配置'}</div><div>OPDS：{draft.sources?.opds?.url ?? '未配置'}</div><div>缓存：{draft.cache?.directory ?? 'DSH_HOME/cache/dsh-reading'}；成功结果写入本地，服务不可用时使用旧缓存。</div></div>
     <button type="button" onClick={() => void save()}>保存</button>
     {status !== null && <span style={{ marginLeft: 12, opacity: .75 }}>{status}</span>}
     {settings !== null && <p style={{ opacity: .6, fontSize: 12 }}>已有项目目录不会因修改根目录而移动。</p>}

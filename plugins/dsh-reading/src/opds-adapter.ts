@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { BookFormat } from './contracts.ts'
 import { LocalLibrary, ReadingError } from './library.ts'
+import { readRemoteCache, writeRemoteCache } from './remote-cache.ts'
 
 export interface OpdsConfig {
   name: string
@@ -37,6 +38,9 @@ export class OpdsAdapter {
   #cacheAt = 0
 
   get name(): string { return this.#config.name }
+  get settings(): { name: string; url: string; timeoutMs: number; cacheTtlMs: number } {
+    return { name: this.#config.name, url: this.#config.url, timeoutMs: this.#config.timeoutMs ?? 20_000, cacheTtlMs: 300_000 }
+  }
 
   constructor(config: OpdsConfig, private readonly fetchImpl: typeof fetch = fetch) {
     let parsed: URL
@@ -61,6 +65,7 @@ export class OpdsAdapter {
 
   async listBooks(): Promise<OpdsBook[]> {
     if (this.#cache !== undefined && Date.now() - this.#cacheAt < 5 * 60_000) return this.#cache
+    try {
     const response = await this.request(this.#config.url)
     const xml = await response.text()
     const books = parseFeed(xml, this.#config.url)
@@ -79,9 +84,14 @@ export class OpdsAdapter {
       .find(item => (item.rel ?? '').includes('subsection'))
     if (subsectionAttrs?.href === undefined) return []
     return this.#remember(await this.fetchBooksPages(new URL(decodeXml(subsectionAttrs.href), catalogUrl).toString(), catalogUrl))
+    } catch (error) {
+      const cached = await readRemoteCache<OpdsBook[]>('opds', this.#config.url)
+      if (cached !== undefined) { this.#cache = cached.value; this.#cacheAt = cached.cachedAt; return cached.value }
+      throw error
+    }
   }
 
-  #remember(books: OpdsBook[]): OpdsBook[] { this.#cache = books; this.#cacheAt = Date.now(); return books }
+  #remember(books: OpdsBook[]): OpdsBook[] { this.#cache = books; this.#cacheAt = Date.now(); void writeRemoteCache('opds', this.#config.url, books); return books }
 
   private async fetchBooksPages(url: string, baseUrl: string, seen = new Set<string>()): Promise<OpdsBook[]> {
     // Calibre-Web defaults to 60 entries per page; six pages covers the
