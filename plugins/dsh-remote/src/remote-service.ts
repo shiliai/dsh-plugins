@@ -24,6 +24,7 @@ export class RemoteService {
       host: resolved.gatewayHost,
       port: resolved.gatewayPort,
       ...(resolved.mode === 'host' ? { agentSocketPath: resolved.agentSocketPath } : {}),
+      ...(resolved.hubLaunchSecret === undefined ? {} : { hubLaunchSecret: resolved.hubLaunchSecret }),
     })
     await gateway.listen()
     const tunnel = resolved.mode === 'ssh' || resolved.sshCompatibility ? new TunnelSupervisor({
@@ -82,6 +83,7 @@ export interface ResolvedRemoteConfig {
   sshTarget: string
   remoteSocketPath: string
   agentSocketPath: string
+  hubLaunchSecret: string | undefined
   stateFile: string
   initialToken: string | undefined
   gatewayHost: '127.0.0.1'
@@ -110,6 +112,7 @@ export function resolveRuntimeConfig(webServer: Pick<WebServer, 'host' | 'port'>
   assertSafeRemoteSocketPath(remoteSocketPath)
   const agentSocketPath = environmentValue('DSH_REMOTE_AGENT_SOCKET_PATH') ?? config.agentSocketPath ?? defaultAgentSocketPath()
   assertSafeRemoteSocketPath(agentSocketPath)
+  const hubLaunchSecret = optionalHubLaunchSecret(environmentValue('DSH_REMOTE_HUB_LAUNCH_SECRET') ?? config.hubLaunchSecret)
   const stateFile = environmentValue('DSH_REMOTE_STATE_FILE') ?? config.stateFile
     ?? (instanceId === undefined ? defaultStatePath() : defaultInstanceStatePath(instanceId))
   if (!posix.isAbsolute(stateFile)) throw new Error('dsh-remote: stateFile must be absolute.')
@@ -121,6 +124,7 @@ export function resolveRuntimeConfig(webServer: Pick<WebServer, 'host' | 'port'>
     sshTarget,
     remoteSocketPath,
     agentSocketPath,
+    hubLaunchSecret,
     stateFile,
     initialToken: environmentValue('DSH_REMOTE_INITIAL_TOKEN'),
     gatewayHost: '127.0.0.1',
@@ -192,6 +196,14 @@ function hostGatewayPort(mode: 'ssh' | 'host', value: number | undefined): numbe
 function optionalInstanceId(value: string | undefined): string | undefined {
   if (value === undefined) return undefined
   assertSafeInstanceId(value)
+  return value
+}
+
+function optionalHubLaunchSecret(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined
+  if (!/^[A-Za-z0-9_-]{43}$/u.test(value) || Buffer.from(value, 'base64url').length !== 32) {
+    throw new Error('dsh-remote: hubLaunchSecret must be a 256-bit base64url value.')
+  }
   return value
 }
 

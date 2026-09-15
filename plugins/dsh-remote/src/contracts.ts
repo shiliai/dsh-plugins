@@ -1,15 +1,21 @@
 export type TunnelPhase = 'starting' | 'online' | 'reconnecting' | 'failed' | 'stopped'
 
 export interface RemoteState {
-  schema: 2
+  schema: 3
   token: string
   sessionVersion: number
   createdAt: string
   rotatedAt: string
   hostSessions: HostSessionDigest[]
+  hubLaunchTickets: HubLaunchTicket[]
 }
 
 export interface HostSessionDigest {
+  digest: string
+  expiresAt: number
+}
+
+export interface HubLaunchTicket {
   digest: string
   expiresAt: number
 }
@@ -34,6 +40,7 @@ export interface RemoteConfig {
   sshTarget: string
   remoteSocketPath: string
   agentSocketPath?: string
+  hubLaunchSecret?: string
   instanceId?: string
   baseDomain?: string
   stateFile?: string

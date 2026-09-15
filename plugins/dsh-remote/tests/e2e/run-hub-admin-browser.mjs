@@ -22,31 +22,37 @@ const screenshots = await mkdtemp(join(tmpdir(), 'dsh-hub-admin-browser-'))
 const browser = await chromium.launch({ channel: 'chrome' })
 
 try {
-  const verifyPopupSecurity = async (html, label, expectReferer) => {
+  const launchTicketUrl = `https://x570.hub.test/#dsh-host-launch=${'t'.repeat(43)}`
+  const verifyPopupSecurity = async (html, label) => {
     const context = await browser.newContext()
     const page = await context.newPage()
     const adminUrl = 'https://hub.test:8443/private?secret=fixture#fragment'
     const adminDocumentUrl = 'https://hub.test:8443/private?secret=fixture'
     const statusUrl = 'https://hub.test:8443/private/status'
+    const launchUrl = 'https://hub.test:8443/private/launch/x570'
     let popupReferer
     await page.route(adminDocumentUrl, route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: html }))
     await page.route(statusUrl, route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ instances: [{ id: 'x570', state: 'online' }] }) }))
+    await page.route(launchUrl, route => {
+      if (route.request().method() !== 'POST') throw new Error(`${label}: launch request must be a POST.`)
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ url: launchTicketUrl }) })
+    })
     await context.route('https://x570.hub.test/', route => {
       popupReferer = route.request().headers().referer
       return route.fulfill({ contentType: 'text/html; charset=utf-8', body: '<title>DSH Web</title>' })
     })
     try {
       await page.goto(adminUrl)
-      const x570Link = page.getByRole('link', { name: 'Open DSH Web for x570' })
-      await x570Link.waitFor()
-      if (await x570Link.getAttribute('href') !== 'https://x570.hub.test/') throw new Error(`${label}: x570 link inherited admin URL components.`)
-      if (await x570Link.getAttribute('target') !== '_blank') throw new Error(`${label}: x570 link does not open in a new tab.`)
+      const x570Launch = page.getByRole('button', { name: 'Open DSH Web for x570' })
+      await x570Launch.waitFor()
       const popupPromise = page.waitForEvent('popup')
-      await x570Link.click()
+      await x570Launch.click()
       const popup = await popupPromise
-      await popup.waitForURL('https://x570.hub.test/', { timeout: 3_000 })
+      await popup.waitForURL(launchTicketUrl, { timeout: 3_000 })
       if (await popup.evaluate(() => window.opener) !== null) throw new Error(`${label}: DSH Web popup retained an opener.`)
-      if (expectReferer ? !popupReferer : popupReferer) throw new Error(`${label}: unexpected popup Referer ${JSON.stringify(popupReferer)}.`)
+      if (popupReferer !== undefined && popupReferer.includes('/private')) {
+        throw new Error(`${label}: popup Referer leaked the admin path ${JSON.stringify(popupReferer)}.`)
+      }
       await popup.close()
     } finally {
       await context.close()
@@ -112,16 +118,24 @@ try {
   }
   if (!mutationWasCaught) throw new Error('Mutation check failed: removing the single-flight guard did not fail the production assertion.')
 
-  await verifyPopupSecurity(pageHtml, 'production popup isolation', false)
-  const referrerMutationHtml = pageHtml.replace("link.rel = 'noopener noreferrer';", "link.rel = 'noopener';")
-  if (referrerMutationHtml === pageHtml) throw new Error('Mutation setup failed: noreferrer was not removed.')
-  await verifyPopupSecurity(referrerMutationHtml, 'noreferrer mutation', true)
+  await verifyPopupSecurity(pageHtml, 'production popup isolation')
+  const openerMutationHtml = pageHtml.replace('launchWindow.opener = null;', '')
+  if (openerMutationHtml === pageHtml) throw new Error('Mutation setup failed: opener isolation was not removed.')
+  let openerMutationWasCaught = false
+  try {
+    await verifyPopupSecurity(openerMutationHtml, 'opener isolation mutation')
+  } catch (error) {
+    if (!String(error.message).includes('retained an opener')) throw error
+    openerMutationWasCaught = true
+  }
+  if (!openerMutationWasCaught) throw new Error('Mutation check failed: removing opener isolation did not fail the production assertion.')
 
   const context = await browser.newContext({ colorScheme: 'dark', viewport: { width: 360, height: 800 } })
   const page = await context.newPage()
   const adminUrl = 'https://hub.test:8443/private?secret=fixture#fragment'
   const adminDocumentUrl = 'https://hub.test:8443/private?secret=fixture'
   const statusUrl = 'https://hub.test:8443/private/status'
+  const launchUrl = 'https://hub.test:8443/private/launch/x570'
   let requestCount = 0
   let activeRequests = 0
   let maxActiveRequests = 0
@@ -135,6 +149,7 @@ try {
     { instances: [{ id: 'x570', state: 'online' }, { id: 'build-01', state: 'offline' }] },
   ]
   await page.route(adminDocumentUrl, route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: pageHtml }))
+  await page.route(launchUrl, route => route.fulfill({ status: 503, contentType: 'text/plain', body: 'offline' }))
   await page.route(statusUrl, async route => {
     requestCount += 1
     activeRequests += 1
@@ -159,7 +174,7 @@ try {
   await page.getByText('Unable to refresh instance status. Try again.', { exact: true }).waitFor()
   await waitForIdle()
 
-  if (await page.locator('.instance-link').count() !== 0) throw new Error('Invalid instance payload generated an instance link.')
+  if (await page.locator('.instance-launch').count() !== 0) throw new Error('Invalid instance payload generated a launch control.')
   if (await page.locator('#instances img, #instances script').count() !== 0) throw new Error('Invalid instance data created an HTML node.')
 
   await refresh()
@@ -175,10 +190,10 @@ try {
 
   await refresh()
   await page.getByText('x570', { exact: true }).waitFor()
-  const x570Link = page.getByRole('link', { name: 'Open DSH Web for x570' })
-  if (await x570Link.getAttribute('href') !== 'https://x570.hub.test/') throw new Error('x570 link does not target its DSH Web root.')
-  if (await x570Link.getAttribute('target') !== '_blank') throw new Error('x570 link does not open in a new tab.')
-  if (await x570Link.getAttribute('rel') !== 'noopener noreferrer') throw new Error('x570 link does not isolate the opener.')
+  const x570Launch = page.getByRole('button', { name: 'Open DSH Web for x570' })
+  await x570Launch.waitFor()
+  await x570Launch.click()
+  await page.getByText('Unable to open DSH Web for x570. Try again.', { exact: true }).waitFor()
   const details = page.locator('.instance-details').first()
   if (await details.count() !== 1 || await details.evaluate(element => getComputedStyle(element).display) !== 'grid') throw new Error('Instance details are not grouped with the expected grid layout.')
 
@@ -194,7 +209,7 @@ try {
   if (contrast < 4.5) throw new Error(`Dark state contrast is ${contrast}, below 4.5:1.`)
   const mobile = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth }))
   if (mobile.width !== 360 || mobile.scrollWidth !== 360) throw new Error(`Mobile console overflow: ${JSON.stringify(mobile)}`)
-  if (await page.getByRole('link', { name: 'Open DSH Web for build-01' }).count() !== 1) throw new Error('Offline instance is missing its DSH Web link.')
+  if (await page.getByRole('button', { name: 'Open DSH Web for build-01' }).count() !== 0) throw new Error('Offline instance exposes an open control.')
   if (requestCount !== 5 || maxActiveRequests !== 1) throw new Error(`Unexpected refresh concurrency: count=${requestCount} max=${maxActiveRequests}`)
   process.stdout.write(`Hub admin browser test passed screenshots=${screenshots}\n`)
   await context.close()

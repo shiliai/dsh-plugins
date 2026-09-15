@@ -4,15 +4,18 @@ import type { Duplex } from 'node:stream'
 import { randomBytes } from 'node:crypto'
 import httpProxy from 'http-proxy'
 import { redeemLaunch } from './agent-ipc.ts'
-import { REMOTE_COOKIE, RemoteStateStore } from './state-store.ts'
+import { REMOTE_COOKIE, RemoteStateStore, verifyBase64UrlSecret } from './state-store.ts'
 
 const SESSION_PATH = '/__dsh_remote/session'
 const LAUNCH_PATH = '/__dsh_remote/launch'
+const HUB_LAUNCH_PATH = '/__dsh_remote/hub-launch'
+const HUB_LAUNCH_HEADER = 'x-dsh-hub-launch'
 const HOST_COOKIE = '__Host-dsh_remote_host'
 const HOST_UI_COOKIE = '__Host-dsh_remote_owner_ui'
 const KEEP_ALIVE_TIMEOUT_MS = 60_000
 const absorbLateSocketError = (): void => {}
 const HOST_SESSION_TTL_MS = 8 * 60 * 60 * 1000
+const HUB_LAUNCH_TICKET_TTL_MS = 60_000
 const ALLOWED_UPGRADE_PATHS = new Set(['/api/events.mux', '/api/events.host'])
 const MODEL_CONFIGURATION_METHODS = new Set([
   'settings.describe',
@@ -48,6 +51,8 @@ export interface RemoteGatewayOptions {
   host?: '127.0.0.1'
   port?: number
   agentSocketPath?: string
+  hubLaunchSecret?: string
+  hubLaunchTtlMs?: number
   now?: () => number
   hostSessionTtlMs?: number
 }
@@ -150,6 +155,10 @@ export class RemoteGateway {
       else send(response, 405, 'Method not allowed.', { Allow: 'GET' })
       return
     }
+    if (path === HUB_LAUNCH_PATH) {
+      await this.handleHubLaunch(request, response)
+      return
+    }
     const session = this.authenticate(request.headers.cookie)
     if (path === '/' && request.method === 'GET' && session === null) {
       sendBootstrap(response)
@@ -175,6 +184,39 @@ export class RemoteGateway {
     })
   }
 
+  private async handleHubLaunch(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (request.method !== 'POST') {
+      send(response, 405, 'Method not allowed.', { Allow: 'POST' })
+      return
+    }
+    const secret = this.options.hubLaunchSecret
+    if (secret === undefined || !verifyBase64UrlSecret(request.headers[HUB_LAUNCH_HEADER], secret)) {
+      send(response, 403, 'Access denied.')
+      return
+    }
+    const ticket = await this.options.state.addHubLaunchTicket(this.now() + (this.options.hubLaunchTtlMs ?? HUB_LAUNCH_TICKET_TTL_MS), this.now())
+    const body = JSON.stringify({ url: `${this.options.remoteOrigin}/#dsh-host-launch=${ticket}` })
+    response.writeHead(200, {
+      ...SECURITY_HEADERS,
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Length': Buffer.byteLength(body),
+    })
+    response.end(body)
+  }
+
+  private async redeemLaunchTicket(ticket: string): Promise<string | null> {
+    // Hub-minted tickets redeem against this node's own state; Host-owner
+    // tickets fall through to the agent socket when one is configured.
+    if (await this.options.state.consumeHubLaunchTicket(ticket, this.now())) return randomBytes(32).toString('base64url')
+    if (this.options.agentSocketPath === undefined) return null
+    try {
+      const result = await redeemLaunch(this.options.agentSocketPath, ticket)
+      return result.sessionGrant
+    } catch {
+      return null
+    }
+  }
+
   private async handleSession(request: IncomingMessage, response: ServerResponse): Promise<void> {
     if (request.method !== 'POST') {
       send(response, 405, 'Method not allowed.', { Allow: 'POST' })
@@ -196,22 +238,21 @@ export class RemoteGateway {
         clearCookie(HOST_COOKIE),
         clearCookie(HOST_UI_COOKIE, false),
       ]
-    } else if (isLaunchRequest(body) && this.options.agentSocketPath !== undefined) {
-      try {
-        const result = await redeemLaunch(this.options.agentSocketPath, body.launchTicket)
-        const ttl = this.options.hostSessionTtlMs ?? HOST_SESSION_TTL_MS
-        const added = await this.options.state.addHostSession(result.sessionGrant, this.now() + ttl, this.now())
-        for (const digest of added.removed) this.revokeHostSession(digest)
-        this.scheduleHostSessionExpiry(added.session)
-        cookies = [
-          cookieHeader(HOST_COOKIE, result.sessionGrant, Math.ceil(ttl / 1000)),
-          cookieHeader(HOST_UI_COOKIE, '1', Math.ceil(ttl / 1000), false),
-          clearCookie(REMOTE_COOKIE),
-        ]
-      } catch {
+    } else if (isLaunchRequest(body)) {
+      const sessionGrant = await this.redeemLaunchTicket(body.launchTicket)
+      if (sessionGrant === null) {
         send(response, 403, 'Access denied.')
         return
       }
+      const ttl = this.options.hostSessionTtlMs ?? HOST_SESSION_TTL_MS
+      const added = await this.options.state.addHostSession(sessionGrant, this.now() + ttl, this.now())
+      for (const digest of added.removed) this.revokeHostSession(digest)
+      this.scheduleHostSessionExpiry(added.session)
+      cookies = [
+        cookieHeader(HOST_COOKIE, sessionGrant, Math.ceil(ttl / 1000)),
+        cookieHeader(HOST_UI_COOKIE, '1', Math.ceil(ttl / 1000), false),
+        clearCookie(REMOTE_COOKIE),
+      ]
     } else {
       send(response, 403, 'Access denied.')
       return

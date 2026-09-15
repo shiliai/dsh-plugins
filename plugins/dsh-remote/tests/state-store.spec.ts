@@ -1,8 +1,9 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { MAX_HOST_SESSIONS, RemoteStateStore } from '../src/state-store.ts'
+import { MAX_HOST_SESSIONS, MAX_HUB_LAUNCH_TICKETS, RemoteStateStore } from '../src/state-store.ts'
 
 const roots: string[] = []
 
@@ -132,8 +133,73 @@ describe('RemoteStateStore', () => {
     const token = Buffer.alloc(32, 7).toString('base64url')
     await writeFile(path, JSON.stringify({ schema: 1, token, sessionVersion: 3, createdAt: 'created', rotatedAt: 'rotated' }), { mode: 0o600 })
     const store = await RemoteStateStore.open(path)
-    expect(store.current()).toMatchObject({ schema: 2, token, sessionVersion: 3, hostSessions: [] })
-    expect(JSON.parse(await readFile(path, 'utf8')).schema).toBe(2)
+    expect(store.current()).toMatchObject({ schema: 3, token, sessionVersion: 3, hostSessions: [], hubLaunchTickets: [] })
+    expect(JSON.parse(await readFile(path, 'utf8')).schema).toBe(3)
+  })
+
+  it('migrates schema 2 state while preserving its Host sessions', async () => {
+    const path = await statePath()
+    await mkdir(join(path, '..'), { recursive: true })
+    const token = Buffer.alloc(32, 7).toString('base64url')
+    const grant = Buffer.alloc(32, 9).toString('base64url')
+    const digest = createHash('sha256').update(grant, 'utf8').digest('base64url')
+    await writeFile(path, JSON.stringify({
+      schema: 2, token, sessionVersion: 1, createdAt: 'created', rotatedAt: 'rotated',
+      hostSessions: [{ digest, expiresAt: Date.now() + 60_000 }],
+    }), { mode: 0o600 })
+    const store = await RemoteStateStore.open(path)
+    expect(store.current()).toMatchObject({ schema: 3, token, hostSessions: [{ digest }] })
+    expect(store.verifyHostGrant(grant)).not.toBeNull()
+  })
+
+  it('issues bounded single-use Hub launch tickets as digests only', async () => {
+    const path = await statePath()
+    const store = await RemoteStateStore.open(path)
+    const now = Date.now()
+    const tickets = []
+    for (let index = 0; index < MAX_HUB_LAUNCH_TICKETS + 2; index += 1) {
+      tickets.push(await store.addHubLaunchTicket(now + 10_000 + index, now))
+    }
+    const disk = await readFile(path, 'utf8')
+    for (const ticket of tickets) expect(disk).not.toContain(ticket)
+    expect(JSON.parse(disk).hubLaunchTickets).toHaveLength(MAX_HUB_LAUNCH_TICKETS)
+    const oldest = tickets[0]
+    const newest = tickets.at(-1)
+    const secondNewest = tickets.at(-2)
+    if (oldest === undefined || newest === undefined || secondNewest === undefined) throw new Error('Expected the full ticket batch.')
+    expect(await store.consumeHubLaunchTicket(oldest, now)).toBe(false)
+    expect(await store.consumeHubLaunchTicket(newest, now)).toBe(true)
+    expect(await store.consumeHubLaunchTicket(newest, now)).toBe(false)
+    const restarted = await RemoteStateStore.open(path)
+    expect(await restarted.consumeHubLaunchTicket(secondNewest, now)).toBe(true)
+  })
+
+  it('rejects Hub launch tickets at their expiry boundary', async () => {
+    const path = await statePath()
+    const store = await RemoteStateStore.open(path)
+    const now = Date.now()
+    const ticket = await store.addHubLaunchTicket(now + 1_000, now)
+    expect(await store.consumeHubLaunchTicket(ticket, now + 999)).toBe(true)
+    const expiring = await store.addHubLaunchTicket(now + 1_000, now)
+    expect(await store.consumeHubLaunchTicket(expiring, now + 1_000)).toBe(false)
+    expect(await store.consumeHubLaunchTicket(expiring, now + 999)).toBe(true)
+    expect(JSON.parse(await readFile(path, 'utf8')).hubLaunchTickets).toEqual([])
+  })
+
+  it('prunes expired Hub launch tickets when reopening state', async () => {
+    const path = await statePath()
+    const store = await RemoteStateStore.open(path)
+    const now = Date.now()
+    await store.addHubLaunchTicket(now + 20_000, now)
+    const disk = JSON.parse(await readFile(path, 'utf8'))
+    const retained = disk.hubLaunchTickets[0]
+    if (retained === undefined) throw new Error('Expected a persisted Hub launch ticket.')
+    disk.hubLaunchTickets.push({ ...retained, expiresAt: now - 1 })
+    await writeFile(path, JSON.stringify(disk), { mode: 0o600 })
+    const reopened = await RemoteStateStore.open(path)
+    const survivors = reopened.hubLaunchTickets()
+    expect(survivors).toHaveLength(1)
+    expect(survivors[0]?.expiresAt).toBe(now + 20_000)
   })
 
   it('rejects unknown state fields that could retain a plaintext Host grant', async () => {
@@ -141,7 +207,7 @@ describe('RemoteStateStore', () => {
     await mkdir(join(path, '..'), { recursive: true })
     const token = Buffer.alloc(32, 7).toString('base64url')
     await writeFile(path, JSON.stringify({
-      schema: 2, token, sessionVersion: 1, createdAt: 'created', rotatedAt: 'rotated', hostSessions: [],
+      schema: 3, token, sessionVersion: 1, createdAt: 'created', rotatedAt: 'rotated', hostSessions: [], hubLaunchTickets: [],
       sessionGrant: Buffer.alloc(32, 8).toString('base64url'),
     }), { mode: 0o600 })
     await expect(RemoteStateStore.open(path)).rejects.toThrow('unknown fields')
