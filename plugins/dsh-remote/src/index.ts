@@ -17,6 +17,15 @@ export async function apply(ctx: Context, config: RemoteConfig): Promise<void> {
     disposeSocketCompatibility()
     throw error
   }
+  // Optional on DSH releases without a browser-authenticated connection
+  // service (rc.6-rc.8); when present (0.1.1+) its launch URL bridges the
+  // upstream's own authority-bound cookie through this gateway.
+  ctx.inject(['connection'], injected => {
+    const connection = (injected as unknown as { connection?: { authenticatedUrl?: (baseUrl: string) => string } }).connection
+    if (connection === undefined) return
+    service.adoptConnection(connection)
+    injected.effect(() => () => { service.releaseConnection() })
+  })
   const disposeApi = registerRemoteApi(ctx.webServer, service, managementOrigins(config, ctx.webServer))
   ctx.effect(() => () => {
     disposeApi()

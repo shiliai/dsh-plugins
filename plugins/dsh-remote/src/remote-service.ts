@@ -40,6 +40,21 @@ export class RemoteService {
     return new RemoteService(resolved.remoteOrigin, state, gateway, tunnel)
   }
 
+  /**
+   * Adopt the composing DSH app's per-process launch URL when a
+   * browser-authenticated connection service is available (DSH 0.1.1+).
+   * Freshly authenticated remote sessions then receive it as their next hop,
+   * which mints the upstream's own authority-bound cookie through the gateway.
+   */
+  adoptConnection(connection: { authenticatedUrl?: (baseUrl: string) => string }): void {
+    if (typeof connection.authenticatedUrl !== 'function') return
+    this.gateway.setUpstreamLaunchUrl(connection.authenticatedUrl(this.remoteOrigin))
+  }
+
+  releaseConnection(): void {
+    this.gateway.setUpstreamLaunchUrl(undefined)
+  }
+
   status(): RemoteStatus {
     const state = this.state.current()
     return {
