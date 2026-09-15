@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http'
 import { createConnection, createServer as createNetServer, type Server as NetServer, type Socket } from 'node:net'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -31,7 +31,7 @@ afterEach(async () => {
 
 async function fixture(
   agentSocketPath?: string,
-  gatewayOptions: { now?: () => number; hostSessionTtlMs?: number } = {},
+  gatewayOptions: { now?: () => number; hostSessionTtlMs?: number; hubLaunchSecret?: string; hubLaunchTtlMs?: number } = {},
 ): Promise<{ baseUrl: string; state: RemoteStateStore; gateway: RemoteGateway; upstreamOrigin: string }> {
   const target = createServer((request, response) => {
     const body = JSON.stringify({
@@ -63,6 +63,8 @@ async function fixture(
   const gateway = new RemoteGateway({
     targetPort: address.port, remoteOrigin: 'https://zsh.onlyservice.io', state,
     ...(agentSocketPath === undefined ? {} : { agentSocketPath }),
+    ...(gatewayOptions.hubLaunchSecret === undefined ? {} : { hubLaunchSecret: gatewayOptions.hubLaunchSecret }),
+    ...(gatewayOptions.hubLaunchTtlMs === undefined ? {} : { hubLaunchTtlMs: gatewayOptions.hubLaunchTtlMs }),
     ...gatewayOptions,
   })
   await gateway.listen()
@@ -274,6 +276,63 @@ describe('RemoteGateway', () => {
     expect((await fetch(`${baseUrl}/malformed`, { headers: { cookie: '__Host-dsh_remote_host=not-a-grant' } })).status).toBe(401)
     now += 60_001
     expect((await fetch(`${baseUrl}/expired`, { headers: { cookie } })).status).toBe(401)
+  })
+
+  it('mints a single-use Hub launch ticket for the shared-secret owner flow', async () => {
+    let now = 1_000
+    const secret = Buffer.alloc(32, 11).toString('base64url')
+    const { baseUrl, state } = await fixture(undefined, { now: () => now, hubLaunchSecret: secret, hostSessionTtlMs: 60_000 })
+
+    expect((await fetch(`${baseUrl}/__dsh_remote/hub-launch`)).status).toBe(405)
+    expect((await fetch(`${baseUrl}/__dsh_remote/hub-launch`, {
+      method: 'POST',
+      headers: { 'x-dsh-hub-launch': Buffer.alloc(32, 12).toString('base64url') },
+    })).status).toBe(403)
+    expect((await fetch(`${baseUrl}/__dsh_remote/hub-launch`, { method: 'POST' })).status).toBe(403)
+
+    const minted = await fetch(`${baseUrl}/__dsh_remote/hub-launch`, { method: 'POST', headers: { 'x-dsh-hub-launch': secret } })
+    expect(minted.status).toBe(200)
+    expect(minted.headers.get('cache-control')).toBe('no-store')
+    const payload = await minted.json() as { url?: unknown }
+    const launchUrl = typeof payload.url === 'string' ? payload.url : ''
+    expect(launchUrl).toMatch(/^https:\/\/zsh\.onlyservice\.io\/#dsh-host-launch=[A-Za-z0-9_-]{43}$/u)
+    const ticket = launchUrl.split('=').at(-1)
+    if (ticket === undefined) throw new Error('Expected a launch ticket.')
+    const disk = JSON.parse(await readFile(state.filePath, 'utf8'))
+    expect(disk.hubLaunchTickets).toHaveLength(1)
+    expect(JSON.stringify(disk)).not.toContain(ticket)
+
+    const cookie = await issueHostSession(baseUrl, ticket)
+    expect((await fetch(`${baseUrl}/hub-owner-path`, { headers: { cookie } })).status).toBe(200)
+    expect((await fetch(`${baseUrl}/__dsh_remote/session`, {
+      method: 'POST',
+      headers: { origin: 'https://zsh.onlyservice.io', 'content-type': 'application/json' },
+      body: JSON.stringify({ launchTicket: ticket }),
+    })).status).toBe(403)
+
+    const second = await fetch(`${baseUrl}/__dsh_remote/hub-launch`, { method: 'POST', headers: { 'x-dsh-hub-launch': secret } })
+    const secondUrl = ((await second.json()) as { url: string }).url
+    const secondTicket = secondUrl.split('=').at(-1)
+    if (secondTicket === undefined) throw new Error('Expected a second launch ticket.')
+    now += 61_000
+    expect((await fetch(`${baseUrl}/__dsh_remote/session`, {
+      method: 'POST',
+      headers: { origin: 'https://zsh.onlyservice.io', 'content-type': 'application/json' },
+      body: JSON.stringify({ launchTicket: secondTicket }),
+    })).status).toBe(403)
+  })
+
+  it('leaves Hub launch minting unavailable without a configured secret', async () => {
+    const { baseUrl } = await fixture()
+    expect((await fetch(`${baseUrl}/__dsh_remote/hub-launch`, {
+      method: 'POST',
+      headers: { 'x-dsh-hub-launch': Buffer.alloc(32, 12).toString('base64url') },
+    })).status).toBe(403)
+    expect((await fetch(`${baseUrl}/__dsh_remote/session`, {
+      method: 'POST',
+      headers: { origin: 'https://zsh.onlyservice.io', 'content-type': 'application/json' },
+      body: JSON.stringify({ launchTicket: 't'.repeat(43) }),
+    })).status).toBe(403)
   })
 
   it('keeps multiple bounded owner grants independent when fresh Host launches succeed', async () => {

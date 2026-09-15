@@ -138,8 +138,17 @@ restores the prior configuration, route, status, and hash without recording a
 plaintext password.
 
 The generated routes expose only exact matches for the random page path and
-its `/status` JSON endpoint. Both use the same Basic-authentication file and a
-five-request-per-minute per-client Nginx limit. The base host, common admin
+its `/status` JSON endpoint, plus one `POST <admin-path>/launch/<instance-id>`
+endpoint per registered instance. All of them use the same Basic-authentication
+file and a five-request-per-minute per-client Nginx limit. The launch endpoints
+proxy to the instance upstream's `/__dsh_remote/hub-launch`, overwriting the
+`X-DSH-Hub-Launch` header with the value of the mode-0600
+`dsh-remote-hub/routes/launch-secret.conf` map file, which `hub apply` creates
+once and every rollback receipt preserves. Copy that 43-character secret to the
+node's `~/.config/dsh-remote/<instance-id>.env` as
+`DSH_REMOTE_HUB_LAUNCH_SECRET` so its gateway mints the one-time,
+sixty-second launch tickets behind the admin page's Open DSH Web button. The
+base host, common admin
 paths, unknown paths, and unknown hosts continue through the unauthenticated
 generic `404` server and do not send an authentication challenge. The status
 projection is read-only and contains only IDs with `online`, `offline`,

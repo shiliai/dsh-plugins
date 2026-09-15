@@ -75,4 +75,18 @@ describe('resolveRuntimeConfig', () => {
     })
     expect(() => resolveRuntimeConfig({ host: '127.0.0.1', port: 3080 }, { ...config, gatewayPort: 0 })).toThrow('fixed gatewayPort')
   })
+
+  it('resolves the Hub launch secret in every mode and rejects malformed values', () => {
+    const secret = Buffer.alloc(32, 21).toString('base64url')
+    expect(resolveRuntimeConfig({ host: '127.0.0.1', port: 3080 }, config).hubLaunchSecret).toBeUndefined()
+    vi.stubEnv('DSH_REMOTE_HUB_LAUNCH_SECRET', secret)
+    expect(resolveRuntimeConfig({ host: '127.0.0.1', port: 3080 }, config).hubLaunchSecret).toBe(secret)
+    expect(resolveRuntimeConfig({ host: '127.0.0.1', port: 3080 }, { ...config, hubLaunchSecret: secret }).hubLaunchSecret).toBe(secret)
+    vi.stubEnv('DSH_REMOTE_MODE', 'host')
+    expect(resolveRuntimeConfig({ host: '127.0.0.1', port: 3080 }, { ...config, gatewayPort: 29321 }).hubLaunchSecret).toBe(secret)
+    for (const malformed of ['short', '!'.repeat(43), 'a'.repeat(42)]) {
+      vi.stubEnv('DSH_REMOTE_HUB_LAUNCH_SECRET', malformed)
+      expect(() => resolveRuntimeConfig({ host: '127.0.0.1', port: 3080 }, config)).toThrow('hubLaunchSecret')
+    }
+  })
 })

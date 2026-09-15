@@ -1,13 +1,14 @@
 import { lstat, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import type { HostSessionDigest, RemoteState } from './contracts.ts'
+import type { HubLaunchTicket, HostSessionDigest, RemoteState } from './contracts.ts'
 
 export const REMOTE_COOKIE = '__Host-dsh_remote'
 const TOKEN_BYTES = 32
 const FILE_MODE = 0o600
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/u
 export const MAX_HOST_SESSIONS = 16
+export const MAX_HUB_LAUNCH_TICKETS = 16
 
 export interface RemoteStateStoreHooks {
   beforeRename?(): Promise<void>
@@ -27,21 +28,26 @@ export class RemoteStateStore {
       if (!details.isFile() || details.isSymbolicLink()) throw new Error('Remote state must be a regular file.')
       if ((details.mode & 0o077) !== 0) throw new Error('Remote state permissions must be mode 0600.')
       const parsed = parseState(await readFile(filePath, 'utf8'))
-      const active = parsed.state.hostSessions.filter(session => session.expiresAt > Date.now())
-      const state = { ...parsed.state, hostSessions: active }
+      const now = Date.now()
+      const activeSessions = parsed.state.hostSessions.filter(session => session.expiresAt > now)
+      const activeTickets = parsed.state.hubLaunchTickets.filter(ticket => ticket.expiresAt > now)
+      const state = { ...parsed.state, hostSessions: activeSessions, hubLaunchTickets: activeTickets }
       const store = new RemoteStateStore(filePath, state, hooks)
-      if (parsed.migrated || active.length !== parsed.state.hostSessions.length) await store.commit(state)
+      if (parsed.migrated || activeSessions.length !== parsed.state.hostSessions.length || activeTickets.length !== parsed.state.hubLaunchTickets.length) {
+        await store.commit(state)
+      }
       return store
     } catch (error) {
       if (isNotFound(error)) {
         const now = new Date().toISOString()
         const state: RemoteState = {
-          schema: 2,
+          schema: 3,
           token: initialToken(hooks.initialToken),
           sessionVersion: 1,
           createdAt: now,
           rotatedAt: now,
           hostSessions: [],
+          hubLaunchTickets: [],
         }
         const store = new RemoteStateStore(filePath, state, hooks)
         await store.commit(state)
@@ -60,10 +66,7 @@ export class RemoteStateStore {
   }
 
   verifyBearer(candidate: unknown): boolean {
-    if (typeof candidate !== 'string' || !isToken(candidate)) return false
-    const supplied = Buffer.from(candidate, 'base64url')
-    const expected = Buffer.from(this.state.token, 'base64url')
-    return supplied.length === expected.length && timingSafeEqual(supplied, expected)
+    return verifyBase64UrlSecret(candidate, this.state.token)
   }
 
   sessionCookie(): string {
@@ -90,6 +93,36 @@ export class RemoteStateStore {
 
   hostSessions(): HostSessionDigest[] {
     return this.state.hostSessions.map(session => ({ ...session }))
+  }
+
+  hubLaunchTickets(): HubLaunchTicket[] {
+    return this.state.hubLaunchTickets.map(ticket => ({ ...ticket }))
+  }
+
+  async addHubLaunchTicket(expiresAt: number, now = Date.now()): Promise<string> {
+    if (!Number.isSafeInteger(expiresAt) || expiresAt <= now) throw new Error('Invalid Hub launch ticket expiry.')
+    const ticket = token()
+    return this.enqueue(async () => {
+      const retained = this.state.hubLaunchTickets.filter(candidate => candidate.expiresAt > now)
+      retained.push({ digest: hostGrantDigest(ticket), expiresAt })
+      retained.sort((left, right) => left.expiresAt - right.expiresAt)
+      if (retained.length > MAX_HUB_LAUNCH_TICKETS) retained.splice(0, retained.length - MAX_HUB_LAUNCH_TICKETS)
+      await this.commit({ ...this.state, hubLaunchTickets: retained })
+      return ticket
+    })
+  }
+
+  async consumeHubLaunchTicket(candidate: string, now = Date.now()): Promise<boolean> {
+    if (!isToken(candidate)) return false
+    const digest = hostGrantDigest(candidate)
+    return this.enqueue(async () => {
+      const retained = this.state.hubLaunchTickets.filter(ticket => ticket.expiresAt > now)
+      const index = retained.findIndex(ticket => ticket.digest === digest)
+      if (index === -1) return false
+      retained.splice(index, 1)
+      await this.commit({ ...this.state, hubLaunchTickets: retained })
+      return true
+    })
   }
 
   verifyHostGrant(candidate: unknown, now = Date.now()): HostSessionDigest | null {
@@ -203,14 +236,16 @@ function parseState(source: string): { state: RemoteState; migrated: boolean } {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('Remote state has an invalid shape.')
   const raw = value as Record<string, unknown>
   const schema = raw.schema
-  if ((schema !== 1 && schema !== 2) || typeof raw.token !== 'string' || !isToken(raw.token)
+  if ((schema !== 1 && schema !== 2 && schema !== 3) || typeof raw.token !== 'string' || !isToken(raw.token)
     || !Number.isSafeInteger(raw.sessionVersion) || (Number(raw.sessionVersion) || 0) < 1
     || typeof raw.createdAt !== 'string' || typeof raw.rotatedAt !== 'string') {
     throw new Error('Remote state has an invalid value.')
   }
   const expectedKeys = schema === 1
     ? ['schema', 'token', 'sessionVersion', 'createdAt', 'rotatedAt']
-    : ['schema', 'token', 'sessionVersion', 'createdAt', 'rotatedAt', 'hostSessions']
+    : schema === 2
+      ? ['schema', 'token', 'sessionVersion', 'createdAt', 'rotatedAt', 'hostSessions']
+      : ['schema', 'token', 'sessionVersion', 'createdAt', 'rotatedAt', 'hostSessions', 'hubLaunchTickets']
   if (Object.keys(raw).length !== expectedKeys.length || !expectedKeys.every(key => Object.hasOwn(raw, key))) {
     throw new Error('Remote state has unknown fields.')
   }
@@ -218,16 +253,21 @@ function parseState(source: string): { state: RemoteState; migrated: boolean } {
   if (!Array.isArray(hostSessions) || hostSessions.length > MAX_HOST_SESSIONS || !hostSessions.every(isHostSessionDigest)) {
     throw new Error('Remote state has invalid Host sessions.')
   }
+  const hubLaunchTickets = schema === 3 ? raw.hubLaunchTickets : []
+  if (!Array.isArray(hubLaunchTickets) || hubLaunchTickets.length > MAX_HUB_LAUNCH_TICKETS || !hubLaunchTickets.every(isHostSessionDigest)) {
+    throw new Error('Remote state has invalid Hub launch tickets.')
+  }
   return {
     state: {
-      schema: 2,
+      schema: 3,
       token: raw.token,
       sessionVersion: Number(raw.sessionVersion),
       createdAt: raw.createdAt,
       rotatedAt: raw.rotatedAt,
       hostSessions,
+      hubLaunchTickets,
     },
-    migrated: schema === 1,
+    migrated: schema !== 3,
   }
 }
 
@@ -258,6 +298,13 @@ function isToken(value: string): boolean {
   } catch {
     return false
   }
+}
+
+export function verifyBase64UrlSecret(candidate: unknown, expected: string): boolean {
+  if (typeof candidate !== 'string' || !isToken(candidate) || !isToken(expected)) return false
+  const supplied = Buffer.from(candidate, 'base64url')
+  const target = Buffer.from(expected, 'base64url')
+  return supplied.length === target.length && timingSafeEqual(supplied, target)
 }
 
 function isNotFound(error: unknown): error is NodeJS.ErrnoException {

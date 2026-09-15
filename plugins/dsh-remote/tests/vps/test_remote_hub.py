@@ -51,8 +51,9 @@ class RemoteHubTests(unittest.TestCase):
         rendered = remote_hub.render_routes("dsh.onlyservice.io", [{"id": "x570"}], https=True, admin_path=path)
         self.assertIn(f"location = {path} {{", rendered)
         self.assertIn(f"location = {path}/status {{", rendered)
-        self.assertEqual(rendered.count(f"auth_basic_user_file {remote_hub.HUB_ADMIN_AUTH_DESTINATION};"), 2)
-        self.assertEqual(rendered.count("limit_req zone=dsh_hub_admin burst=5 nodelay;"), 2)
+        self.assertIn(f"include {remote_hub.HUB_LAUNCH_SECRET_FILE_DESTINATION};", rendered)
+        self.assertEqual(rendered.count(f"auth_basic_user_file {remote_hub.HUB_ADMIN_AUTH_DESTINATION};"), 3)
+        self.assertEqual(rendered.count("limit_req zone=dsh_hub_admin burst=5 nodelay;"), 3)
         self.assertEqual(rendered.count("default_type text/html;"), 1)
         self.assertEqual(rendered.count("charset utf-8;"), 1)
         self.assertIn("limit_req_zone $binary_remote_addr zone=dsh_hub_admin:10m rate=5r/m;", rendered)
@@ -65,6 +66,42 @@ class RemoteHubTests(unittest.TestCase):
         self.assertIn('add_header Cache-Control "no-store" always;', rendered)
         self.assertNotIn("$request_method", rendered)
         self.assertIn("location.pathname.replace(/\\/$/, '')", remote_hub.render_admin_page())
+
+    def test_launch_locations_mint_single_use_tickets_through_each_node_gateway(self) -> None:
+        path = "/" + "A" * 43
+        rendered = remote_hub.render_routes("dsh.onlyservice.io", [{"id": "x570"}, {"id": "build-01"}], https=True, admin_path=path)
+        self.assertIn(f"location = {path}/launch/x570 {{", rendered)
+        self.assertIn(f"location = {path}/launch/build-01 {{", rendered)
+        self.assertIn("proxy_pass http://dsh_hub_x570/__dsh_remote/hub-launch;", rendered)
+        self.assertIn("proxy_pass http://dsh_hub_build_01/__dsh_remote/hub-launch;", rendered)
+        self.assertEqual(rendered.count("proxy_set_header X-DSH-Hub-Launch $dsh_hub_launch_secret;"), 2)
+        self.assertIn(f"include {remote_hub.HUB_LAUNCH_SECRET_FILE_DESTINATION};", rendered)
+        without_admin = remote_hub.render_routes("dsh.onlyservice.io", [{"id": "x570"}], https=True)
+        self.assertNotIn(f"include {remote_hub.HUB_LAUNCH_SECRET_FILE_DESTINATION};", without_admin)
+        self.assertNotIn("/launch/x570", without_admin)
+        http_stage = remote_hub.render_routes("dsh.onlyservice.io", [{"id": "x570"}], https=False, admin_path=path)
+        self.assertNotIn(f"include {remote_hub.HUB_LAUNCH_SECRET_FILE_DESTINATION};", http_stage)
+        self.assertNotIn("/launch/x570", http_stage)
+
+    def test_launch_secret_is_generated_once_kept_private_and_validated(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            args = types.SimpleNamespace(state_dir=str(Path(directory) / "state"), hub_site_dir=str(Path(directory) / "site"))
+            self.assertIsNone(remote_hub.load_launch_secret(args))
+            first = remote_hub.ensure_launch_secret(args)
+            self.assertRegex(first, r"^[A-Za-z0-9_-]{43}$")
+            self.assertEqual(remote_hub.load_launch_secret(args), first)
+            self.assertEqual(remote_hub.ensure_launch_secret(args), first)
+            path = remote_hub.launch_secret_path(args)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(path.read_text(encoding="utf-8"), remote_hub.render_launch_secret_map(first))
+            self.assertEqual(path, remote_hub.routes_path(args).parent / "launch-secret.conf")
+            path.write_text('map $host $dsh_hub_launch_secret {\n    default "short";\n}\n', encoding="utf-8")
+            with self.assertRaisesRegex(remote_hub.HubError, "invalid"):
+                remote_hub.load_launch_secret(args)
+            os.chmod(path, 0o644)
+            path.write_text(remote_hub.render_launch_secret_map(first), encoding="utf-8")
+            with self.assertRaisesRegex(remote_hub.HubError, "mode 0600"):
+                remote_hub.load_launch_secret(args)
 
     def test_admin_page_is_a_safe_read_only_operations_console(self) -> None:
         page = remote_hub.render_admin_page()
@@ -86,11 +123,16 @@ class RemoteHubTests(unittest.TestCase):
         self.assertIn("document.createElement", page)
         self.assertIn("textContent = instance.id", page)
         self.assertIn("textContent = instance.state", page)
-        self.assertIn("new URL('/', 'https://dsh.invalid')", page)
-        self.assertIn("target.hostname = `${instance.id}.${window.location.hostname}`", page)
-        self.assertIn("link.target = '_blank'", page)
-        self.assertIn("link.rel = 'noopener noreferrer'", page)
+        self.assertIn("instance.state === 'online'", page)
+        self.assertIn("window.open('', '_blank')", page)
+        self.assertIn("launchWindow.opener = null", page)
+        self.assertIn("launchWindow.location.replace(url)", page)
+        self.assertIn("`${adminBase()}/launch/${instance.id}`", page)
+        self.assertIn("LAUNCH_URL_RE.test(url)", page)
+        self.assertIn("#dsh-host-launch=[A-Za-z0-9_-]{43}", page)
+        self.assertIn("`${instance.id}.${window.location.hostname}`", page)
         self.assertIn("Open DSH Web", page)
+        self.assertIn("Unable to open DSH Web", page)
         self.assertIn("replaceChildren", page)
         self.assertNotIn("JSON.stringify", page)
         self.assertNotIn("<pre id=\"status\"", page)
@@ -98,6 +140,7 @@ class RemoteHubTests(unittest.TestCase):
         self.assertNotIn("socket", page.lower())
         self.assertNotIn("token", page.lower())
         self.assertNotIn("location.origin", page)
+        self.assertNotIn("launchWindow.document", page)
 
     def test_admin_routes_are_not_present_on_wildcard_server(self) -> None:
         path = "/" + "A" * 43
@@ -545,6 +588,7 @@ class RemoteHubTests(unittest.TestCase):
             root = Path(directory)
             args = self.deployment_fixture(root)
             result = types.SimpleNamespace(returncode=0, stdout="dsh-remote:x:123:fixture\n")
+            launch_secret = remote_hub.ensure_launch_secret(args)
             with patch.object(remote_hub.edge, "run", return_value=result):
                 receipt_dir, receipt = remote_hub.backup(args)
             archive = Path(args.certbot_config) / "archive" / args.base_domain / "fullchain1.pem"
@@ -553,7 +597,8 @@ class RemoteHubTests(unittest.TestCase):
             live.unlink()
             live.symlink_to("wrong.pem")
             Path(args.renewal_cron).write_text("cron-mutated\n", encoding="utf-8")
-            os.chmod(args.renewal_cron, 0o600)
+            os.chmod(Path(args.renewal_cron), 0o600)
+            remote_hub.launch_secret_path(args).write_text("mutated-secret\n", encoding="utf-8")
             with patch.object(remote_hub.edge, "compose_validate"), \
                  patch.object(remote_hub.edge, "compose_recreate"), \
                  patch.object(remote_hub.edge, "nginx_validate"), \
@@ -563,6 +608,7 @@ class RemoteHubTests(unittest.TestCase):
             self.assertEqual(os.readlink(live), "../../archive/dsh.onlyservice.io/fullchain1.pem")
             self.assertEqual(Path(args.renewal_cron).read_text(encoding="utf-8"), "cron-pre\n")
             self.assertEqual(Path(args.renewal_cron).stat().st_mode & 0o777, 0o640)
+            self.assertEqual(remote_hub.load_launch_secret(args), launch_secret)
             final = json.loads((receipt_dir / "receipt.json").read_text(encoding="utf-8"))
             self.assertTrue(final["rollback_result"]["verified"])
 

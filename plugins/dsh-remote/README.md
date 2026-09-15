@@ -68,6 +68,30 @@ across DSH/Gateway restart and private-link rotation. Each grant expires after
 eight hours, closes its active WebSockets at the expiry deadline, and is
 validated on every HTTP request and WebSocket reconnect.
 
+### Hub Owner Launch
+
+The Hub admin page's **Open DSH Web** button never ships a bare node URL. Each
+click asks the node's gateway to mint a one-time launch ticket and opens
+`https://<instance>.<base-domain>/#dsh-host-launch=<43-char ticket>` instead.
+The flow needs one shared 256-bit secret per deployment:
+
+- `dsh-remote-edge hub apply` generates `<hub-site-dir>/routes/launch-secret.conf`
+  (mode 0600, excluded from the world-readable routes file) and renders an
+  authenticated, rate-limited `POST <admin-path>/launch/<instance-id>` location
+  that proxies to the node's `/__dsh_remote/hub-launch` endpoint while
+  overwriting the `X-DSH-Hub-Launch` header, so callers cannot spoof it.
+- Copy the secret into the node's private environment file
+  (`~/.config/dsh-remote/<instance-id>.env`, mode 0600) as
+  `DSH_REMOTE_HUB_LAUNCH_SECRET=<43-char base64url>` and restart the instance
+  service. Reading the token requires root on the VPS.
+- The gateway verifies the header in constant time, stores only ticket digests
+  with a 60-second expiry (state schema 3), and redeems each ticket exactly
+  once. An expired, replayed, or cross-node ticket is rejected; Host-owner
+  tickets from Agent IPC still redeem first through the agent socket when the
+  node runs one.
+- Offline, insecure, and missing nodes render no open control at all; a failed
+  mint shows a per-row error on the admin page.
+
 Every authenticated private-link or owner session can proxy the model
 configuration methods `settings.*`, `credentials.*`, and `llm.discoverModels`
 with loopback authority. Other loopback-only RPCs, including agent-preset reads
