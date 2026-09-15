@@ -92,6 +92,20 @@ The flow needs one shared 256-bit secret per deployment:
 - Offline, insecure, and missing nodes render no open control at all; a failed
   mint shows a per-row error on the admin page.
 
+### Upstream Browser Authentication (DSH 0.1.1+)
+
+DSH 0.1.1 and newer add their own browser authentication: the app index and
+APIs require an authority-bound cookie minted from the per-process launch URL
+that `dsh web` prints. When the host exposes its connection service, the plugin
+adopts that launch URL in-process (never writing it to state or logs) and a
+freshly authenticated private or owner session receives it as a one-time
+`next` hop in the session response; the bootstrap page validates the hop stays
+`/?token=...` on the remote origin before navigating, which mints the
+upstream cookie through the gateway. Hosts that keep the public Host header
+must also start DSH with `--trusted-host <instance>.<base-domain>` so the
+upstream's API fence accepts the proxied authority. On DSH rc.6-rc.8 no
+connection service exists and session responses keep the bare 204 behavior.
+
 Every authenticated private-link or owner session can proxy the model
 configuration methods `settings.*`, `credentials.*`, and `llm.discoverModels`
 with loopback authority. Other loopback-only RPCs, including agent-preset reads

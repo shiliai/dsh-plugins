@@ -68,6 +68,7 @@ export class RemoteGateway {
   private readonly connections = new Set<Socket>()
   private readonly hostSessionExpiryTimers = new Map<string, NodeJS.Timeout>()
   private boundPort: number | undefined
+  private upstreamLaunchUrl: string | undefined
 
   constructor(private readonly options: RemoteGatewayOptions) {
     this.server = createServer((request, response) => {
@@ -104,6 +105,21 @@ export class RemoteGateway {
   get port(): number {
     if (this.boundPort === undefined) throw new Error('Remote gateway is not listening.')
     return this.boundPort
+  }
+
+  /**
+   * Adopt the composing DSH app's authenticated launch URL (present once the
+   * host exposes a browser-authenticated connection service). Freshly
+   * authenticated sessions receive it as their next hop so the upstream's own
+   * authority-bound cookie is minted through this gateway.
+   */
+  setUpstreamLaunchUrl(url: string | undefined): void {
+    if (url === undefined) {
+      this.upstreamLaunchUrl = undefined
+      return
+    }
+    if (!isSameOriginLaunchUrl(url, this.options.remoteOrigin)) throw new Error('dsh-remote: upstream launch URL must stay on the remote origin.')
+    this.upstreamLaunchUrl = url
   }
 
   async listen(): Promise<void> {
@@ -257,11 +273,22 @@ export class RemoteGateway {
       send(response, 403, 'Access denied.')
       return
     }
-    response.writeHead(204, {
+    if (this.upstreamLaunchUrl === undefined) {
+      response.writeHead(204, {
+        ...SECURITY_HEADERS,
+        'Set-Cookie': cookies,
+      })
+      response.end()
+      return
+    }
+    const payload = JSON.stringify({ next: this.upstreamLaunchUrl })
+    response.writeHead(200, {
       ...SECURITY_HEADERS,
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Length': Buffer.byteLength(payload),
       'Set-Cookie': cookies,
     })
-    response.end()
+    response.end(payload)
   }
 
   private handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
@@ -344,7 +371,7 @@ export class RemoteGateway {
 
 function sendBootstrap(response: ServerResponse): void {
   const nonce = randomBytes(16).toString('base64url')
-  const body = `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Connecting</title><main id="status">Connecting...</main><script nonce="${nonce}">(()=>{const privateMatch=/^#\\/access\\/([A-Za-z0-9_-]{43})$/.exec(location.hash);const hostMatch=/^#dsh-host-launch=([A-Za-z0-9_-]{43})$/.exec(location.hash);const status=document.getElementById('status');const body=privateMatch?{token:privateMatch[1]}:hostMatch?{launchTicket:hostMatch[1]}:null;if(!body){status.textContent='Invalid link.';return}fetch('${SESSION_PATH}',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(response=>{if(!response.ok)throw new Error('denied');history.replaceState(null,'','/');location.replace('/')}).catch(()=>{status.textContent='Invalid link.'})})()</script>`
+  const body = `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Connecting</title><main id="status">Connecting...</main><script nonce="${nonce}">(()=>{const privateMatch=/^#\\/access\\/([A-Za-z0-9_-]{43})$/.exec(location.hash);const hostMatch=/^#dsh-host-launch=([A-Za-z0-9_-]{43})$/.exec(location.hash);const status=document.getElementById('status');const body=privateMatch?{token:privateMatch[1]}:hostMatch?{launchTicket:hostMatch[1]}:null;if(!body){status.textContent='Invalid link.';return}fetch('${SESSION_PATH}',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(async response=>{if(!response.ok)throw new Error('denied');let next=null;try{next=JSON.parse(await response.text()).next??null}catch{}if(next!==null&&typeof next==='string'){const target=new URL(next,location.origin);const ok=target.origin===location.origin&&target.pathname==='/'&&target.searchParams.size===1&&/^[A-Za-z0-9_-]{1,256}$/.test(target.searchParams.get('token')??'');if(!ok)throw new Error('denied');history.replaceState(null,'','/');location.replace(target.href);return}history.replaceState(null,'','/');location.replace('/')}).catch(()=>{status.textContent='Invalid link.'})})()</script>`
   send(response, 200, body, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` })
 }
 
@@ -430,6 +457,16 @@ function isTokenRequest(value: unknown): value is { token: string } {
 
 function isLaunchRequest(value: unknown): value is { launchTicket: string } {
   return exactObject(value, ['launchTicket']) && typeof value.launchTicket === 'string' && /^[A-Za-z0-9_-]{43}$/u.test(value.launchTicket)
+}
+
+function isSameOriginLaunchUrl(value: string, remoteOrigin: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.origin === new URL(remoteOrigin).origin && url.pathname === '/' && url.hash === ''
+      && [...url.searchParams.keys()].every(key => key === 'token') && /^[A-Za-z0-9_-]{1,256}$/u.test(url.searchParams.get('token') ?? '')
+  } catch {
+    return false
+  }
 }
 
 function exactObject(value: unknown, keys: string[]): value is Record<string, unknown> {

@@ -335,6 +335,37 @@ describe('RemoteGateway', () => {
     })).status).toBe(403)
   })
 
+  it('hands the upstream launch URL only to freshly authenticated sessions', async () => {
+    const { baseUrl, state, gateway } = await fixture()
+    const upstream = 'https://zsh.onlyservice.io/?token=upstream-launch-token'
+    gateway.setUpstreamLaunchUrl(upstream)
+    expect(() => gateway.setUpstreamLaunchUrl('https://attacker.invalid/?token=x'.replace('x', 'y'.repeat(43)))).toThrow('remote origin')
+
+    const bootstrap = await fetch(`${baseUrl}/`)
+    const bootstrapBody = await bootstrap.text()
+    expect(bootstrapBody).toContain('searchParams.size===1')
+    expect(bootstrapBody).toContain('location.replace(target.href)')
+
+    const exchanged = await fetch(`${baseUrl}/__dsh_remote/session`, {
+      method: 'POST',
+      headers: { origin: 'https://zsh.onlyservice.io', 'content-type': 'application/json' },
+      body: JSON.stringify({ token: state.accessToken() }),
+    })
+    expect(exchanged.status).toBe(200)
+    expect(await exchanged.json()).toEqual({ next: upstream })
+    expect(exchanged.headers.getSetCookie().length).toBeGreaterThan(0)
+    expect(exchanged.headers.get('cache-control')).toBe('no-store')
+
+    gateway.setUpstreamLaunchUrl(undefined)
+    const afterRelease = await fetch(`${baseUrl}/__dsh_remote/session`, {
+      method: 'POST',
+      headers: { origin: 'https://zsh.onlyservice.io', 'content-type': 'application/json' },
+      body: JSON.stringify({ token: state.accessToken() }),
+    })
+    expect(afterRelease.status).toBe(204)
+    expect(afterRelease.headers.get('content-type')).toBe(null)
+  })
+
   it('keeps multiple bounded owner grants independent when fresh Host launches succeed', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-remote-agent-ipc-'))
     roots.push(root)
