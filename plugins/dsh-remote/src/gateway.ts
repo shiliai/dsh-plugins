@@ -16,7 +16,16 @@ const KEEP_ALIVE_TIMEOUT_MS = 60_000
 const absorbLateSocketError = (): void => {}
 const HOST_SESSION_TTL_MS = 8 * 60 * 60 * 1000
 const HUB_LAUNCH_TICKET_TTL_MS = 60_000
-const ALLOWED_UPGRADE_PATHS = new Set(['/api/events.mux', '/api/events.host', '/sidebar/ws/terminal'])
+// DSH ≥0.1.2-local (issue-57) renames the scoped mux/host socket paths from
+// events.* to remote.*; keep both families so older hosts (e.g. DSH 0.1.0-rc.8)
+// stay proxyable.
+const ALLOWED_UPGRADE_PATHS = new Set([
+  '/api/events.mux',
+  '/api/events.host',
+  '/api/remote.mux',
+  '/api/remote.host',
+  '/sidebar/ws/terminal',
+])
 const MODEL_CONFIGURATION_METHODS = new Set([
   'settings.describe',
   'settings.openDocument',
