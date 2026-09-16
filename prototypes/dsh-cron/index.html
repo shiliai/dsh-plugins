@@ -1,0 +1,1254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DSH · dsh-cron 定时任务 (高保真原型)</title>
+<style>
+/* ============================================================
+   dsh-cron — 宿主侧定时任务调度器 Web UI 高保真原型
+   pure HTML/CSS/JS, no external assets, mock data, 全功能可交互
+   设计依据: docs/plans/dsh-cron-v1.md (PR #97 / Issue #96)
+   ============================================================ */
+:root {
+  --font: -apple-system, "PingFang SC", "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --bg-app: #14161a;
+  --bg-panel: #1b1e24;
+  --bg-card: #22262e;
+  --bg-card-hover: #272c36;
+  --bg-input: #16191f;
+  --bg-elevated: #2a2f3a;
+
+  --border: #2c313b;
+  --border-soft: #242933;
+
+  --text-1: #e8eaf0;
+  --text-2: #a8afbd;
+  --text-3: #6b7280;
+
+  --accent: #4f8cff;
+  --accent-soft: rgba(79, 140, 255, .14);
+  --green: #34c17b;
+  --red: #e5534b;
+  --orange: #e8913d;
+  --gray: #8a93a3;
+  --purple: #a371f7;
+
+  --radius: 10px;
+  --shadow-pop: 0 12px 40px rgba(0,0,0,.55);
+  --ease: cubic-bezier(.22,.9,.3,1);
+
+  --sidebar-w: 340px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font);
+  background: var(--bg-app);
+  color: var(--text-1);
+  font-size: 14px;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+button { font-family: var(--font); cursor: pointer; border: none; background: none; color: inherit; }
+input, textarea, select { font-family: var(--font); }
+[hidden] { display: none !important; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #333a46; border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ================= layout ================= */
+.app { display: flex; height: 100vh; }
+
+/* ================= sidebar ================= */
+.sidebar {
+  width: var(--sidebar-w); min-width: var(--sidebar-w);
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+}
+.sidebar-top { padding: 14px 14px 10px; border-bottom: 1px solid var(--border-soft); }
+.new-session-btn {
+  width: 100%; padding: 9px 12px; border-radius: var(--radius);
+  background: var(--accent); color: #fff; font-weight: 600; font-size: 13px;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  transition: filter .15s var(--ease);
+}
+.new-session-btn:hover { filter: brightness(1.1); }
+.stub-sessions { padding: 10px 14px; }
+.stub-row {
+  padding: 7px 10px; border-radius: 8px; color: var(--text-3); font-size: 13px;
+  display: flex; gap: 8px; align-items: center;
+}
+.stub-row.active { background: var(--bg-card); color: var(--text-2); }
+
+/* ---- cron section ---- */
+.cron-section {
+  flex: 1; display: flex; flex-direction: column; min-height: 0;
+  border-top: 1px solid var(--border-soft);
+}
+.cron-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 14px 8px;
+}
+.cron-header .clock-ico { color: var(--accent); display: flex; }
+.cron-header h2 { font-size: 13px; font-weight: 700; letter-spacing: .3px; flex: 1; }
+.cron-header h2 small { color: var(--text-3); font-weight: 500; margin-left: 4px; }
+.icon-btn {
+  width: 26px; height: 26px; border-radius: 7px; display: flex;
+  align-items: center; justify-content: center; color: var(--text-2);
+  transition: background .12s var(--ease), color .12s;
+}
+.icon-btn:hover { background: var(--bg-elevated); color: var(--text-1); }
+.cron-search { padding: 0 14px 8px; }
+.cron-search input {
+  width: 100%; background: var(--bg-input); border: 1px solid var(--border-soft);
+  border-radius: 8px; color: var(--text-1); padding: 6px 10px; font-size: 12.5px;
+}
+.cron-search input::placeholder { color: var(--text-3); }
+.job-list { flex: 1; overflow-y: auto; padding: 2px 8px 12px; }
+
+/* ---- job row ---- */
+.job {
+  background: var(--bg-card); border: 1px solid var(--border-soft);
+  border-radius: var(--radius); margin-bottom: 8px; overflow: hidden;
+  transition: border-color .15s var(--ease);
+}
+.job:hover { border-color: var(--border); }
+.job.orphan { opacity: .62; border-style: dashed; }
+.job-head {
+  display: flex; align-items: center; gap: 9px; padding: 10px 10px 10px 12px;
+  cursor: pointer; user-select: none;
+}
+.status-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+  background: var(--gray);
+}
+.status-dot.ok { background: var(--green); }
+.status-dot.failed { background: var(--red); }
+.status-dot.running { background: var(--accent); animation: pulse 1.2s infinite; }
+.status-dot.paused { background: var(--gray); }
+.status-dot.killed, .status-dot.aborted { background: var(--orange); }
+@keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(79,140,255,.5);} 50% { box-shadow: 0 0 0 5px rgba(79,140,255,0);} }
+.job-main { flex: 1; min-width: 0; }
+.job-name {
+  font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chip {
+  font-size: 10px; padding: 1px 6px; border-radius: 20px; font-weight: 600;
+  letter-spacing: .2px; flex-shrink: 0;
+}
+.chip.manual { background: var(--accent-soft); color: var(--accent); }
+.chip.config { background: rgba(52,193,123,.13); color: var(--green); }
+.chip.plugin { background: rgba(163,113,247,.14); color: var(--purple); }
+.chip.orphan-c { background: rgba(229,83,75,.14); color: var(--red); }
+.chip.kind { background: var(--bg-elevated); color: var(--text-2); }
+.job-sub {
+  font-size: 11.5px; color: var(--text-3); margin-top: 3px;
+  display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+}
+.job-sub .next { color: var(--text-2); }
+.job-sub .elapsed { color: var(--accent); font-variant-numeric: tabular-nums; }
+.job-actions { display: flex; gap: 2px; opacity: 0; transition: opacity .12s; }
+.job:hover .job-actions { opacity: 1; }
+.job-actions .icon-btn { width: 24px; height: 24px; }
+
+/* hover menu */
+.menu-anchor { position: relative; }
+.pop-menu {
+  position: absolute; right: 0; top: 28px; z-index: 60; min-width: 148px;
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  border-radius: 9px; box-shadow: var(--shadow-pop); padding: 4px; 
+}
+.pop-menu button {
+  display: flex; width: 100%; align-items: center; gap: 8px;
+  padding: 7px 10px; border-radius: 6px; font-size: 12.5px; color: var(--text-1);
+  text-align: left;
+}
+.pop-menu button:hover { background: rgba(255,255,255,.06); }
+.pop-menu button.danger { color: var(--red); }
+.pop-menu button.danger.confirm { background: rgba(229,83,75,.16); font-weight: 700; }
+
+/* run history inside expanded job */
+.run-history { border-top: 1px solid var(--border-soft); padding: 6px 8px 8px; }
+.run-history .rh-title {
+  font-size: 10.5px; color: var(--text-3); letter-spacing: .5px;
+  text-transform: uppercase; padding: 4px 6px 4px;
+}
+.run-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border-radius: 7px; cursor: pointer; font-size: 12px;
+}
+.run-row:hover { background: var(--bg-card-hover); }
+.run-row .st { font-weight: 600; font-size: 11px; min-width: 74px; }
+.run-row .st.ok { color: var(--green); } .run-row .st.failed { color: var(--red); }
+.run-row .st.running { color: var(--accent); } .run-row .st.skipped { color: var(--gray); }
+.run-row .st.killed, .run-row .st.aborted { color: var(--orange); }
+.run-row .t { color: var(--text-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.run-row .sum {
+  flex: 1; color: var(--text-2); font-size: 11.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.empty-note { color: var(--text-3); font-size: 12px; padding: 6px 10px; }
+
+/* ---- sidebar foot clock badge ---- */
+.sidebar-foot {
+  border-top: 1px solid var(--border-soft); padding: 10px 14px;
+  display: flex; align-items: center; gap: 10px;
+}
+.clock-badge {
+  display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+  background: var(--bg-card); border: 1px solid var(--border-soft);
+  border-radius: 20px; font-size: 12px; color: var(--text-2);
+  font-variant-numeric: tabular-nums; cursor: pointer;
+  transition: border-color .15s;
+}
+.clock-badge:hover { border-color: var(--accent); }
+.clock-badge .tz { color: var(--text-3); font-size: 11px; }
+.foot-hint { font-size: 10.5px; color: var(--text-3); flex: 1; text-align: right; }
+
+/* ================= center column ================= */
+.center { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg-app); }
+.center-head {
+  padding: 12px 22px; border-bottom: 1px solid var(--border-soft);
+  display: flex; align-items: center; gap: 10px; min-height: 52px;
+}
+.center-head h1 { font-size: 14px; font-weight: 700; }
+.center-head .sub { color: var(--text-3); font-size: 12px; }
+.center-body { flex: 1; overflow-y: auto; padding: 22px; }
+.center-body::-webkit-scrollbar { width: 10px; }
+
+.welcome { max-width: 640px; margin: 8vh auto 0; }
+.welcome h2 { font-size: 20px; margin-bottom: 10px; }
+.welcome p { color: var(--text-2); line-height: 1.75; margin-bottom: 12px; }
+.welcome code {
+  background: var(--bg-card); padding: 2px 6px; border-radius: 5px;
+  font-family: var(--mono); font-size: 12.5px; color: var(--accent);
+}
+.welcome .kbd-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
+.welcome .hint-card {
+  background: var(--bg-panel); border: 1px solid var(--border-soft);
+  border-radius: var(--radius); padding: 13px 15px; font-size: 12.5px; color: var(--text-2);
+  line-height: 1.7;
+}
+.welcome .hint-card b { color: var(--text-1); display: block; margin-bottom: 3px; font-size: 13px; }
+
+/* ---- session replay (agent run) ---- */
+.replay { max-width: 720px; margin: 0 auto; }
+.msg { margin-bottom: 18px; }
+.msg .role {
+  font-size: 11px; color: var(--text-3); letter-spacing: .6px;
+  text-transform: uppercase; margin-bottom: 6px; display: flex; gap: 8px; align-items: center;
+}
+.msg .bubble {
+  background: var(--bg-panel); border: 1px solid var(--border-soft);
+  border-radius: var(--radius); padding: 13px 16px; line-height: 1.75;
+  font-size: 13.5px; white-space: pre-wrap;
+}
+.msg.user .bubble { background: var(--accent-soft); border-color: rgba(79,140,255,.25); }
+.msg.system .bubble {
+  border-style: dashed; color: var(--text-2); font-size: 12.5px;
+  font-family: var(--mono); background: rgba(232,145,61,.06); border-color: rgba(232,145,61,.3);
+}
+.msg .tool-call {
+  font-family: var(--mono); font-size: 12px; color: var(--purple);
+  background: var(--bg-panel); border: 1px solid var(--border-soft);
+  border-radius: 8px; padding: 8px 12px; margin: 6px 0;
+}
+
+/* ---- run detail page (command run) ---- */
+.detail { max-width: 760px; margin: 0 auto; }
+.detail-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px; margin-bottom: 18px;
+}
+.stat-card {
+  background: var(--bg-panel); border: 1px solid var(--border-soft);
+  border-radius: var(--radius); padding: 12px 14px;
+}
+.stat-card .k { font-size: 11px; color: var(--text-3); margin-bottom: 5px; letter-spacing: .4px; }
+.stat-card .v { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat-card .v.mono { font-family: var(--mono); font-size: 12.5px; font-weight: 500; }
+.output-tail {
+  background: #0d0f12; border: 1px solid var(--border-soft); border-radius: var(--radius);
+  padding: 14px 16px; font-family: var(--mono); font-size: 12px; line-height: 1.7;
+  color: #b8c0ce; white-space: pre-wrap; max-height: 320px; overflow-y: auto;
+}
+.section-label {
+  font-size: 11px; color: var(--text-3); letter-spacing: .6px;
+  text-transform: uppercase; margin: 18px 0 8px;
+}
+
+/* ================= modal ================= */
+.modal-mask {
+  position: fixed; inset: 0; background: rgba(8,10,13,.62);
+  display: flex; align-items: flex-start; justify-content: center;
+  z-index: 100; padding: 5vh 16px; backdrop-filter: blur(3px);
+}
+.modal {
+  width: 620px; max-width: 100%; max-height: 88vh; overflow-y: auto;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: 14px; box-shadow: var(--shadow-pop);
+  animation: pop .18s var(--ease);
+}
+@keyframes pop { from { transform: translateY(10px) scale(.98); opacity: 0; } }
+.modal-head {
+  padding: 16px 20px 12px; display: flex; align-items: center;
+  border-bottom: 1px solid var(--border-soft); position: sticky; top: 0;
+  background: var(--bg-panel); z-index: 2; border-radius: 14px 14px 0 0;
+}
+.modal-head h3 { font-size: 15px; flex: 1; }
+.modal-body { padding: 16px 20px 20px; }
+.f-row { margin-bottom: 15px; }
+.f-row > label { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 6px; font-weight: 600; }
+.f-row .hint { font-size: 11px; color: var(--text-3); margin-top: 5px; line-height: 1.6; }
+.f-row input[type=text], .f-row input[type=number], .f-row textarea, .f-row select {
+  width: 100%; background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text-1); padding: 8px 11px; font-size: 13px;
+}
+.f-row textarea { min-height: 84px; resize: vertical; line-height: 1.65; }
+.f-row input:focus, .f-row textarea:focus, .f-row select:focus { border-color: var(--accent); outline: none; }
+.f-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.f-3col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.seg { display: flex; gap: 6px; flex-wrap: wrap; }
+.seg button {
+  padding: 6px 13px; border-radius: 8px; font-size: 12.5px;
+  background: var(--bg-input); border: 1px solid var(--border); color: var(--text-2);
+  transition: all .12s var(--ease);
+}
+.seg button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.tz-note {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px;
+  color: var(--text-3); background: var(--bg-input); border: 1px solid var(--border-soft);
+  border-radius: 6px; padding: 3px 9px; margin-top: 7px;
+}
+.modal-foot {
+  padding: 13px 20px; border-top: 1px solid var(--border-soft);
+  display: flex; justify-content: flex-end; gap: 10px;
+  position: sticky; bottom: 0; background: var(--bg-panel); border-radius: 0 0 14px 14px;
+}
+.btn {
+  padding: 8px 18px; border-radius: 9px; font-size: 13px; font-weight: 600;
+  border: 1px solid var(--border); color: var(--text-1); background: var(--bg-elevated);
+  transition: filter .12s;
+}
+.btn:hover { filter: brightness(1.15); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.danger { background: rgba(229,83,75,.14); border-color: rgba(229,83,75,.4); color: var(--red); }
+.field-error { color: var(--red); font-size: 11.5px; margin-top: 5px; }
+
+/* ================= toast ================= */
+.toasts { position: fixed; bottom: 22px; right: 22px; z-index: 200; display: flex; flex-direction: column; gap: 8px; }
+.toast {
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  border-left: 3px solid var(--accent); border-radius: 9px;
+  padding: 10px 16px; font-size: 12.5px; box-shadow: var(--shadow-pop);
+  animation: slidein .2s var(--ease); max-width: 360px;
+}
+.toast.ok { border-left-color: var(--green); }
+.toast.err { border-left-color: var(--red); }
+@keyframes slidein { from { transform: translateX(20px); opacity: 0; } }
+
+.mono { font-family: var(--mono); }
+.divider { height: 1px; background: var(--border-soft); margin: 16px 0; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ============ sidebar ============ -->
+  <aside class="sidebar">
+    <div class="sidebar-top">
+      <button class="new-session-btn" onclick="toast('原型：新会话按钮为占位', 'ok')">＋ 新会话</button>
+    </div>
+    <div class="stub-sessions">
+      <div class="stub-row">💬 dsh-remote 网关升级排查</div>
+      <div class="stub-row">💬 wecom 授权巡检日报</div>
+      <div class="stub-row active">⏱ 定时任务（本原型）</div>
+    </div>
+
+    <section class="cron-section">
+      <div class="cron-header">
+        <span class="clock-ico">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        </span>
+        <h2>定时任务<small>Cron Jobs</small></h2>
+        <button class="icon-btn" title="新建任务" onclick="openModal()">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+      <div class="cron-search">
+        <input id="search" type="text" placeholder="搜索任务…" oninput="renderJobs()">
+      </div>
+      <div class="job-list" id="jobList"></div>
+    </section>
+
+    <div class="sidebar-foot">
+      <button class="clock-badge" onclick="toast('调度器运行中 · tick 15s · 时钟纪律已启用', 'ok')">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        <span id="clockNow">--:--:--</span>
+        <span class="tz" id="clockTz"></span>
+      </button>
+      <span class="foot-hint">dsh-cron v1.0 原型</span>
+    </div>
+  </aside>
+
+  <!-- ============ center ============ -->
+  <main class="center">
+    <div class="center-head">
+      <h1 id="viewTitle">dsh-cron 原型</h1>
+      <span class="sub" id="viewSub">高保真交互原型 · mock 数据 · 调度器真实运转</span>
+    </div>
+    <div class="center-body" id="centerBody"></div>
+  </main>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<!-- ============ create / edit modal ============ -->
+<div class="modal-mask" id="modalMask" hidden onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="modalTitle">新建任务</h3>
+      <button class="icon-btn" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="f-row">
+        <label>名称</label>
+        <input type="text" id="fName" placeholder="wecom-mail-digest（字母/数字/-/_，无空格）">
+        <div class="field-error" id="eName" hidden></div>
+      </div>
+
+      <div class="f-row">
+        <label>触发方式</label>
+        <div class="seg" id="presetSeg">
+          <button data-p="hourly">每小时</button>
+          <button data-p="daily">每天</button>
+          <button data-p="weekdays">工作日</button>
+          <button data-p="weekly">每周</button>
+          <button data-p="custom">自定义</button>
+        </div>
+        <div id="presetTimeRow" style="margin-top:10px" class="f-2col">
+          <div><input type="number" id="fHour" min="0" max="23" value="8" placeholder="时"></div>
+          <div><input type="number" id="fMinute" min="0" max="59" value="0" placeholder="分"></div>
+        </div>
+        <div id="customRow" hidden style="margin-top:10px">
+          <div class="seg" id="customSeg" style="margin-bottom:10px">
+            <button data-c="cron" class="on">cron 表达式</button>
+            <button data-c="interval">固定间隔</button>
+            <button data-c="oneshot">一次性</button>
+          </div>
+          <input type="text" id="fCron" class="mono" placeholder="0 8 * * 1-5" >
+          <div id="intervalRow" hidden class="f-2col" style="margin-top:8px">
+            <input type="number" id="fEverySec" min="60" value="3600" placeholder="间隔秒数 ≥60">
+            <div></div>
+          </div>
+          <div id="oneshotRow" hidden style="margin-top:8px">
+            <input type="text" id="fAt" class="mono" placeholder="2026-09-20T08:00:00+08:00">
+          </div>
+        </div>
+        <span class="tz-note">🌐 时区静默取自浏览器：<b id="fTz" class="mono"></b></span>
+        <div class="field-error" id="eSched" hidden></div>
+      </div>
+
+      <div class="f-row">
+        <label>任务类型</label>
+        <div class="seg" id="kindSeg">
+          <button data-k="agent" class="on">🤖 agent（提示词走完整工具链）</button>
+          <button data-k="command">⌨️ command（子进程）</button>
+        </div>
+        <textarea id="fPrompt" style="margin-top:10px" placeholder="例：查看我的企微未读邮件，总结后调用 wecom_send_message 推送给我"></textarea>
+        <input type="text" id="fArgv" class="mono" hidden style="margin-top:10px" placeholder='["./scripts/heartbeat.sh", "--verbose"]（JSON 数组）'>
+        <div class="field-error" id="eTask" hidden></div>
+      </div>
+
+      <div class="f-2col">
+        <div class="f-row">
+          <label>Agent 预设（运行身份）</label>
+          <select id="fAgent">
+            <option value="">继承默认 agent</option>
+            <option value="default">default · 通用助手</option>
+            <option value="code-reviewer">code-reviewer · 代码评审</option>
+            <option value="researcher">researcher · 检索研究</option>
+            <option value="ops-bot">ops-bot · 运维巡检</option>
+          </select>
+          <div class="hint">对应 ctx.agents.create 的 preset；决定该次运行的系统人格、默认工具集与权限基线。</div>
+        </div>
+        <div class="f-row">
+          <label>模型</label>
+          <select id="fModel" onchange="onModelChange()">
+            <option value="">继承默认</option>
+            <option>k3-256k</option>
+            <option>deepseek-chat</option>
+            <option>deepseek-reasoner</option>
+          </select>
+          <div class="hint">钉死后不跟随聊天模型变化，额度可预期。</div>
+        </div>
+        <div class="f-row">
+          <label>推理等级</label>
+          <select id="fEffort" disabled></select>
+          <div class="hint" id="fEffortHint">选择模型后可选；取值来自该模型 catalog 的 reasoning.efforts，与 DSH 模型选择器一致。</div>
+        </div>
+      </div>
+      <div class="f-2col">
+        <div class="f-row">
+          <label>权限预设</label>
+          <select id="fPreset"><option value="">继承默认</option><option>readonly</option><option>workspace</option><option>full</option></select>
+        </div>
+        <div class="f-row">
+          <label>超时（秒）</label>
+          <input type="number" id="fTimeout" min="30" value="600">
+        </div>
+      </div>
+
+      <div class="f-row">
+        <label>工作目录</label>
+        <input type="text" id="fCwd" class="mono" placeholder="留空 = 宿主默认；或输入路径" value="">
+      </div>
+
+      <div class="f-3col">
+        <div class="f-row">
+          <label>重叠策略</label>
+          <select id="fOverlap">
+            <option value="skip">skip（跳过）</option>
+            <option value="queue">queue（排队 1 次）</option>
+            <option value="replace">replace（杀掉重跑）</option>
+          </select>
+        </div>
+        <div class="f-row">
+          <label>漏跑策略</label>
+          <select id="fMisfire">
+            <option value="skip">skip（不补跑）</option>
+            <option value="runOnce">runOnce（补最近一次）</option>
+          </select>
+        </div>
+        <div class="f-row">
+          <label>有效期至（可选）</label>
+          <input type="text" id="fEndAt" class="mono" placeholder="2027-12-31T23:59:59+08:00">
+        </div>
+      </div>
+      <div class="hint">循环任务必须设置有效期窗口（endAt 或 maxDurationSeconds，上限一年）——禁止无限 cron。</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal()">取消</button>
+      <button class="btn primary" id="modalSubmit" onclick="submitModal()">创建并启用</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ================================================================
+   mock data — 对应设计文档 §11 的两个验证场景 + 边界形态
+   ================================================================ */
+const BROWSER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai';
+
+/* mock 模型 catalog：与 DSH provider catalog 的 reasoning.efforts /
+   defaultEffort 结构一致（真实实现从宿主 catalog 读取，不硬编码） */
+const MODEL_CATALOG = {
+  'k3-256k':          { efforts: [{ id: 'low', name: '低' }, { id: 'medium', name: '中' }, { id: 'high', name: '高' }], defaultEffort: 'medium' },
+  'deepseek-chat':    { efforts: [] },  // 该模型不提供推理等级
+  'deepseek-reasoner':{ efforts: [{ id: 'low', name: '低' }, { id: 'medium', name: '中' }, { id: 'high', name: '高' }, { id: 'max', name: '极高' }], defaultEffort: 'high' },
+};
+
+function onModelChange(selected) {
+  const sel = document.getElementById('fModel');
+  const eff = document.getElementById('fEffort');
+  const hint = document.getElementById('fEffortHint');
+  const model = selected !== undefined ? selected : sel.value;
+  if (!model) {
+    eff.innerHTML = '<option value="">继承默认（随聊天选择器）</option>';
+    eff.disabled = true; eff.value = '';
+    hint.textContent = '模型继承默认时，推理等级随之继承。';
+    return;
+  }
+  const spec = MODEL_CATALOG[model];
+  if (!spec || !spec.efforts.length) {
+    eff.innerHTML = '<option value="">该模型不提供推理等级</option>';
+    eff.disabled = true; eff.value = '';
+    hint.textContent = '对应 DSH 模型选择器的 "This model provides no reasoning effort levels."';
+    return;
+  }
+  eff.innerHTML = `<option value="">跟随 provider 默认（${spec.efforts.find(e => e.id === spec.defaultEffort)?.name || spec.defaultEffort}）</option>` +
+    spec.efforts.map(e => `<option value="${e.id}">${e.name}（${e.id}）</option>`).join('');
+  eff.disabled = false;
+  hint.textContent = '与 DSH 模型选择器的 Effort 行一致；空值 = providerDefault。';
+}
+const now = Date.now();
+const MIN = 60000, HOUR = 3600000, DAY = 86400000;
+
+let seqCounter = 100;
+
+const state = {
+  jobs: [
+    {
+      id: 'j1', name: 'wecom-mail-digest', kind: 'agent', source: 'config',
+      schedule: { type: 'cron', expr: '0 8 * * *' }, tz: 'Asia/Shanghai',
+      prompt: '查看我的企微未读邮件，按重要性归类总结后调用 wecom_send_message 推送给我。',
+      cwd: '', model: '', timeout: 600, overlap: 'skip', misfire: 'skip',
+      endAt: '2027-12-31T23:59:59+08:00', enabled: true, running: null,
+      runs: [
+        { seq: 14, target: now - DAY + 8*HOUR, startedAt: now - DAY + 8*HOUR, finishedAt: now - DAY + 8*HOUR + 94000, status: 'ok',
+          summary: '3 封未读：① 财务部 Q3 预算确认（建议今日回复）② GitHub 安全告警 ③ 周刊订阅。已推送总结到企微。',
+          sessionId: 'cron-wecom-mail-digest-0014' },
+        { seq: 13, target: now - 2*DAY + 8*HOUR, startedAt: now - 2*DAY + 8*HOUR, finishedAt: now - 2*DAY + 8*HOUR + 61000, status: 'ok',
+          summary: '今日无未读邮件。', sessionId: 'cron-wecom-mail-digest-0013' },
+      ]
+    },
+    {
+      id: 'j2', name: 'repo-triage', kind: 'agent', source: 'config',
+      schedule: { type: 'cron', expr: '0 9,15 * * 1-5' }, tz: 'Asia/Shanghai',
+      prompt: '对 shiliai/dsh-plugins、shiliai/dsh-reading 执行 gh pr/issue list，过滤已指派与 draft，每个可处理项扇出 subagent 处理，最后汇总。',
+      cwd: '~/project', model: 'k3-256k', effort: 'high', agentPreset: 'code-reviewer', timeout: 1800, overlap: 'skip', misfire: 'runOnce',
+      endAt: '2027-12-31T23:59:59+08:00', enabled: true, running: null,
+      runs: [
+        { seq: 31, target: now - 4*HOUR, startedAt: now - 4*HOUR, finishedAt: now - 4*HOUR + 412000, status: 'ok',
+          summary: '分派 2 项：PR #97 设计文档评审（子 agent 处理中）；issue #94 标记为待讨论。', sessionId: 'cron-repo-triage-0031' },
+        { seq: 30, target: now - DAY, startedAt: now - DAY, finishedAt: now - DAY + 388000, status: 'failed',
+          summary: 'gh api 限流（403 rate limit），本轮未完成巡检。', sessionId: 'cron-repo-triage-0030' },
+      ]
+    },
+    {
+      id: 'j3', name: 'heartbeat', kind: 'command', source: 'config',
+      schedule: { type: 'interval', everySeconds: 3600 }, tz: BROWSER_TZ,
+      argv: ['./scripts/heartbeat.sh'], anchor: now - 20*MIN,
+      cwd: '~/project/dsh-plugins', timeout: 120, overlap: 'skip', misfire: 'skip',
+      enabled: true, running: null,
+      runs: [
+        { seq: 42, target: now - 20*MIN, startedAt: now - 20*MIN, finishedAt: now - 20*MIN + 1800, status: 'ok',
+          summary: 'ok host=macbook-pro latency=12ms', exitCode: 0,
+          output: '$ ./scripts/heartbeat.sh\nchecking dsh host… ok\nlatency 12ms\ndisk 61%\nexit 0' },
+      ]
+    },
+    {
+      id: 'j4', name: 'kb-refresh', kind: 'callback', source: 'plugin', owner: 'dsh-obsidian',
+      schedule: { type: 'cron', expr: '30 7 * * *' }, tz: 'Asia/Shanghai',
+      cwd: '', timeout: 700, overlap: 'skip', misfire: 'runOnce', enabled: true, running: null,
+      runs: [
+        { seq: 9, target: now - 3*HOUR, startedAt: now - 3*HOUR, finishedAt: now - 3*HOUR + 47000, status: 'ok',
+          summary: '知识库再索引完成：12 new / 3 updated / 0 removed。' },
+      ]
+    },
+    {
+      id: 'j5', name: 'nightly-backup', kind: 'command', source: 'manual',
+      schedule: { type: 'cron', expr: '0 2 * * *' }, tz: BROWSER_TZ,
+      argv: ['/usr/local/bin/restic', 'backup', '~/Documents'],
+      cwd: '', timeout: 3600, overlap: 'queue', misfire: 'skip', enabled: false, running: null,
+      runs: [
+        { seq: 3, target: now - 2*DAY, startedAt: now - 2*DAY, finishedAt: now - 2*DAY + 522000, status: 'ok',
+          summary: 'snapshot a1b2c3 saved, 1.2 GB new', exitCode: 0,
+          output: '$ restic backup ~/Documents\nrepository opened\nsnapshot a1b2c3 saved\nexit 0' },
+      ]
+    },
+    {
+      id: 'j6', name: 'legacy-notes-sync', kind: 'callback', source: 'plugin', owner: 'dsh-notes(已卸载)',
+      orphan: true, schedule: { type: 'cron', expr: '*/30 * * * *' }, tz: BROWSER_TZ,
+      enabled: false, running: null,
+      runs: [
+        { seq: 88, target: now - 6*DAY, startedAt: now - 6*DAY, finishedAt: now - 6*DAY + 31000, status: 'aborted',
+          summary: 'provider 卸载，运行中断。' },
+      ]
+    },
+  ],
+  expanded: new Set(['j1']),
+  view: { type: 'welcome' },
+  editingId: null,
+  pendingDelete: null,
+};
+
+/* ================================================================
+   5 字段 cron 解析 & 下一次触发计算（浏览器本地时区）
+   ================================================================ */
+const DOW_NAMES = { sun:0, mon:1, tue:2, wed:3, thu:4, fri:5, sat:6 };
+const MON_NAMES = { jan:1, feb:2, mar:3, apr:4, may:5, jun:6, jul:7, aug:8, sep:9, oct:10, nov:11, dec:12 };
+
+function parseField(field, min, max, names) {
+  const out = new Set();
+  for (let part of field.toLowerCase().split(',')) {
+    let step = 1;
+    const si = part.indexOf('/');
+    if (si >= 0) { step = parseInt(part.slice(si + 1), 10); part = part.slice(0, si); }
+    let lo, hi;
+    if (part === '*') { lo = min; hi = max; }
+    else if (part.includes('-')) {
+      const [a, b] = part.split('-');
+      lo = names?.[a] ?? parseInt(a, 10); hi = names?.[b] ?? parseInt(b, 10);
+    } else { lo = hi = names?.[part] ?? parseInt(part, 10); }
+    if (isNaN(lo) || isNaN(hi) || lo < min || hi > max || lo > hi) throw new Error('非法字段: ' + field);
+    for (let v = lo; v <= hi; v += step) out.add(v);
+  }
+  return out;
+}
+
+function parseCron(expr) {
+  const f = expr.trim().split(/\s+/);
+  if (f.length !== 5) throw new Error('cron 需为 5 字段：分 时 日 月 周');
+  return {
+    min: parseField(f[0], 0, 59), hour: parseField(f[1], 0, 23),
+    dom: parseField(f[2], 1, 31), mon: parseField(f[3], 1, 12, MON_NAMES),
+    dow: parseField(f[4], 0, 6, DOW_NAMES),
+    domStar: f[2] === '*', dowStar: f[4] === '*',
+  };
+}
+
+function nextCron(expr, fromMs) {
+  const c = parseCron(expr);
+  let t = new Date(fromMs + MIN);
+  t.setSeconds(0, 0);
+  for (let i = 0; i < 366 * 24 * 60; i++) {
+    const domOk = c.dom.has(t.getDate());
+    const dowOk = c.dow.has(t.getDay());
+    // Vixie 语义：日与周都受限时取并集，任一 * 时取交集
+    const dayOk = (c.domStar || c.dowStar) ? (domOk && dowOk) : (domOk || dowOk);
+    if (c.mon.has(t.getMonth() + 1) && dayOk && c.hour.has(t.getHours()) && c.min.has(t.getMinutes()))
+      return t.getTime();
+    t = new Date(t.getTime() + MIN);
+  }
+  throw new Error('一年内无触发时刻');
+}
+
+/* 下一次触发：cron / interval / oneshot */
+function computeNextFire(job, fromMs = Date.now()) {
+  const s = job.schedule;
+  if (!job.enabled) return null;
+  if (job.endAt && fromMs > Date.parse(job.endAt)) return null;
+  if (s.type === 'cron') {
+    const nf = nextCron(s.expr, fromMs);
+    return (job.endAt && nf > Date.parse(job.endAt)) ? null : nf;
+  }
+  if (s.type === 'interval') {
+    const anchor = job.anchor || fromMs;
+    const step = Math.max(60, s.everySeconds) * 1000;
+    return anchor + Math.max(1, Math.ceil((fromMs - anchor) / step)) * step;
+  }
+  if (s.type === 'oneshot') {
+    const at = Date.parse(s.at);
+    return (isNaN(at) || at <= fromMs) ? null : at;
+  }
+  return null;
+}
+
+/* ================================================================
+   格式化
+   ================================================================ */
+function pad(n) { return String(n).padStart(2, '0'); }
+function fmtClock(ms) { const d = new Date(ms); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; }
+function fmtDateTime(ms) {
+  const d = new Date(ms);
+  return `${d.getMonth()+1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function fmtDur(ms) {
+  if (ms < 1000) return ms + 'ms';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+function fmtCountdown(ms) {
+  const diff = ms - Date.now();
+  if (diff <= 0) return '即将触发';
+  const m = Math.floor(diff / MIN);
+  if (m < 1) return `${Math.floor(diff / 1000)} 秒后`;
+  if (m < 60) return `${m} 分钟后`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} 小时 ${m % 60} 分后`;
+  return `${Math.floor(h / 24)} 天 ${h % 24} 小时后`;
+}
+function schedText(job) {
+  const s = job.schedule;
+  if (s.type === 'cron') return s.expr;
+  if (s.type === 'interval') return `每 ${s.everySeconds >= 3600 ? (s.everySeconds/3600) + 'h' : (s.everySeconds/60) + 'min'}`;
+  return '一次性 @ ' + fmtDateTime(Date.parse(s.at));
+}
+const KIND_LABEL = { agent: 'agent', command: 'cmd', callback: 'callback' };
+const STATUS_LABEL = { ok: 'ok', failed: 'failed', running: 'running', killed: 'killed', aborted: 'aborted',
+  'skipped-overlap': 'skipped', timeout: 'timeout' };
+
+/* ================================================================
+   渲染：侧栏 job 列表
+   ================================================================ */
+function lastRun(job) { return job.running ? { status: 'running' } : job.runs[0]; }
+
+function renderJobs() {
+  const q = (document.getElementById('search').value || '').trim().toLowerCase();
+  const list = document.getElementById('jobList');
+  const jobs = state.jobs
+    .filter(j => !q || j.name.toLowerCase().includes(q))
+    .sort((a, b) => (a.orphan ? 1 : 0) - (b.orphan ? 1 : 0));
+
+  if (!jobs.length) {
+    list.innerHTML = `<div class="empty-note">没有匹配的任务。点右上角 ＋ 创建。</div>`;
+    return;
+  }
+
+  list.innerHTML = jobs.map(j => {
+    const lr = lastRun(j);
+    const dot = j.running ? 'running' : (!j.enabled ? 'paused' : (lr ? lr.status : ''));
+    const nf = computeNextFire(j);
+    const chip = j.orphan ? `<span class="chip orphan-c">plugin gone</span>`
+      : `<span class="chip ${j.source}">${{ config: 'config', manual: 'manual', plugin: 'plugin' }[j.source]}</span>`;
+    const sub = j.orphan ? `<span>provider 已卸载 · 仅保留历史</span>`
+      : j.running ? `<span class="elapsed">▶ 运行中 ${fmtDur(Date.now() - j.running.startedAt)}</span><span>· target ${fmtDateTime(j.running.target)}</span>`
+      : !j.enabled ? `<span>已暂停</span><span>· <span class="mono">${schedText(j)}</span></span>`
+      : `<span class="next">下次 ${nf ? fmtCountdown(nf) : '—（窗口已过期）'}</span><span>· <span class="mono">${schedText(j)}</span></span>`;
+    const expanded = state.expanded.has(j.id);
+
+    const histHtml = expanded ? `
+      <div class="run-history">
+        <div class="rh-title">运行历史 · ${j.runs.length + (j.running ? 1 : 0)}</div>
+        ${j.running ? runRowHtml(j, { seq: j.running.seq, target: j.running.target, startedAt: j.running.startedAt, status: 'running', summary: '执行中…' }, true) : ''}
+        ${j.runs.map(r => runRowHtml(j, r, false)).join('') || '<div class="empty-note">暂无历史</div>'}
+      </div>` : '';
+
+    const readonlyJob = j.source === 'plugin';
+    const menu = j.orphan ? `
+        <button class="danger ${state.pendingDelete === j.id ? 'confirm' : ''}" onclick="event.stopPropagation();deleteJob('${j.id}')">🗑 ${state.pendingDelete === j.id ? '确认删除（含历史）' : '删除残留'}</button>`
+      : `
+        ${!j.running && !readonlyJob || !j.running ? `<button onclick="event.stopPropagation();runNow('${j.id}')" ${j.running ? 'disabled style="opacity:.4"' : ''}>▶ 立即运行</button>` : ''}
+        ${j.running ? `<button onclick="event.stopPropagation();stopRun('${j.id}')">⏹ 停止本次运行</button>` : ''}
+        <button onclick="event.stopPropagation();toggleEnable('${j.id}')">${j.enabled ? '⏸ 暂停调度' : '▶ 恢复调度'}</button>
+        ${readonlyJob ? '' : `<button onclick="event.stopPropagation();openModal('${j.id}')">✏️ 编辑任务</button>`}
+        ${j.source === 'manual' ? `<button class="danger ${state.pendingDelete === j.id ? 'confirm' : ''}" onclick="event.stopPropagation();deleteJob('${j.id}')">🗑 ${state.pendingDelete === j.id ? '确认删除' : '删除任务'}</button>` : ''}
+        ${readonlyJob ? `<button disabled style="opacity:.45;cursor:not-allowed">🔒 由 ${j.owner} 提供</button>` : ''}`;
+
+    return `
+    <div class="job ${j.orphan ? 'orphan' : ''}" data-id="${j.id}">
+      <div class="job-head" onclick="toggleExpand('${j.id}')">
+        <span class="status-dot ${dot}"></span>
+        <div class="job-main">
+          <div class="job-name">${j.name} ${chip} <span class="chip kind">${KIND_LABEL[j.kind]}</span>${j.agentPreset ? `<span class="chip kind">🤖 ${j.agentPreset}</span>` : ''}${j.model ? `<span class="chip kind">${j.model}${j.effort ? '·' + j.effort : ''}</span>` : ''}</div>
+          <div class="job-sub">${sub}</div>
+        </div>
+        <div class="job-actions">
+          ${!j.running && !j.orphan ? `<button class="icon-btn" title="立即运行" onclick="event.stopPropagation();runNow('${j.id}')">▶</button>` : ''}
+          ${j.running ? `<button class="icon-btn" title="停止本次运行" onclick="event.stopPropagation();stopRun('${j.id}')">⏹</button>` : ''}
+          <span class="menu-anchor">
+            <button class="icon-btn" title="更多" onclick="event.stopPropagation();toggleMenu('${j.id}')">⋯</button>
+            <div class="pop-menu" id="menu-${j.id}" hidden>${menu}</div>
+          </span>
+        </div>
+      </div>
+      ${histHtml}
+    </div>`;
+  }).join('');
+}
+
+function runRowHtml(job, r, live) {
+  const cls = r.status === 'skipped-overlap' ? 'skipped' : r.status;
+  return `
+    <div class="run-row" onclick="event.stopPropagation();openRun('${job.id}', ${r.seq})">
+      <span class="st ${cls}">${STATUS_LABEL[r.status] || r.status}</span>
+      <span class="t">${fmtDateTime(r.target)}</span>
+      ${r.finishedAt ? `<span class="t">${fmtDur(r.finishedAt - r.startedAt)}</span>` : ''}
+      <span class="sum">${r.summary || ''}</span>
+      ${job.kind === 'agent' && r.sessionId ? '<span class="t">↗ 会话</span>' : ''}
+    </div>`;
+}
+
+/* ================================================================
+   交互：展开 / 菜单 / 启停 / 删除
+   ================================================================ */
+function toggleExpand(id) {
+  state.expanded.has(id) ? state.expanded.delete(id) : state.expanded.add(id);
+  renderJobs();
+}
+function toggleMenu(id) {
+  const m = document.getElementById('menu-' + id);
+  const was = m.hidden;
+  document.querySelectorAll('.pop-menu').forEach(x => x.hidden = true);
+  m.hidden = !was;
+}
+document.addEventListener('click', () => {
+  document.querySelectorAll('.pop-menu').forEach(x => x.hidden = true);
+  if (state.pendingDelete) { state.pendingDelete = null; renderJobs(); }
+});
+
+function toggleEnable(id) {
+  const j = state.jobs.find(x => x.id === id);
+  j.enabled = !j.enabled;
+  toast(`${j.name}：${j.enabled ? '已恢复调度' : '已暂停调度'}`, 'ok');
+  renderJobs();
+}
+
+function deleteJob(id) {
+  if (state.pendingDelete !== id) { state.pendingDelete = id; renderJobs(); return; }
+  const i = state.jobs.findIndex(x => x.id === id);
+  toast(`已删除 ${state.jobs[i].name}（含全部运行历史）`, 'err');
+  state.jobs.splice(i, 1);
+  state.pendingDelete = null;
+  state.expanded.delete(id);
+  showWelcome();
+  renderJobs();
+}
+
+/* ================================================================
+   运行模拟（真实 tick：到点自动触发、overlap/misfire 语义可观察）
+   ================================================================ */
+function runNow(id) {
+  const j = state.jobs.find(x => x.id === id);
+  if (j.running || j.orphan) return;
+  startRun(j, Date.now());
+  toast(`已手动触发 ${j.name}`, 'ok');
+}
+
+function startRun(job, target) {
+  const seq = ++seqCounter;
+  job.running = { seq, target, startedAt: Date.now() };
+  state.expanded.add(job.id);
+  renderJobs();
+  // 原型：用 4–9s 模拟真实执行（真实实现受 timeoutSeconds 约束）
+  const dur = 4000 + Math.random() * 5000;
+  job._timer = setTimeout(() => finishRun(job, Math.random() < 0.82), dur);
+}
+
+function finishRun(job, ok) {
+  if (!job.running) return;
+  clearTimeout(job._timer);
+  const r = job.running;
+  job.running = null;
+  const record = {
+    seq: r.seq, target: r.target, startedAt: r.startedAt, finishedAt: Date.now(),
+    status: ok ? 'ok' : 'failed',
+    summary: ok ? mockSummary(job) : mockFailure(job),
+  };
+  if (job.kind === 'agent') record.sessionId = `cron-${job.name}-${String(r.seq).padStart(4, '0')}`;
+  if (job.kind === 'command') {
+    record.exitCode = ok ? 0 : 1;
+    record.output = ok ? `$ ${job.argv?.join(' ') || '(callback)'}\n…\nexit 0` : `$ ${job.argv?.join(' ')}\nerror: connection refused\nexit 1`;
+  }
+  job.runs.unshift(record);
+  job.runs = job.runs.slice(0, 50); // historyLimit
+  toast(`${job.name} 运行${ok ? '完成' : '失败'}：${record.summary.slice(0, 40)}…`, ok ? 'ok' : 'err');
+  renderJobs();
+}
+
+function stopRun(id) {
+  const j = state.jobs.find(x => x.id === id);
+  if (!j.running) return;
+  clearTimeout(j._timer);
+  const r = j.running;
+  j.running = null;
+  j.runs.unshift({ seq: r.seq, target: r.target, startedAt: r.startedAt, finishedAt: Date.now(),
+    status: 'killed', summary: '用户手动停止（后续节拍不受影响）' });
+  toast(`${j.name} 本次运行已停止，记录为 killed`, 'err');
+  renderJobs();
+}
+
+function mockSummary(job) {
+  if (job.name === 'wecom-mail-digest') return '2 封未读：① 法务合同审批提醒（建议今日处理）② 产品周报。已推送总结到企微。';
+  if (job.name === 'repo-triage') return '分派 1 项：issue #95 docs 错别字（子 agent 已提交修复 PR）。其余均已指派或为 draft。';
+  if (job.kind === 'command') return 'ok exit=0';
+  return '执行完成。';
+}
+function mockFailure(job) {
+  if (job.kind === 'command') return 'exit=1: 依赖服务不可达';
+  return 'LLM 调用超时，任务未完成（本轮已记录，下节拍正常触发）。';
+}
+
+/* tick：到点触发 + overlap 语义 */
+setInterval(() => {
+  const t = Date.now();
+  for (const j of state.jobs) {
+    if (j.orphan || !j.enabled) continue;
+    const nf = computeNextFire(j, t - MIN);
+    if (nf && nf <= t) {
+      if (j.running) {
+        if (j.overlap === 'skip') {
+          j.runs.unshift({ seq: ++seqCounter, target: nf, startedAt: nf, finishedAt: nf,
+            status: 'skipped-overlap', summary: '上一轮仍在运行，本次跳过' });
+          renderJobs();
+        } else if (j.overlap === 'replace') {
+          stopRun(j.id); startRun(j, nf);
+        } // queue：原型中等当前运行结束后由用户观察下一轮
+      } else {
+        startRun(j, nf);
+      }
+    }
+  }
+}, 15000); // tickIntervalMs = 15000
+
+/* 时钟 + 倒计时（每秒） */
+setInterval(() => {
+  document.getElementById('clockNow').textContent = fmtClock(Date.now());
+  renderJobs();
+}, 1000);
+
+/* ================================================================
+   中栏视图：welcome / 会话回放 / run detail
+   ================================================================ */
+const centerBody = document.getElementById('centerBody');
+const viewTitle = document.getElementById('viewTitle');
+const viewSub = document.getElementById('viewSub');
+
+function showWelcome() {
+  state.view = { type: 'welcome' };
+  viewTitle.textContent = 'dsh-cron 原型';
+  viewSub.textContent = '高保真交互原型 · mock 数据 · 调度器真实运转';
+  centerBody.innerHTML = `
+  <div class="welcome">
+    <h2>⏱ dsh-cron · 宿主侧定时任务调度器</h2>
+    <p>这是 <code>docs/plans/dsh-cron-v1.md</code>（PR #97 / Issue #96）的 Web UI 高保真原型。数据为 mock，但调度器在真实运转：把某个任务的触发时间改到下一分钟，就能观察到自动触发、状态点、实时计时与运行历史落账。</p>
+    <div class="kbd-grid">
+      <div class="hint-card"><b>＋ 新建任务</b>触发预设（每小时/每天/工作日/每周）+ 自定义层（cron / 间隔 / 一次性），时区静默取浏览器。</div>
+      <div class="hint-card"><b>行内 ⋯ 菜单</b>立即运行 / 停止 / 暂停恢复 / 编辑 / 删除（manual 两次点击确认）。plugin 任务只读。</div>
+      <div class="hint-card"><b>点击 agent 运行记录</b>打开该次运行的完整会话回放（含 [CRON RUN] framing）。</div>
+      <div class="hint-card"><b>点击 command 运行记录</b>打开 run-detail 页：状态 / 时长 / 退出码 / argv / 输出尾。</div>
+      <div class="hint-card"><b>可靠性语义</b>overlap skip/queue/replace、misfire skip/runOnce、at-most-once、有效期窗口（禁止无限 cron）。</div>
+      <div class="hint-card"><b>orphan 行</b>provider 卸载后保留历史的残留任务，虚线样式、仅可删除。</div>
+    </div>
+  </div>`;
+}
+
+function openRun(jobId, seq) {
+  const job = state.jobs.find(x => x.id === jobId);
+  const r = (job.running && job.running.seq === seq)
+    ? { seq, target: job.running.target, startedAt: job.running.startedAt, status: 'running', summary: '执行中…' }
+    : job.runs.find(x => x.seq === seq);
+  if (!r) return;
+  if (job.kind === 'agent' && r.sessionId !== undefined || job.kind === 'agent') showReplay(job, r);
+  else showRunDetail(job, r);
+}
+
+function showReplay(job, r) {
+  state.view = { type: 'replay', jobId: job.id, seq: r.seq };
+  viewTitle.textContent = `${job.name} · 运行 #${r.seq} 会话回放`;
+  viewSub.textContent = `session: ${r.sessionId || 'cron-' + job.name} · target ${new Date(r.target).toLocaleString()} · agent: ${job.agentPreset || '默认'}${job.model ? ' · model: ' + job.model + (job.effort ? ' (effort: ' + job.effort + ')' : '') : ''}`;
+  const statusChip = `<span class="chip ${r.status === 'ok' ? 'manual' : 'orphan-c'}">${STATUS_LABEL[r.status] || r.status}</span>`;
+  centerBody.innerHTML = `
+  <div class="replay">
+    <div class="msg system">
+      <div class="role">scoped system prompt · [CRON RUN]</div>
+      <div class="bubble">[CRON RUN] 这是一次无人值守的定时任务运行（job="${job.name}", target=${new Date(r.target).toISOString()}）。禁止向用户提问；完成后直接给出结论摘要。若需要通知，使用已配置的投递通道。</div>
+    </div>
+    <div class="msg user">
+      <div class="role">user · job prompt</div>
+      <div class="bubble">${job.prompt || '(无 prompt)'}</div>
+    </div>
+    ${job.name === 'wecom-mail-digest' ? `
+    <div class="msg">
+      <div class="role">assistant · 工具调用</div>
+      <div class="tool-call">wecom_mail_list_unread() → { count: 2, items: […] }</div>
+      <div class="tool-call">wecom_send_message(chatId="chris", content="📬 未读邮件总结…") → ok</div>
+    </div>` : ''}
+    ${job.name === 'repo-triage' ? `
+    <div class="msg">
+      <div class="role">assistant · 工具调用</div>
+      <div class="tool-call">bash(gh pr list -R shiliai/dsh-plugins --state open) → 2 open</div>
+      <div class="tool-call">subagent("评审 PR #97 设计文档", { background: true }) → agent-7f3a</div>
+      <div class="tool-call">subagent("修复 issue #95 docs 错别字", { background: true }) → agent-9b21</div>
+    </div>` : ''}
+    <div class="msg">
+      <div class="role">assistant · 结论 ${statusChip}</div>
+      <div class="bubble">${r.summary}</div>
+    </div>
+  </div>`;
+}
+
+function showRunDetail(job, r) {
+  state.view = { type: 'detail', jobId: job.id, seq: r.seq };
+  viewTitle.textContent = `${job.name} · 运行 #${r.seq}`;
+  viewSub.textContent = `${KIND_LABEL[j.kind]} 任务运行详情`;
+  centerBody.innerHTML = `
+  <div class="detail">
+    <div class="detail-grid">
+      <div class="stat-card"><div class="k">状态</div><div class="v" style="color:${{ok:'var(--green)',failed:'var(--red)',killed:'var(--orange)',aborted:'var(--orange)'}[r.status]||'var(--text-1)'}">${STATUS_LABEL[r.status] || r.status}</div></div>
+      <div class="stat-card"><div class="k">计划时刻 target</div><div class="v mono">${new Date(r.target).toLocaleString()}</div></div>
+      <div class="stat-card"><div class="k">开始</div><div class="v mono">${new Date(r.startedAt).toLocaleTimeString()}</div></div>
+      <div class="stat-card"><div class="k">结束</div><div class="v mono">${r.finishedAt ? new Date(r.finishedAt).toLocaleTimeString() : '—'}</div></div>
+      <div class="stat-card"><div class="k">耗时</div><div class="v">${r.finishedAt ? fmtDur(r.finishedAt - r.startedAt) : '进行中'}</div></div>
+      ${r.exitCode !== undefined ? `<div class="stat-card"><div class="k">退出码</div><div class="v mono" style="color:${r.exitCode === 0 ? 'var(--green)' : 'var(--red)'}">${r.exitCode}</div></div>` : ''}
+    </div>
+    ${job.argv ? `<div class="section-label">argv</div><div class="output-tail mono">$ ${job.argv.join(' ')}</div>` : ''}
+    <div class="section-label">摘要</div>
+    <div class="output-tail" style="max-height:none">${r.summary}</div>
+    ${r.output ? `<div class="section-label">输出尾部（截断保存）</div><div class="output-tail">${r.output}</div>` : ''}
+  </div>`;
+}
+
+/* ================================================================
+   modal：创建 / 编辑
+   ================================================================ */
+const modalMask = document.getElementById('modalMask');
+let mPreset = 'daily', mCustom = 'cron', mKind = 'agent';
+
+document.getElementById('fTz').textContent = BROWSER_TZ;
+document.getElementById('clockTz').textContent = BROWSER_TZ;
+
+function segInit(id, attr, cb) {
+  document.getElementById(id).addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    document.querySelectorAll(`#${id} button`).forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    cb(b.dataset[attr]);
+  });
+}
+segInit('presetSeg', 'p', p => {
+  mPreset = p;
+  document.getElementById('presetTimeRow').hidden = p === 'custom';
+  document.getElementById('customRow').hidden = p !== 'custom';
+});
+segInit('customSeg', 'c', c => {
+  mCustom = c;
+  document.getElementById('fCron').hidden = c !== 'cron';
+  document.getElementById('intervalRow').hidden = c !== 'interval';
+  document.getElementById('oneshotRow').hidden = c !== 'oneshot';
+});
+segInit('kindSeg', 'k', k => {
+  mKind = k;
+  document.getElementById('fPrompt').hidden = k !== 'agent';
+  document.getElementById('fArgv').hidden = k !== 'command';
+});
+
+function presetExpr() {
+  const h = +document.getElementById('fHour').value || 0;
+  const m = +document.getElementById('fMinute').value || 0;
+  return { hourly: `${m} * * * *`, daily: `${m} ${h} * * *`,
+    weekdays: `${m} ${h} * * 1-5`, weekly: `${m} ${h} * * 1` }[mPreset];
+}
+
+function openModal(editId) {
+  state.editingId = editId || null;
+  document.getElementById('modalTitle').textContent = editId ? '编辑任务' : '新建任务';
+  document.getElementById('modalSubmit').textContent = editId ? '保存' : '创建并启用';
+  ['eName', 'eSched', 'eTask'].forEach(i => document.getElementById(i).hidden = true);
+  if (editId) {
+    const j = state.jobs.find(x => x.id === editId);
+    document.getElementById('fName').value = j.name;
+    document.getElementById('fName').disabled = true;
+    document.getElementById('fPrompt').value = j.prompt || '';
+    document.getElementById('fArgv').value = j.argv ? JSON.stringify(j.argv) : '';
+    document.getElementById('fCwd').value = j.cwd || '';
+    document.getElementById('fTimeout').value = j.timeout || 600;
+    document.getElementById('fOverlap').value = j.overlap;
+    document.getElementById('fMisfire').value = j.misfire;
+    document.getElementById('fEndAt').value = j.endAt || '';
+    document.getElementById('fModel').value = j.model || '';
+    onModelChange(j.model || '');
+    if (j.effort) document.getElementById('fEffort').value = j.effort;
+    document.getElementById('fAgent').value = j.agentPreset || '';
+    if (j.schedule.type === 'cron') {
+      setSeg('presetSeg', 'custom'); mPreset = 'custom';
+      document.getElementById('presetTimeRow').hidden = true;
+      document.getElementById('customRow').hidden = false;
+      setSeg('customSeg', 'cron'); mCustom = 'cron';
+      document.getElementById('fCron').value = j.schedule.expr;
+      document.getElementById('fCron').hidden = false;
+      document.getElementById('intervalRow').hidden = true;
+      document.getElementById('oneshotRow').hidden = true;
+    }
+    setSeg('kindSeg', j.kind === 'command' ? 'command' : 'agent'); mKind = j.kind === 'command' ? 'command' : 'agent';
+    document.getElementById('fPrompt').hidden = mKind !== 'agent';
+    document.getElementById('fArgv').hidden = mKind !== 'command';
+  } else {
+    document.getElementById('fName').value = '';
+    document.getElementById('fName').disabled = false;
+    document.getElementById('fPrompt').value = '';
+    document.getElementById('fArgv').value = '';
+    document.getElementById('fCron').value = '';
+    document.getElementById('fEndAt').value = '';
+    document.getElementById('fModel').value = '';
+    onModelChange('');
+  }
+  modalMask.hidden = false;
+}
+function setSeg(id, val) {
+  document.querySelectorAll(`#${id} button`).forEach(x =>
+    x.classList.toggle('on', Object.values(x.dataset)[0] === val));
+}
+function closeModal() { modalMask.hidden = true; state.editingId = null; }
+
+function fieldErr(id, msg) {
+  const el = document.getElementById(id);
+  if (!msg) { el.hidden = true; return false; }
+  el.textContent = msg; el.hidden = false; return true;
+}
+
+function submitModal() {
+  const name = document.getElementById('fName').value.trim();
+  let bad = false;
+  if (!/^[\p{L}\p{N}_-]+$/u.test(name)) bad = fieldErr('eName', '名称仅限字母（任意文字）、数字、- 和 _，无空格');
+  if (!state.editingId && state.jobs.some(j => j.name === name)) bad = fieldErr('eName', '同名任务已存在（config 同名将驱逐 manual）');
+
+  let schedule;
+  try {
+    if (mPreset !== 'custom') schedule = { type: 'cron', expr: presetExpr() };
+    else if (mCustom === 'cron') {
+      const expr = document.getElementById('fCron').value.trim();
+      parseCron(expr); schedule = { type: 'cron', expr };
+    } else if (mCustom === 'interval') {
+      const s = +document.getElementById('fEverySec').value;
+      if (!s || s < 60) throw new Error('间隔最小 60 秒');
+      schedule = { type: 'interval', everySeconds: s };
+    } else {
+      const at = document.getElementById('fAt').value.trim();
+      if (isNaN(Date.parse(at)) || !/(Z|[+-]\d{2}:?\d{2})$/.test(at)) throw new Error('一次性时刻必须为 RFC 3339 且带 Z 或偏移');
+      schedule = { type: 'oneshot', at };
+    }
+    fieldErr('eSched', null);
+  } catch (e) { bad = fieldErr('eSched', e.message); }
+
+  let prompt = '', argv = null;
+  if (mKind === 'agent') {
+    prompt = document.getElementById('fPrompt').value.trim();
+    if (!prompt) bad = fieldErr('eTask', 'agent 任务需要 prompt');
+    else fieldErr('eTask', null);
+  } else {
+    try {
+      argv = JSON.parse(document.getElementById('fArgv').value.trim() || '[]');
+      if (!Array.isArray(argv) || !argv.length) throw 0;
+      fieldErr('eTask', null);
+    } catch { bad = fieldErr('eTask', 'argv 需为非空 JSON 数组，如 ["./run.sh","-v"]'); }
+  }
+  if (bad) return;
+
+  const common = {
+    kind: mKind, prompt, argv,
+    cwd: document.getElementById('fCwd').value.trim(),
+    model: document.getElementById('fModel').value,
+    effort: document.getElementById('fModel').value && !document.getElementById('fEffort').disabled
+      ? document.getElementById('fEffort').value : '',
+    agentPreset: mKind === 'agent' ? document.getElementById('fAgent').value : '',
+    timeout: +document.getElementById('fTimeout').value || 600,
+    overlap: document.getElementById('fOverlap').value,
+    misfire: document.getElementById('fMisfire').value,
+    endAt: document.getElementById('fEndAt').value.trim() || null,
+    tz: BROWSER_TZ,
+  };
+
+  if (state.editingId) {
+    Object.assign(state.jobs.find(j => j.id === state.editingId), common, { schedule });
+    toast('任务已保存', 'ok');
+  } else {
+    const id = 'j' + Math.random().toString(36).slice(2, 8);
+    state.jobs.unshift({ id, name, source: 'manual', schedule, enabled: true, running: null, runs: [], anchor: Date.now(), ...common });
+    state.expanded.add(id);
+    const nf = computeNextFire(state.jobs[0]);
+    toast(`已创建并启用 ${name} · 下次触发 ${nf ? new Date(nf).toLocaleString() : '—'}`, 'ok');
+  }
+  closeModal();
+  renderJobs();
+}
+
+/* ================================================================
+   toast
+   ================================================================ */
+function toast(msg, kind = '') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + kind;
+  el.textContent = msg;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(() => el.remove(), 4200);
+}
+
+/* boot */
+onModelChange('');
+showWelcome();
+renderJobs();
+</script>
+</body>
+</html>
