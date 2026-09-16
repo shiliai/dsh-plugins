@@ -42,6 +42,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     () => registerReadingApi(ctx.webServer, library, store, wallabag, opds, {
       get: () => projectConfig,
       update: async (next: ReadingProjectConfig) => { projectConfig = next; readingSkills = new SkillStore(next.rootDir); readingProvider?.setStore(readingSkills); await saveProjectConfig(configFile, next) },
+      skills: () => readingSkills,
     }),
     'dsh-reading: reading HTTP API',
   )

@@ -11,6 +11,8 @@ plugins/
   dsh-reading/
   dsh-remote/
   dsh-wecom/
+packages/
+  dsh-reading-core/
 tools/
   dsh-explainer/
 ```
@@ -18,6 +20,14 @@ tools/
 Each directory under `plugins/` is an independently packaged plugin with its
 own package name, version, tests, documentation, and release checks. Dependency
 installation and routine verification run from the repository root.
+
+Reading and Obsidian share `@dsh-plugins/dsh-reading-core`, which defines the
+context reference format, workspace registry, and scoped skill provider/store.
+The Reading library and Obsidian vault remain separate adapters: both register
+their active workspace with the conversation and expose skills from
+`.agents/skills`; Obsidian additionally keeps note editing and vault mutations.
+Injected paths therefore stay absolute and use the same context and skill
+contracts regardless of which reading window supplied them.
 
 ## Commands
 

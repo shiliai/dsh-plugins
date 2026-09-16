@@ -10,6 +10,7 @@ import { ReadingStateStore } from './state-store.ts'
 import { WallabagAdapter } from './wallabag-adapter.ts'
 import { OpdsAdapter } from './opds-adapter.ts'
 import { articleMetadata, bookMetadata, projectDirectory, relativeProjectPath, type ReadingProjectConfig, writeProjectMetadata } from './project-cache.ts'
+import type { AgentSkillInput, SkillStore } from '@dsh-plugins/dsh-reading-core'
 
 const API_PREFIX = '/dsh-reading/api'
 const MAX_IMPORT_BYTES = 512 * 1024 * 1024
@@ -23,7 +24,7 @@ const MIME_BY_FORMAT: Record<string, string> = {
   azw: 'application/vnd.amazon.ebook',
 }
 
-export function registerReadingApi(webServer: WebServer, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter, project?: { get(): ReadingProjectConfig; update(value: ReadingProjectConfig): Promise<void> }): () => void {
+export function registerReadingApi(webServer: WebServer, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter, project?: { get(): ReadingProjectConfig; update(value: ReadingProjectConfig): Promise<void>; skills?(): SkillStore }): () => void {
   return webServer.register({
     kind: 'prefix',
     path: API_PREFIX,
@@ -37,7 +38,7 @@ export function registerReadingApi(webServer: WebServer, library: LocalLibrary, 
   })
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter, project?: { get(): ReadingProjectConfig; update(value: ReadingProjectConfig): Promise<void> }): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter, project?: { get(): ReadingProjectConfig; update(value: ReadingProjectConfig): Promise<void>; skills?(): SkillStore }): Promise<void> {
   const url = new URL(request.url ?? '/', 'http://dsh.local')
   const endpoint = url.pathname.slice(API_PREFIX.length) || '/'
 
@@ -63,6 +64,33 @@ async function route(request: IncomingMessage, response: ServerResponse, library
       const next = { rootDir: body.rootDir.trim(), createSessionOnOpen: body.createSessionOnOpen === true }
       await project.update(next); sendJson(response, 200, { ...next, sources: { wallabag: wallabag?.settings ?? null, opds: opds?.settings ?? null }, cache: { directory: 'DSH_HOME/cache/dsh-reading', staleWhileRevalidate: true, eviction: 'managed by host cache policy' } }); return
     }
+  }
+
+  const skills = project?.skills?.()
+  if (request.method === 'GET' && endpoint === '/skills' && skills !== undefined) {
+    sendJson(response, 200, { result: await skills.list() })
+    return
+  }
+  if (request.method === 'GET' && endpoint === '/skill' && skills !== undefined) {
+    sendJson(response, 200, await skills.read(requiredQuery(url, 'name')))
+    return
+  }
+  if (request.method === 'PUT' && endpoint === '/skill' && skills !== undefined) {
+    const body = await readJson(request, 2 * 1024 * 1024)
+    if (!isRecord(body) || !isRecord(body.skill)) throw new ReadingError('Invalid skill write body.', 'INVALID_BODY', 400)
+    const input = normalizeSkillInput(body.skill)
+    const previousName = typeof body.previousName === 'string' ? body.previousName : undefined
+    const expectedRevision = typeof body.expectedRevision === 'string' ? body.expectedRevision : undefined
+    const value = previousName !== undefined && expectedRevision !== undefined
+      ? await skills.update(previousName, expectedRevision, input)
+      : await skills.create(input)
+    sendJson(response, 200, { result: { value, refreshFailed: false } })
+    return
+  }
+  if (request.method === 'DELETE' && endpoint === '/skill' && skills !== undefined) {
+    await skills.delete(requiredQuery(url, 'name'), requiredQuery(url, 'expectedRevision'))
+    sendJson(response, 200, { result: { value: null, refreshFailed: false } })
+    return
   }
 
   const projectBook = /^\/project\/book\/([^/]+)$/u.exec(endpoint)
@@ -381,6 +409,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function requiredQuery(url: URL, key: string): string {
+  const value = url.searchParams.get(key)
+  if (value === null || value.trim() === '') throw new ReadingError(`Missing query parameter: ${key}`, 'INVALID_QUERY', 400)
+  return value
+}
+
+function normalizeSkillInput(value: Record<string, unknown>): AgentSkillInput {
+  if (typeof value.name !== 'string' || typeof value.description !== 'string' || typeof value.instructions !== 'string') {
+    throw new ReadingError('Skill requires name, description and instructions.', 'INVALID_BODY', 400)
+  }
+  return {
+    name: value.name,
+    description: value.description,
+    ...(typeof value.whenToUse === 'string' ? { whenToUse: value.whenToUse } : {}),
+    modelInvocable: value.modelInvocable !== false,
+    userInvocable: value.userInvocable !== false,
+    instructions: value.instructions,
+  }
+}
+
 function parsePositiveInt(value: string | null, fallback: number): number {
   if (value === null || value.trim() === '') return fallback
   const parsed = Number(value)
@@ -406,6 +454,16 @@ function sendError(response: ServerResponse, error: unknown): void {
   if (error instanceof ReadingError) {
     sendJson(response, error.status, { error: error.message, code: error.code })
     return
+  }
+  if (error instanceof Error) {
+    const code = error.constructor.name
+    const status = code === 'AgentSkillRevisionConflictError' || code === 'AgentSkillCollisionError' ? 409
+      : code === 'AgentSkillValidationError' || code === 'AgentSkillCodecError' ? 400
+        : code === 'AgentSkillStoreError' ? 500 : undefined
+    if (status !== undefined) {
+      sendJson(response, status, { error: error.message, code })
+      return
+    }
   }
   sendJson(response, 500, { error: error instanceof Error ? error.message : 'Unexpected reading error.', code: 'INTERNAL_ERROR' })
 }

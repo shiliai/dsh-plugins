@@ -1,4 +1,5 @@
 import type { Annotation, Article, Locator, PublicBook, PublicBookWithProgress, ReadingProgress } from '../contracts.ts'
+import type { AgentSkillDocument, AgentSkillInput, AgentSkillListResult } from '@dsh-plugins/dsh-reading-core'
 import type { OpdsBook } from '../opds-adapter.ts'
 
 const API = '/dsh-reading/api'
@@ -58,4 +59,11 @@ export const readingApi = {
   }),
   wallabagEntry: (id: string) => request<{ article: Article }>(`/wallabag/entries/${encodeURIComponent(id.replace(/^wallabag:/u, ''))}`),
   ensureArticleProject: (id: string) => request<{ path: string; absolutePath: string }>(`/project/article/${encodeURIComponent(id.replace(/^wallabag:/u, ''))}`, { method: 'POST' }),
+  skillList: () => request<{ result: AgentSkillListResult }>('/skills'),
+  skillGet: (name: string) => request<AgentSkillDocument>(`/skill?name=${encodeURIComponent(name)}`),
+  skillWrite: (payload: { input: AgentSkillInput; previousName?: string; expectedRevision?: string }) => request<{ result: { value: AgentSkillDocument } }>('/skill', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ skill: payload.input, ...(payload.previousName === undefined ? {} : { previousName: payload.previousName }), ...(payload.expectedRevision === undefined ? {} : { expectedRevision: payload.expectedRevision }) }),
+  }),
+  skillDelete: (name: string, expectedRevision: string) => request<{ result: { value: null } }>(`/skill?name=${encodeURIComponent(name)}&expectedRevision=${encodeURIComponent(expectedRevision)}`, { method: 'DELETE' }),
 }
