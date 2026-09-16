@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { execFileSync, spawn } from 'node:child_process'
 import { createServer } from 'node:net'
-import { cp, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -22,16 +22,16 @@ const env = {
   ...process.env,
   DSH_HOME: dshHome,
   DSH_OBSIDIAN_ORIGIN: origin,
-  DEEPSEEK_API_KEY: 'dsh-obsidian-rc6-invalid-key',
+  DEEPSEEK_API_KEY: 'fixture-invalid-key',
 }
 let server
 
 try {
   execFileSync('pnpm', ['run', 'build'], { cwd: root, stdio: 'inherit' })
   execFileSync('pnpm', ['pack', '--pack-destination', temp], { cwd: root, stdio: 'inherit' })
-  const archiveName = (await readdir(temp)).find(name => name.endsWith('.tgz'))
+  const archiveName = (await readdir(temp)).find(name => name.startsWith('dsh-plugins-dsh-obsidian-') && name.endsWith('.tgz'))
   if (archiveName === undefined) throw new Error('pnpm pack did not create an archive')
-  const archive = join(temp, archiveName)
+  const archive = await stageSharedCoreDependency(join(temp, archiveName), temp)
   const archiveSha = createHash('sha256').update(await readFile(archive)).digest('hex')
 
   await cp(join(root, 'tests/fixtures/vault'), vault, { recursive: true })
@@ -76,6 +76,31 @@ try {
 } finally {
   if (server !== undefined) await stop(server)
   await rm(temp, { recursive: true, force: true })
+}
+
+/**
+ * The shared core is checked out in this monorepo but is not available on the
+ * default branch while this PR is running. Rewrite only the temporary fixture
+ * archive to use a local core tarball; published packages keep their GitHub
+ * subdirectory dependency unchanged.
+ */
+async function stageSharedCoreDependency(pluginArchive, directory) {
+  const coreDirectory = join(root, '..', '..', 'packages', 'dsh-reading-core')
+  execFileSync('pnpm', ['pack', '--pack-destination', directory], { cwd: coreDirectory, stdio: 'inherit' })
+  const coreArchiveName = (await readdir(directory)).find(name => name.startsWith('dsh-plugins-dsh-reading-core-') && name.endsWith('.tgz'))
+  if (coreArchiveName === undefined) throw new Error('shared core pack did not create an archive')
+  const stage = await mkdtemp(join(directory, 'plugin-stage-'))
+  execFileSync('tar', ['-xzf', pluginArchive, '-C', stage])
+  const manifestPath = join(stage, 'package', 'package.json')
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  manifest.dependencies = { ...manifest.dependencies, '@dsh-plugins/dsh-reading-core': `file:${join(directory, coreArchiveName)}` }
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+  const repacked = join(directory, 'repacked')
+  await mkdir(repacked)
+  execFileSync('pnpm', ['pack', '--pack-destination', repacked], { cwd: join(stage, 'package'), stdio: 'inherit' })
+  const repackedName = (await readdir(repacked)).find(name => name.startsWith('dsh-plugins-dsh-obsidian-') && name.endsWith('.tgz'))
+  if (repackedName === undefined) throw new Error('fixture repack did not create an archive')
+  return join(repacked, repackedName)
 }
 
 function runDsh(args, cwd, processEnv) {
@@ -151,19 +176,19 @@ function parseAccessUrl(output, origin) {
   return match?.[1] ?? origin
 }
 
-async function waitForApi(origin, child, output) {
+async function waitForApi(access, child, output) {
   const deadline = Date.now() + 5_000
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`DSH exited before API readiness (${child.exitCode})\n${output()}`)
     try {
-      await rpc(origin, 'session/list', { args: { _request: {} } })
+      await rpc(access, 'session/list', { args: { _request: {} } })
       return
     } catch {
       // The static app can be ready before the API proxy is mounted.
     }
     await new Promise(resolveDelay => setTimeout(resolveDelay, 250))
   }
-  throw new Error(`DSH API did not become ready at ${origin}\n${output()}`)
+  throw new Error(`DSH API did not become ready at ${access.url}\n${output()}`)
 }
 
 async function stop(child) {
