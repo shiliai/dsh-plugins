@@ -92,7 +92,12 @@
   （cron 表达式/间隔/一次性），任务类型、**agent 预设 / model / permission**
   （三者留空均继承宿主默认）——agent 预设即 `ctx.agents.create` 的 preset，
   决定该次运行的系统人格、默认工具集与权限基线（如 code-reviewer /
-  researcher / ops-bot）；model 钉死后不跟随聊天选择器变化，额度可预期——
+  researcher / ops-bot）；model 钉死后不跟随聊天选择器变化，额度可预期；
+  **推理等级（reasoningEffort）随模型联动**，语义与 DSH 模型选择器一致：
+  取值来自该模型 provider catalog 的 `reasoning.efforts`（含 id/name/
+  description 与 `defaultEffort`），空值 = 跟随 provider 默认
+  （`effort.providerDefault`）；模型留空继承或该模型无推理等级时
+  （"This model provides no reasoning effort levels."）该项禁用——
   工作目录浏览、超时、overlap/misfire 策略；时区静默取浏览器值
   （编辑时保留 job 原值）。
 - host 半侧：`GET /dsh-cron/api/state` + 写接口要求 `application/json`
