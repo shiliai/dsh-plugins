@@ -101,7 +101,7 @@
     }
   },
   "dependencies": {
-    "@dsh-plugins/dsh-reading-core": "workspace:*",
+    "@dsh-plugins/dsh-reading-core": "github:shiliai/dsh-plugins#path:/packages/dsh-reading-core",
     "foliate-js": "^1.0.1",
     "lucide-react": "^0.468.0",
     "mathjax-full": "^3.2.2",

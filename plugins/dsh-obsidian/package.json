@@ -92,7 +92,7 @@
     "react": { "optional": true }
   },
   "dependencies": {
-    "@dsh-plugins/dsh-reading-core": "workspace:*",
+    "@dsh-plugins/dsh-reading-core": "github:shiliai/dsh-plugins#path:/packages/dsh-reading-core",
     "dompurify": "^3.2.6",
     "lucide-react": "^0.468.0",
     "marked": "^16.2.1",

@@ -4,6 +4,11 @@
   "private": true,
   "type": "module",
   "description": "Shared context and workspace contracts for DSH reading sources",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shiliai/dsh-plugins.git",
+    "directory": "packages/dsh-reading-core"
+  },
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "scripts": {
