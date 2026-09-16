@@ -1,0 +1,25 @@
+{
+  "name": "@dsh-plugins/dsh-reading-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared context and workspace contracts for DSH reading sources",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shiliai/dsh-plugins.git",
+    "directory": "packages/dsh-reading-core"
+  },
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepare": "pnpm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

@@ -11,6 +11,8 @@ import { ReadingStore } from './store.ts'
 import { readingApi, type ReadingSettings } from './api.ts'
 import { pluginVersion } from './version.ts'
 import { Workbench } from './Workbench.tsx'
+import { articleContext, bookContext } from './context.ts'
+import { WorkspaceRegistry } from '@dsh-plugins/dsh-reading-core'
 import css from './styles.module.css?dsh-inline'
 
 export const inject = ['slots', 'layout', 'sessions', 'conversation', 'workspaces']
@@ -27,7 +29,7 @@ function ReadingSettingsPanel() {
     <p style={{ opacity: .72, marginTop: 0 }}>配置项目缓存目录、数据源和打开项目时的会话行为。</p>
     <label style={{ display: 'block', margin: '18px 0 6px' }}>默认 workspace 根目录</label>
     <input style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px' }} value={draft.rootDir} onChange={event => setDraft({ ...draft, rootDir: event.target.value })} />
-    <label style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '18px 0' }}><input type="checkbox" checked={draft.createSessionOnOpen} onChange={event => setDraft({ ...draft, createSessionOnOpen: event.target.checked })} /> 打开书籍或文章时创建/切换到本篇对话</label>
+    <label style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '18px 0' }}><input type="checkbox" checked={draft.createSessionOnOpen} onChange={event => setDraft({ ...draft, createSessionOnOpen: event.target.checked })} /> 打开书籍或文章时切换到 Reading workspace 对话</label>
     <h3 style={{ margin: '24px 0 8px' }}>数据源</h3>
     <p style={{ opacity: .72, fontSize: 13 }}>服务地址由部署环境提供，凭据不会显示在浏览器中。</p>
     <div style={{ fontSize: 13, lineHeight: 1.7 }}><div>Wallabag：{draft.sources?.wallabag?.origin ?? '未配置'}</div><div>OPDS：{draft.sources?.opds?.url ?? '未配置'}</div><div>缓存：{draft.cache?.directory ?? 'DSH_HOME/cache/dsh-reading'}；成功结果写入本地，服务不可用时使用旧缓存。</div></div>
@@ -42,21 +44,31 @@ function appendContext(draft: string, block: string): string {
   return trimmed === '' ? block : `${trimmed}\n\n${block}`
 }
 
-function articleContext(article: Article): string {
-  return ['[Reading item]', 'kind: article', `title: ${JSON.stringify(article.title)}`, `url: ${JSON.stringify(article.url)}`, `originalUrl: ${JSON.stringify(article.originalUrl ?? article.url)}`, `articleId: ${JSON.stringify(article.id)}`, `domain: ${JSON.stringify(article.domain ?? '')}`, `tags: ${JSON.stringify(article.tags ?? [])}`, `createdAt: ${JSON.stringify(article.savedAt)}`, `publishedAt: ${JSON.stringify(article.publishedAt ?? '')}`, `updatedAt: ${JSON.stringify(article.updatedAt ?? '')}`, `isArchived: ${JSON.stringify(article.isArchived)}`, `readingTimeMin: ${JSON.stringify(article.readingTimeMin ?? null)}`, `source: ${JSON.stringify(article.source)}`, `projectPath: ${JSON.stringify(article.projectPath ?? '')}`, 'The article is cached at projectPath/article.md; use that file for the full reading text.'].join('\n')
-}
-
-function bookContext(book: { id: string; title: string; format: string; fileName: string; projectPath?: string }): string {
-  return ['[Reading item]', 'kind: book', `title: ${JSON.stringify(book.title)}`, `bookId: ${JSON.stringify(book.id)}`, `format: ${JSON.stringify(book.format)}`, `fileName: ${JSON.stringify(book.fileName)}`, `projectPath: ${JSON.stringify(book.projectPath ?? '')}`].join('\n')
-}
-
 export function apply(ctx: ClientContext): void {
   const store = new ReadingStore()
+  const workspaces = new WorkspaceRegistry(ctx.workspaces)
+  let vaultRootPromise: Promise<string | undefined> | undefined
 
-  const openProjectSession = async (path: string): Promise<void> => {
+  const ensureReadingWorkspace = async (path: string): Promise<void> => { await workspaces.register(path) }
+
+  const getVaultRoot = async (): Promise<string | undefined> => {
+    vaultRootPromise ??= fetch('/dsh-obsidian/api/info').then(async response => {
+      if (!response.ok) return undefined
+      const value = await response.json() as { root?: unknown }
+      return typeof value.root === 'string' && value.root !== '' ? value.root : undefined
+    }).catch(() => undefined)
+    return vaultRootPromise
+  }
+
+  const openProjectSession = async (_path: string): Promise<void> => {
     const settings = await readingApi.settings()
+    // Register the Reading root even when per-item session switching is off.
+    // Context references are rooted there and must remain resolvable by tools.
+    await ensureReadingWorkspace(settings.rootDir)
     if (!settings.createSessionOnOpen) return
-    const workspace = await ctx.workspaces.create({ path })
+    // Keep the conversation cwd at the Reading root so projectPath remains
+    // meaningful for both books and articles.
+    const workspace = await ctx.workspaces.create({ path: settings.rootDir })
     const sessionId = await ctx.workspaces.connectWorkspace(workspace.workspaceId)
     ctx.sessions.open(sessionId)
   }
@@ -74,11 +86,27 @@ export function apply(ctx: ClientContext): void {
   }
 
   const addArticleContext = async (article: Article): Promise<void> => {
+    const settings = await readingApi.settings()
+    await ensureReadingWorkspace(settings.rootDir)
+    const project = article.projectAbsolutePath === undefined || article.projectPath === undefined
+      ? await readingApi.ensureArticleProject(article.id)
+      : { path: article.projectPath, absolutePath: article.projectAbsolutePath }
+    const vaultRoot = await getVaultRoot()
+    if (vaultRoot !== undefined) await workspaces.register(vaultRoot)
+    const enriched: Article = { ...article, projectPath: project.path, projectAbsolutePath: project.absolutePath, readingWorkspace: settings.rootDir, ...(vaultRoot === undefined ? {} : { vaultRoot }) }
     const input = currentInput()
-    input.setDraft(appendContext(input.state.getSnapshot().draft, articleContext(article)))
+    input.setDraft(appendContext(input.state.getSnapshot().draft, articleContext(enriched)))
   }
-  const addBookContext = async (book: { id: string; title: string; format: string; fileName: string; projectPath?: string }): Promise<void> => {
-    const input = currentInput(); input.setDraft(appendContext(input.state.getSnapshot().draft, bookContext(book)))
+  const addBookContext = async (book: { id: string; title: string; format: string; fileName: string; projectPath?: string; projectAbsolutePath?: string; readingWorkspace?: string; vaultRoot?: string }): Promise<void> => {
+    const settings = await readingApi.settings()
+    await ensureReadingWorkspace(settings.rootDir)
+    const project = book.projectAbsolutePath === undefined || book.projectPath === undefined
+      ? await readingApi.ensureBookProject(book.id)
+      : { path: book.projectPath, absolutePath: book.projectAbsolutePath }
+    const vaultRoot = await getVaultRoot()
+    if (vaultRoot !== undefined) await workspaces.register(vaultRoot)
+    const enriched = { ...book, projectPath: project.path, projectAbsolutePath: project.absolutePath, readingWorkspace: settings.rootDir, ...(vaultRoot === undefined ? {} : { vaultRoot }) }
+    const input = currentInput(); input.setDraft(appendContext(input.state.getSnapshot().draft, bookContext(enriched)))
   }
 
   const addObsidianReadingContext = async (): Promise<void> => {

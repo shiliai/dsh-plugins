@@ -21,6 +21,28 @@ SPEC.loader.exec_module(remote_edge)
 
 
 class RemoteEdgeTests(unittest.TestCase):
+    def test_node_manifest_declares_shared_health_contract(self) -> None:
+        manifest = remote_edge.node_manifest("x570", "0.4.2")
+        self.assertEqual(manifest["schema"], 1)
+        self.assertEqual(manifest["instance_id"], "x570")
+        self.assertEqual(manifest["plugin_version"], "0.4.2")
+        self.assertEqual(manifest["capabilities"], ["http-protected", "terminal-websocket"])
+
+    def test_node_health_requires_protected_route_and_terminal_upgrade(self) -> None:
+        response = types.SimpleNamespace(returncode=0, stdout="401")
+        with patch.object(remote_edge, "run", return_value=response) as probe:
+            result = remote_edge.node_health("x570.dsh.onlyservice.io")
+        self.assertTrue(result["protected_route_healthy"])
+        self.assertTrue(result["terminal_upgrade_healthy"])
+        self.assertEqual(probe.call_count, 2)
+        self.assertIn(remote_edge.TERMINAL_UPGRADE_ROUTE, probe.call_args_list[1].args[0][-1])
+
+    def test_node_health_marks_terminal_route_degraded(self) -> None:
+        responses = [types.SimpleNamespace(returncode=0, stdout="401"), types.SimpleNamespace(returncode=0, stdout="403")]
+        with patch.object(remote_edge, "run", side_effect=responses):
+            result = remote_edge.node_health("x570.dsh.onlyservice.io")
+        self.assertTrue(result["protected_route_healthy"])
+        self.assertFalse(result["terminal_upgrade_healthy"])
     def test_replace_managed_is_idempotent_and_preserves_unrelated_sites(self) -> None:
         original = "server { server_name existing.example; }\n"
         managed = f"{remote_edge.BEGIN}\nserver {{ server_name zsh.example; }}\n{remote_edge.END}\n"

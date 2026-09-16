@@ -23,6 +23,10 @@ export interface Book {
   convertedTo?: { path: string; at: string }
   /** Stable project path relative to the Reading workspace root. */
   projectPath?: string
+  /** Absolute project directory, used when injecting file references into a conversation. */
+  projectAbsolutePath?: string
+  /** Absolute Reading workspace root, used when injecting file references into a conversation. */
+  readingWorkspace?: string
 }
 
 export type Locator =
@@ -86,4 +90,10 @@ export interface Article {
   extractedHtml?: string
   /** Stable project path relative to the Reading workspace root. */
   projectPath?: string
+  /** Absolute project directory, used when injecting file references into a conversation. */
+  projectAbsolutePath?: string
+  /** Absolute Reading workspace root, used when injecting file references into a conversation. */
+  readingWorkspace?: string
+  /** Absolute Obsidian vault root when the integration is available. */
+  vaultRoot?: string
 }

@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/dsh-reading",
-  "version": "0.7.0",
+  "version": "0.7.3",
   "description": "Immersive reading workbench for DeepSeek Harness: EPUB/PDF reading with progress, OPDS library, Wallabag read-later, and Obsidian export",
   "license": "MIT",
   "repository": {
@@ -35,6 +35,7 @@
     "README.zh.md"
   ],
   "scripts": {
+    "prebuild": "node scripts/ensure-reading-core.mjs",
     "build": "tsdown && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -101,6 +102,7 @@
     }
   },
   "dependencies": {
+    "@dsh-plugins/dsh-reading-core": "github:shiliai/dsh-plugins#path:/packages/dsh-reading-core",
     "foliate-js": "^1.0.1",
     "lucide-react": "^0.468.0",
     "mathjax-full": "^3.2.2",

@@ -101,7 +101,7 @@ export function Workbench({ store, close, addArticleContext, addBookContext, add
     setArticle(null)
     store.flushProgress()
     void readingApi.ensureBookProject(book.id).then(result => {
-      const enriched = { ...book, projectPath: result.path }
+      const enriched = { ...book, projectPath: result.path, projectAbsolutePath: result.absolutePath }
       return openProjectSession(result.absolutePath).then(() => enriched)
     }).catch(() => book).then(async enriched => {
       setOpenBooks(items => items.some(item => item.id === enriched.id) ? items : [...items, enriched])
@@ -113,7 +113,7 @@ export function Workbench({ store, close, addArticleContext, addBookContext, add
 
   const onOpenArticle = (value: Article) => {
     void readingApi.ensureArticleProject(value.id).then(result => {
-      const enriched = { ...value, projectPath: result.path }
+      const enriched = { ...value, projectPath: result.path, projectAbsolutePath: result.absolutePath }
       return openProjectSession(result.absolutePath).then(() => enriched)
     }).catch(() => value).then(async enriched => {
       setOpenArticles(items => items.some(item => item.id === enriched.id) ? items : [...items, enriched])

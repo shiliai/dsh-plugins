@@ -23,6 +23,16 @@ then disconnect the provisioning SSH session and verify the protected endpoint.
 After an authorized reboot, repeat the unit, tunnel, protected HTTP, and
 WebSocket checks before registration is considered durable.
 
+Every current node uses contract schema `1` with capabilities
+`http-protected` and `terminal-websocket`. Hub and edge status probe both the
+protected `/api/events.mux` route and the authenticated upgrade path
+`/sidebar/ws/terminal`; an unauthenticated probe must receive `401` from each
+route. This confirms the route reaches the gateway and remains protected. A
+real browser session must still complete `101 Switching Protocols` during an
+owner or private-link E2E check. Installer receipts record the same contract
+schema and capabilities, so an old receipt or node can be identified before a
+fleet rollout.
+
 Before the first service start, an operator may place
 `DSH_REMOTE_INITIAL_TOKEN=<43-character-base64url-token>` in the mode-0600 file
 `~/.config/dsh-remote/<instance-id>.env`. The installer wires that per-instance
@@ -57,9 +67,31 @@ dsh-remote-edge instance rollback --receipt <transaction-id>
 dsh-remote-edge hub rollback --receipt <deployment-receipt-id>
 ```
 
+For a repeatable node rollout, create a JSON manifest containing `nodes` with
+`instance_id`, `ssh_target`, and (for checks) `domain`, then use the fleet
+entrypoint. `upgrade` is plan-only unless `--apply` is explicit; every plan
+gets a receipt and stops on the first failed installer. The command delegates
+to the existing backup-first installer, so rollback remains the installer
+receipt operation on the affected node.
+
+```sh
+python3 scripts/dsh-remote-fleet.py check --manifest fleet.json --package dsh-remote-0.4.3.tgz
+python3 scripts/dsh-remote-fleet.py upgrade --manifest fleet.json --package dsh-remote-0.4.3.tgz
+python3 scripts/dsh-remote-fleet.py upgrade --manifest fleet.json --package dsh-remote-0.4.3.tgz --apply
+```
+
 `preflight` is read-only. It requires the domain A record to resolve to
 `43.167.173.46`, validates the existing Compose model and live Nginx config, and
 reports pre-state hashes.
+
+For a fleet rollout, run `hub status` before and after each node update. Treat
+`online` as the gate for the two route probes plus the local socket checks. The
+Hub does not remotely install packages or restart DSH: upgrade one node using
+the normal `dsh plugin` or instance installer flow, retain its package and
+receipt, then verify HTTP, terminal `101`, and owner launch before proceeding.
+Use the node receipt and matching instance rollback receipt to restore a
+failed node. Hub route rollback restores registry and Nginx state; it does not
+roll back a node's DSH package.
 
 `apply` creates a receipt and exact Nginx/Compose backups before mutation. It
 creates the dedicated socket group and mode-2770 host directory, adds only the
@@ -85,9 +117,9 @@ the host inode, so both the HTTP staging write and final HTTPS write recreate th
 Nginx container before validation. A reload alone would keep the stale mounted
 inode and is intentionally not used.
 
-Legacy receipts remain under `/home/chriswang/.local/state/dsh-remote/backups/`.
+Legacy receipts remain under `/<PRIVATE_URL>`.
 Hub v2 deployment receipts are stored under
-`/home/chriswang/.local/state/dsh-remote-hub/backups/<receipt-id>/receipt.json`
+`/<PRIVATE_URL>`
 with mode 0600. They contain pre/post identities and metadata-preserving backups
 for Nginx, Compose, the complete wildcard certificate lineage, renewal and
 monitoring units, managed files/directories, and group pre-state, but no plaintext
@@ -168,7 +200,7 @@ remaining validity, then validates and reloads Nginx.
 Nginx, certificate validity, every registered socket, and the protected-route
 `401`. `OnFailure` invokes `dsh-remote-hub-alert.service`, which writes the
 mode-0600 persistent alarm at
-`/home/chriswang/.local/state/dsh-remote-hub/health-alarm`, records a journal
+`/<PRIVATE_URL>`, records a journal
 error, and delivers an immediate `wall` message to logged-in operator terminals.
 Operators who were offline check `systemctl --failed`, the alarm file metadata,
 and `journalctl -u dsh-remote-hub-health.service`; no Tencent account-side alarm

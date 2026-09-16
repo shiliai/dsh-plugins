@@ -8,9 +8,10 @@ import { ReadingStateStore } from './state-store.ts'
 import { WallabagAdapter, type WallabagConfig } from './wallabag-adapter.ts'
 import { OpdsAdapter, type OpdsConfig } from './opds-adapter.ts'
 import { defaultProjectConfig, readProjectConfig, saveProjectConfig, type ReadingProjectConfig } from './project-cache.ts'
+import { ScopedSkillProvider, SkillStore } from '@dsh-plugins/dsh-reading-core'
 
 export const name = 'dsh-reading'
-export const inject = ['webServer']
+export const inject = ['webServer', 'skills']
 
 export interface Config {
   /** Reading data directory (books + state). Defaults to $READING_DATA_DIR or ~/.dsh/reading. */
@@ -30,10 +31,18 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const configFile = join(dataDir, 'reading-settings.json')
   const fallback = { ...defaultProjectConfig(dataDir), ...(typeof config.projectRoot === 'string' && config.projectRoot.trim() !== '' ? { rootDir: expandHome(config.projectRoot) } : {}), ...(typeof config.createSessionOnOpen === 'boolean' ? { createSessionOnOpen: config.createSessionOnOpen } : {}) }
   let projectConfig: ReadingProjectConfig = await readProjectConfig(configFile, fallback)
+  const skillContext = ctx as Context & { skills: { registerProvider(create: (control: { invalidate(): void }) => ScopedSkillProvider): () => void } }
+  let readingSkills = new SkillStore(projectConfig.rootDir)
+  let readingProvider: ScopedSkillProvider | undefined
+  ctx.effect(() => skillContext.skills.registerProvider(_control => {
+    readingProvider = new ScopedSkillProvider('reading-workspace', readingSkills, 'reading', 'Reading workspace', false, 250)
+    return readingProvider
+  }), 'dsh-reading: workspace skill provider')
   ctx.effect(
     () => registerReadingApi(ctx.webServer, library, store, wallabag, opds, {
       get: () => projectConfig,
-      update: async (next: ReadingProjectConfig) => { projectConfig = next; await saveProjectConfig(configFile, next) },
+      update: async (next: ReadingProjectConfig) => { projectConfig = next; readingSkills = new SkillStore(next.rootDir); readingProvider?.setStore(readingSkills); await saveProjectConfig(configFile, next) },
+      skills: () => readingSkills,
     }),
     'dsh-reading: reading HTTP API',
   )

@@ -24,10 +24,57 @@ END = "# END DSH-REMOTE MANAGED"
 DOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$")
 ABS_PATH_RE = re.compile(r"^/[A-Za-z0-9._/-]+$")
 SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+NODE_CONTRACT_SCHEMA = 1
+PROTECTED_ROUTE = "/api/events.mux"
+TERMINAL_UPGRADE_ROUTE = "/sidebar/ws/terminal"
+NODE_CAPABILITIES = ("http-protected", "terminal-websocket")
 
 
 class EdgeError(RuntimeError):
     pass
+
+
+def node_manifest(instance_id: str, plugin_version: str | None = None) -> dict[str, Any]:
+    """Return the small contract shared by installers, edge status, and Hub."""
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", instance_id) or "--" in instance_id:
+        raise EdgeError("Invalid instance id")
+    result: dict[str, Any] = {
+        "schema": NODE_CONTRACT_SCHEMA,
+        "instance_id": instance_id,
+        "capabilities": list(NODE_CAPABILITIES),
+    }
+    if plugin_version is not None:
+        result["plugin_version"] = plugin_version
+    return result
+
+
+def contract_probe(domain: str, path: str, *, upgrade: bool = False) -> str | None:
+    """Probe an edge through localhost DNS resolution and return its HTTP code."""
+    command = [
+        "curl", "--silent", "--show-error", "--output", "/dev/null", "--write-out", "%{http_code}",
+        "--max-time", "10", "--resolve", f"{domain}:443:127.0.0.1", f"https://{domain}{path}",
+    ]
+    if upgrade:
+        command[1:1] = [
+            "--http1.1", "-H", "Upgrade: websocket", "-H", "Connection: Upgrade",
+            "-H", "Origin: https://" + domain,
+            "-H", "Sec-WebSocket-Version: 13", "-H", "Sec-WebSocket-Key: dsh-remote-health-check",
+        ]
+    result = run(command, check=False)
+    return result.stdout if result.returncode == 0 else None
+
+
+def node_health(domain: str) -> dict[str, Any]:
+    protected = contract_probe(domain, PROTECTED_ROUTE)
+    terminal = contract_probe(domain, TERMINAL_UPGRADE_ROUTE, upgrade=True)
+    return {
+        "contract_schema": NODE_CONTRACT_SCHEMA,
+        "capabilities": list(NODE_CAPABILITIES),
+        "protected_route_status": protected,
+        "terminal_upgrade_status": terminal,
+        "protected_route_healthy": protected == "401",
+        "terminal_upgrade_healthy": terminal == "401",
+    }
 
 
 def run(args: list[str], *, check: bool = True, capture: bool = True) -> subprocess.CompletedProcess[str]:
@@ -540,7 +587,17 @@ def status(args: argparse.Namespace) -> dict[str, Any]:
         "nginx_config_valid", "nginx_worker_group",
     ))
     result["gateway_probe"] = result["configured"] and socket_secure and gateway_probe(args)
-    result["ready"] = result["configured"] and socket_secure and result["gateway_probe"]
+    result["node_health"] = node_health(args.domain) if result["gateway_probe"] else {
+        "contract_schema": NODE_CONTRACT_SCHEMA,
+        "capabilities": list(NODE_CAPABILITIES),
+        "protected_route_status": None,
+        "terminal_upgrade_status": None,
+        "protected_route_healthy": False,
+        "terminal_upgrade_healthy": False,
+    }
+    result["ready"] = result["configured"] and socket_secure and result["gateway_probe"] and all(
+        result["node_health"][key] for key in ("protected_route_healthy", "terminal_upgrade_healthy")
+    )
     return result
 
 

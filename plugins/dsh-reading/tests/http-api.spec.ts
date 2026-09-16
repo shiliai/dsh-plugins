@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { parseRange, registerReadingApi } from '../src/http-api.ts'
 import { LocalLibrary } from '../src/library.ts'
 import { ReadingStateStore } from '../src/state-store.ts'
+import { SkillStore } from '@dsh-plugins/dsh-reading-core'
 
 let dir: string
 let server: Server
@@ -26,7 +27,11 @@ beforeEach(async () => {
       return () => server.off('request', listener)
     },
   }
-  registerReadingApi(fakeWebServer as never, library, store)
+  registerReadingApi(fakeWebServer as never, library, store, undefined, undefined, {
+    get: () => ({ rootDir: dir, createSessionOnOpen: false }),
+    update: async () => undefined,
+    skills: () => new SkillStore(dir),
+  })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/dsh-reading/api`
 })
@@ -129,5 +134,16 @@ describe('reading HTTP API', () => {
     const deleted = await fetch(`${base}/annotations/${annotation.id}`, { method: 'DELETE' })
     expect(deleted.status).toBe(204)
     expect(await deleted.text()).toBe('')
+  })
+
+  it('provides the same skill CRUD contract as the vault adapter', async () => {
+    const input = { name: 'summarize', description: 'Summarize text', modelInvocable: true, userInvocable: true, instructions: 'Summarize clearly.' }
+    const created = await fetch(`${base}/skill`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ skill: input }) })
+    expect(created.status).toBe(200)
+    const createdBody = await created.json() as { result: { value: { revision: string } } }
+    const listed = await (await fetch(`${base}/skills`)).json() as { result: { skills: Array<{ name: string }> } }
+    expect(listed.result.skills.map(skill => skill.name)).toEqual(['summarize'])
+    const removed = await fetch(`${base}/skill?name=summarize&expectedRevision=${encodeURIComponent(createdBody.result.value.revision)}`, { method: 'DELETE' })
+    expect(removed.status).toBe(200)
   })
 })

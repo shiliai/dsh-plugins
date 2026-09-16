@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/dsh-remote",
-  "version": "0.4.1",
+  "version": "0.4.4",
   "description": "Private remote-access gateway for DeepSeek Harness",
   "license": "MIT",
   "repository": {
@@ -37,7 +37,8 @@
   ],
   "bin": {
     "dsh-remote-edge": "./scripts/dsh-remote-edge.mjs",
-    "dsh-remote-install-node": "./scripts/install-dsh-remote-instance.sh"
+    "dsh-remote-install-node": "./scripts/install-dsh-remote-instance.sh",
+    "dsh-remote-fleet": "./scripts/dsh-remote-fleet.py"
   },
   "scripts": {
     "build": "tsdown && tsc -p tsconfig.build.json",

@@ -30,6 +30,7 @@ try {
       [packageJson.name]: `file:${join(directory, archive)}`,
     },
   }))
+  await writeFile(join(consumer, 'pnpm-workspace.yaml'), `overrides:\n  '@dsh-plugins/dsh-reading-core': 'link:${join(root, '..', '..', 'packages/dsh-reading-core')}'\n`)
   await writeFile(join(consumer, 'check.ts'), `import '${packageJson.name}'\nimport type { Book } from '${packageJson.name}'\nconst book: Book | null = null\nvoid book\n`)
   execFileSync('pnpm', ['install', '--prefer-offline', '--ignore-scripts', '--config.auto-install-peers=false'], { cwd: consumer, stdio: 'inherit' })
   await access(join(consumer, 'node_modules', packageJson.name, 'lib', 'index.js'))
