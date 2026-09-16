@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/dsh-obsidian",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Obsidian vault browser, tags, chat context, note tools, and vault-scoped skills for DeepSeek Harness",
   "license": "MIT",
   "repository": {
@@ -33,6 +33,7 @@
     "README.zh.md"
   ],
   "scripts": {
+    "prebuild": "node scripts/ensure-reading-core.mjs",
     "build": "tsdown && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
