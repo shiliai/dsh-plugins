@@ -6,6 +6,7 @@ packages:
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
   '@google/genai': true
+  '@dsh-plugins/dsh-reading-core@git+ssh://git@github.com/shiliai/dsh-plugins.git#f45c30d5ffb50525c60767ef9ef26646dbe21884&path:/packages/dsh-reading-core': true
   esbuild: true
   koffi: true
   node-pty: true

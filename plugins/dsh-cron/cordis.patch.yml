@@ -1,0 +1,10 @@
+# dsh-cron: defaults only; jobs are created at runtime via the Web UI or the
+# cron_* tools and persist in the `cron` storage domain.
+- insert:
+    - id: dsh-cron
+      name: '@dsh-plugins/dsh-cron'
+      inject: [tools, agents, sessions, storage]
+      config:
+        historyLimit: 50
+        tickIntervalMs: 15000
+        maxConcurrentRuns: 0
