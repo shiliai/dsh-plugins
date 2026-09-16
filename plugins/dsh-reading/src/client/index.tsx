@@ -12,6 +12,7 @@ import { readingApi, type ReadingSettings } from './api.ts'
 import { pluginVersion } from './version.ts'
 import { Workbench } from './Workbench.tsx'
 import { articleContext, bookContext } from './context.ts'
+import { WorkspaceRegistry } from '@dsh-plugins/dsh-reading-core'
 import css from './styles.module.css?dsh-inline'
 
 export const inject = ['slots', 'layout', 'sessions', 'conversation', 'workspaces']
@@ -45,16 +46,10 @@ function appendContext(draft: string, block: string): string {
 
 export function apply(ctx: ClientContext): void {
   const store = new ReadingStore()
-  const registeredWorkspaces = new Map<string, string>()
+  const workspaces = new WorkspaceRegistry(ctx.workspaces)
   let vaultRootPromise: Promise<string | undefined> | undefined
 
-  const ensureWorkspace = async (path: string): Promise<void> => {
-    if (registeredWorkspaces.has(path)) return
-    const workspace = await ctx.workspaces.create({ path })
-    registeredWorkspaces.set(path, workspace.workspaceId)
-  }
-
-  const ensureReadingWorkspace = ensureWorkspace
+  const ensureReadingWorkspace = async (path: string): Promise<void> => { await workspaces.register(path) }
 
   const getVaultRoot = async (): Promise<string | undefined> => {
     vaultRootPromise ??= fetch('/dsh-obsidian/api/info').then(async response => {
@@ -97,7 +92,7 @@ export function apply(ctx: ClientContext): void {
       ? await readingApi.ensureArticleProject(article.id)
       : { path: article.projectPath, absolutePath: article.projectAbsolutePath }
     const vaultRoot = await getVaultRoot()
-    if (vaultRoot !== undefined) await ensureWorkspace(vaultRoot)
+    if (vaultRoot !== undefined) await workspaces.register(vaultRoot)
     const enriched: Article = { ...article, projectPath: project.path, projectAbsolutePath: project.absolutePath, readingWorkspace: settings.rootDir, ...(vaultRoot === undefined ? {} : { vaultRoot }) }
     const input = currentInput()
     input.setDraft(appendContext(input.state.getSnapshot().draft, articleContext(enriched)))
@@ -109,7 +104,7 @@ export function apply(ctx: ClientContext): void {
       ? await readingApi.ensureBookProject(book.id)
       : { path: book.projectPath, absolutePath: book.projectAbsolutePath }
     const vaultRoot = await getVaultRoot()
-    if (vaultRoot !== undefined) await ensureWorkspace(vaultRoot)
+    if (vaultRoot !== undefined) await workspaces.register(vaultRoot)
     const enriched = { ...book, projectPath: project.path, projectAbsolutePath: project.absolutePath, readingWorkspace: settings.rootDir, ...(vaultRoot === undefined ? {} : { vaultRoot }) }
     const input = currentInput(); input.setDraft(appendContext(input.state.getSnapshot().draft, bookContext(enriched)))
   }

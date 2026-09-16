@@ -7,14 +7,14 @@ describe('conversation reading context', () => {
       id: 'wallabag:1', source: 'wallabag', url: 'https://example.com/a', title: 'Article', isArchived: false, savedAt: '2026-01-01',
       readingWorkspace: '/data/reading/workspaces', projectPath: 'articles/abc-article', projectAbsolutePath: '/data/reading/workspaces/articles/abc-article', vaultRoot: '/data/vault',
     })
-    expect(value).toContain('projectAbsolutePath: "/data/reading/workspaces/articles/abc-article"')
-    expect(value).toContain('The article is cached at projectAbsolutePath/article.md')
-    expect(value).toContain('vaultRoot: "/data/vault"')
+    expect(value).toContain('absolutePath: "/data/reading/workspaces/articles/abc-article/article.md"')
+    expect(value).toContain('availableWorkspaces:')
+    expect(value).toContain('path: "/data/vault"')
   })
 
   it('includes the reading workspace for book references too', () => {
     const value = bookContext({ id: 'local:1', title: 'Book', format: 'epub', fileName: 'book.epub', readingWorkspace: '/data/reading/workspaces', projectAbsolutePath: '/data/reading/workspaces/books/abc-book' })
-    expect(value).toContain('readingWorkspace: "/data/reading/workspaces"')
-    expect(value).toContain('projectAbsolutePath: "/data/reading/workspaces/books/abc-book"')
+    expect(value).toContain('path: "/data/reading/workspaces"')
+    expect(value).toContain('absolutePath: "/data/reading/workspaces/books/abc-book"')
   })
 })

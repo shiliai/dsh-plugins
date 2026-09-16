@@ -5,7 +5,10 @@ describe('vault context references', () => {
   it('formats note and recursive directory scopes with validated absolute paths', () => {
     expect(formatVaultContext({
       kind: 'directory', vaultRoot: '/vault', value: 'Projects', absolutePath: '/vault/Projects', entries: [],
-    })).toBe('[Obsidian context]\ntype: directory\nvault: "/vault"\ndirectory: "Projects"\nabsolutePath: "/vault/Projects"\nrecursive: true')
+    })).toContain('[Reading context]\nsource: "obsidian-vault"')
+    expect(formatVaultContext({
+      kind: 'directory', vaultRoot: '/vault', value: 'Projects', absolutePath: '/vault/Projects', entries: [],
+    })).toContain('absolutePath: "/vault/Projects"')
   })
 
   it('freezes tag and search result file lists in the draft', () => {
@@ -15,7 +18,7 @@ describe('vault context references', () => {
       value: 'project',
       entries: [{ path: 'Project.md', absolutePath: '/vault/Project.md' }],
     }
-    expect(appendVaultContext('Summarize this', reference)).toContain('Summarize this\n\n[Obsidian context]')
-    expect(formatVaultContext(reference)).toContain('files:\n- absolutePath: "/vault/Project.md"; vaultRelativePath: "Project.md"')
+    expect(appendVaultContext('Summarize this', reference)).toContain('Summarize this\n\n[Reading context]')
+    expect(formatVaultContext(reference)).toContain('absolutePath: "/vault/Project.md"')
   })
 })

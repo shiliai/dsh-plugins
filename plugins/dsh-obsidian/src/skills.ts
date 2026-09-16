@@ -1,46 +1,24 @@
 import type { SkillStore } from './skill-store.ts'
+import { skillScope, type SkillCandidate as CoreSkillCandidate, type SkillDefinition as CoreSkillDefinition, type SkillInvocationPolicy as CoreSkillInvocationPolicy, type SkillLookupOptions as CoreSkillLookupOptions, type SkillProvider as CoreSkillProvider } from '@dsh-plugins/dsh-reading-core'
 
 const PROVIDER_RANK = 300
 
 // Structural types mirroring the @deepseek-ai/dsh-skill provider contract, kept
 // local so the plugin needs no extra dependency. Runtime values are compatible.
-export interface SkillInvocationPolicy {
-  readonly modelInvocable: boolean
-  readonly userInvocable: boolean
-}
+export type SkillInvocationPolicy = CoreSkillInvocationPolicy
 
-export interface SkillCandidate {
-  name: string
-  description: string
-  whenToUse?: string
-  invocation: SkillInvocationPolicy
-  source: string
-  provider: string
-  rank: number
-  metadata?: Readonly<Record<string, unknown>>
-  path?: string
-  locator: unknown
-}
+export type SkillCandidate = CoreSkillCandidate
 
-export interface SkillLookupOptions {
-  readonly cwd?: string | undefined
-  readonly signal?: AbortSignal | undefined
-}
+export type SkillLookupOptions = CoreSkillLookupOptions
 
 export interface SkillProviderControl {
   readonly signal: AbortSignal
   readonly invalidate: () => void
 }
 
-export interface SkillDefinition extends SkillCandidate {
-  content: string
-}
+export type SkillDefinition = CoreSkillDefinition
 
-export interface SkillProvider {
-  readonly name: string
-  list(options: SkillLookupOptions): Promise<readonly SkillCandidate[]>
-  get(candidate: SkillCandidate, options: SkillLookupOptions): Promise<SkillDefinition | undefined>
-}
+export type SkillProvider = CoreSkillProvider
 
 /**
  * A vault-scoped skill provider. `list()` and `get()` resolve against the
@@ -51,6 +29,10 @@ export interface SkillProvider {
 export class ObsidianSkillProvider implements SkillProvider {
   readonly name = 'obsidian-vault'
   private store: SkillStore | null
+
+  get scope() {
+    return skillScope('vault', 'Obsidian vault', this.store?.root ?? '', true)
+  }
 
   constructor(initialStore: SkillStore | null) {
     this.store = initialStore
@@ -68,6 +50,7 @@ export class ObsidianSkillProvider implements SkillProvider {
       source: 'project-agents',
       provider: this.name,
       rank: PROVIDER_RANK,
+      scope: this.scope,
       metadata: skill.frontmatter,
       path: `${store.root}/${skill.name}/SKILL.md`,
       locator: skill.name,
@@ -89,6 +72,7 @@ export class ObsidianSkillProvider implements SkillProvider {
         source: 'project-agents',
         provider: this.name,
         rank: PROVIDER_RANK,
+        scope: this.scope,
         metadata: skill.frontmatter,
         path: `${store.root}/${name}/SKILL.md`,
         locator: name,

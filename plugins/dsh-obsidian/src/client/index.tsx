@@ -15,8 +15,9 @@ import { Workbench } from './Workbench.tsx'
 import { ThoughtsPanel } from './ThoughtsPanel.tsx'
 import css from './styles.module.css?dsh-inline'
 import { SkillBrowser } from './SkillBrowser.tsx'
+import { WorkspaceRegistry } from '@dsh-plugins/dsh-reading-core'
 
-export const inject = ['slots', 'layout', 'sessions', 'conversation']
+export const inject = ['slots', 'layout', 'sessions', 'conversation', 'workspaces']
 
 function ObsidianSkillsSettings({ store }: { store: VaultStore }) {
   const state = store.getSnapshot()
@@ -59,6 +60,7 @@ function FooterButton({ wide, store, addContextToChat }: FooterProps) {
 }
 
 export function apply(ctx: ClientContext): void {
+  const workspaces = new WorkspaceRegistry(ctx.workspaces)
   let browserDispose: (() => void) | undefined
   let panelDispose: (() => void) | undefined
   let panelTarget: PanelTarget | undefined
@@ -72,6 +74,7 @@ export function apply(ctx: ClientContext): void {
     if (actx === undefined) throw new Error('The current chat is not available.')
     const input = ctx.conversation.input.for(actx)
     const reference = await vaultApi.context(kind, value)
+    await workspaces.register(reference.vaultRoot)
     input.setDraft(appendVaultContext(input.state.getSnapshot().draft, reference))
   }
 
