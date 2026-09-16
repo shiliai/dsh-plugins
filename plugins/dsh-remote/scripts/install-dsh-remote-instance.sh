@@ -61,6 +61,8 @@ if [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || true)" = yes
 linger_enabled_by_installer=false
 
 digest=$(sha256_file "$package_source")
+plugin_version=$(tar -xOf "$package_source" package/package.json 2>/dev/null | sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([0-9][0-9A-Za-z.-]*\)".*/\1/p' | head -n 1 || true)
+[ -n "$plugin_version" ] || plugin_version=unknown
 package_target="$install_root/packages/dsh-remote-$digest.tgz"
 package_existed=false
 if [ -f "$package_target" ]; then
@@ -168,6 +170,9 @@ cat > "$backup/receipt.env" <<EOF
 schema=dsh-remote-instance-receipt-v2
 status=committed
 instance_id=$instance_id
+contract_schema=1
+capabilities=http-protected,terminal-websocket
+plugin_version=$plugin_version
 linger_was_enabled=$linger_was_enabled
 linger_enabled_by_installer=$linger_enabled_by_installer
 unit_was_enabled=$unit_was_enabled

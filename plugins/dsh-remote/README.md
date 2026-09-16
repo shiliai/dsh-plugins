@@ -39,7 +39,7 @@ value out of Cordis configuration and DSH `dump-config` output. DSH and the
 gateway must both bind to `127.0.0.1`; the plugin rejects any public bind.
 
 The default reverse-forward target is
-`/home/chriswang/.local/share/dsh-remote/tunnel.sock`, matching the edge socket
+`/<PRIVATE_URL>`, matching the edge socket
 directory. The supervisor permits only a safe SSH alias or `user@host` target,
 uses strict host-key checks, removes the dedicated stale socket before binding,
 and keeps a new child in `starting` until a fixed remote `chmod 0660` succeeds.
@@ -236,7 +236,13 @@ do not rely on a GitHub downgrade, because the updater rejects a lower version.
 failed validation. Nginx streams request and response bodies without proxy
 buffering. Hub `status` verifies one registry/routes generation and reports each
 node as `online`, `offline`, `insecure`, or `missing`; `online` requires a real
-protected-route response, not just a connectable socket. Certificate automation
+protected-route response and a reachable terminal WebSocket upgrade route, not
+just a connectable socket. The shared node contract is schema 1 with
+`http-protected` and `terminal-websocket` capabilities; installer receipts also
+record the package version. These unauthenticated probes expect `401`, proving
+the routes are protected and routed. A browser owner/private-link E2E check must
+still observe `101 Switching Protocols` for the authenticated terminal socket.
+Certificate automation
 uses the digest-pinned `certbot/dns-cloudflare` image. `renewal-check` exercises
 Certbot's dry run and certificate checks, and `rollback` restores the v2
 receipt's exact managed files and metadata. An unacknowledged health alarm keeps

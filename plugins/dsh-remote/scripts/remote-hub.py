@@ -431,7 +431,7 @@ def refresh_admin_status(args: argparse.Namespace, instances: list[dict[str, Any
         group = edge.run(["getent", "group", args.socket_group], check=False)
         fields = group.stdout.strip().split(":") if group.returncode == 0 else []
         group_id = int(fields[2]) if len(fields) >= 3 else None
-        instances = [socket_status(args, item["id"], group_id) for item in load_registry(args)["instances"]]
+        instances = [socket_status(args, item, group_id) for item in load_registry(args)["instances"]]
     edge.atomic_write(admin_status_path(args), render_admin_status(args, instances), 0o640)
     set_admin_permissions(args)
 
@@ -803,14 +803,17 @@ import json, subprocess, sys
 registry = json.load(open(sys.argv[1], encoding="utf-8"))
 for item in registry["instances"]:
     domain = f'{{item["id"]}}.{args.base_domain}'
-    result = subprocess.run([
-        "curl", "--silent", "--show-error", "--output", "/dev/null",
-        "--write-out", "%{{http_code}}", "--max-time", "10",
-        "--resolve", f"{{domain}}:443:127.0.0.1",
-        f"https://{{domain}}/api/events.mux",
-    ], text=True, capture_output=True, check=False)
-    if result.returncode or result.stdout != "401":
-        raise SystemExit(f"{{item['id']}} protected route unhealthy: {{result.stdout or 'transport-error'}}")
+    def probe(path, upgrade=False):
+        command = ["curl", "--silent", "--show-error", "--output", "/dev/null", "--write-out", "%{{http_code}}", "--max-time", "10", "--resolve", f"{{domain}}:443:127.0.0.1", f"https://{{domain}}{{path}}"]
+        if upgrade:
+            command[1:1] = ["--http1.1", "-H", "Upgrade: websocket", "-H", "Connection: Upgrade", "-H", f"Origin: https://{{domain}}", "-H", "Sec-WebSocket-Version: 13", "-H", "Sec-WebSocket-Key: dsh-remote-health-check"]
+        return subprocess.run(command, text=True, capture_output=True, check=False)
+    protected = probe("/api/events.mux")
+    terminal = probe("/sidebar/ws/terminal", True)
+    if protected.returncode or protected.stdout != "401":
+        raise SystemExit(f"{{item['id']}} protected route unhealthy: {{protected.stdout or 'transport-error'}}")
+    if terminal.returncode or terminal.stdout != "401":
+        raise SystemExit(f"{{item['id']}} terminal WebSocket route unhealthy: {{terminal.stdout or 'transport-error'}}")
 PY
 """
 
@@ -1303,7 +1306,12 @@ def instance_add(args: argparse.Namespace) -> dict[str, Any]:
         ids = {item["id"] for item in registry["instances"]}
         if args.instance_id in ids:
             return {"status": "already-registered", "instance_id": args.instance_id}
-        registry["instances"].append({"id": args.instance_id, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+        registry["instances"].append({
+            "id": args.instance_id,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "contract_schema": edge.NODE_CONTRACT_SCHEMA,
+            "capabilities": list(edge.NODE_CAPABILITIES),
+        })
         registry["instances"].sort(key=lambda item: item["id"])
         receipt = transaction(args, registry, "add")
         return {"status": "registered", "instance_id": args.instance_id, "origin": f"https://{args.instance_id}.{args.base_domain}", "socket": f"{args.socket_host_dir}/instances/{args.instance_id}.sock", "transaction": receipt["id"], "generation": receipt["post"]["generation"]}
@@ -1359,19 +1367,26 @@ def unix_socket_live(path: Path) -> bool:
         connection.close()
 
 
-def socket_status(args: argparse.Namespace, instance_id: str, group_id: int | None) -> dict[str, Any]:
+def socket_status(args: argparse.Namespace, instance: dict[str, Any], group_id: int | None) -> dict[str, Any]:
+    if isinstance(instance, str):
+        instance = {"id": instance}
+    instance_id = instance["id"]
     path = Path(args.socket_host_dir) / "instances" / f"{instance_id}.sock"
     secure = group_id is not None and edge.secure_path(path, mode=0o660, uid=args.ssh_uid, gid=group_id, socket_required=True)
     present = path.exists()
     listening = bool(present and path.is_socket() and unix_socket_live(path))
     domain = f"{instance_id}.{args.base_domain}"
-    route = edge.run([
-        "curl", "--silent", "--show-error", "--output", "/dev/null", "--write-out", "%{http_code}",
-        "--max-time", "10", "--resolve", f"{domain}:443:127.0.0.1", f"https://{domain}/api/events.mux",
-    ], check=False) if secure and listening else None
-    functional = route is not None and route.returncode == 0 and route.stdout == "401"
+    health = edge.node_health(domain) if secure and listening else {
+        "contract_schema": edge.NODE_CONTRACT_SCHEMA,
+        "capabilities": list(edge.NODE_CAPABILITIES),
+        "protected_route_status": None,
+        "terminal_upgrade_status": None,
+        "protected_route_healthy": False,
+        "terminal_upgrade_healthy": False,
+    }
+    functional = health["protected_route_healthy"] and health["terminal_upgrade_healthy"]
     state = "missing" if not present else "insecure" if not secure else "online" if functional else "offline"
-    return {"id": instance_id, "origin": f"https://{domain}", "state": state, "ready": state == "online", "socket_present": path.is_socket(), "socket_secure": secure, "socket_listening": listening, "protected_route_status": route.stdout if route is not None and route.returncode == 0 else None}
+    return {"id": instance_id, "origin": f"https://{domain}", "state": state, "ready": state == "online", "socket_present": path.is_socket(), "socket_secure": secure, "socket_listening": listening, **health, **({"plugin_version": instance["plugin_version"]} if isinstance(instance.get("plugin_version"), str) else {})}
 
 
 def hub_status(args: argparse.Namespace) -> dict[str, Any]:
@@ -1414,7 +1429,7 @@ def _hub_status_locked(args: argparse.Namespace) -> dict[str, Any]:
         admin_configured(args, group_id),
         edge.run(["docker", "exec", args.nginx_container, "nginx", "-t"], check=False).returncode == 0,
     ])
-    instances = [socket_status(args, item["id"], group_id) for item in registry["instances"]]
+    instances = [socket_status(args, item, group_id) for item in registry["instances"]]
     refresh_admin_status(args, instances)
     alarm_active = (Path(args.state_dir) / "health-alarm").is_file()
     ready = configured and bool(instances) and all(item["ready"] for item in instances) and not alarm_active
