@@ -16,7 +16,7 @@ const KEEP_ALIVE_TIMEOUT_MS = 60_000
 const absorbLateSocketError = (): void => {}
 const HOST_SESSION_TTL_MS = 8 * 60 * 60 * 1000
 const HUB_LAUNCH_TICKET_TTL_MS = 60_000
-const ALLOWED_UPGRADE_PATHS = new Set(['/api/events.mux', '/api/events.host'])
+const ALLOWED_UPGRADE_PATHS = new Set(['/api/events.mux', '/api/events.host', '/sidebar/ws/terminal'])
 const MODEL_CONFIGURATION_METHODS = new Set([
   'settings.describe',
   'settings.openDocument',
