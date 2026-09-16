@@ -139,7 +139,64 @@
   dsh-wecom 原生投递通道；config 声明式 jobs。
 - **v1.2**：每任务 model 钉死 UI、会话 GC 面板、orfan job 管理完善。
 
-## 11. 明确不做
+## 11. 典型场景验证
+
+两个目标用例均在 v1.0 能力内（agent 任务走完整 dsh 工具链，skill 与
+已装插件的工具可直接调用），v1.1 后可用 config 声明或原生投递通道简化。
+
+### 场景 A：每天 8 点总结企微未读邮件并推送到企微
+
+```yaml
+# cordis.patch.yml（v1.1 config 声明式；v1.0 用 cron_create / 侧栏 + 等价创建）
+- id: dsh-cron
+  config:
+    jobs:
+      - name: wecom-mail-digest
+        schedule: { cron: "0 8 * * *", timeZone: "Asia/Shanghai" }
+        task:
+          kind: agent
+          prompt: >
+            使用 wecom 技能查看我的企业微信未读邮件，按重要性归类总结
+            （发件人/主题/要点/建议动作），然后调用 wecom_send_message
+            把总结推送到我的企微单聊。无未读时回复"今日无未读邮件"。
+          timeoutSeconds: 600
+        policy: { overlap: skip, misfire: skip }
+        endAt: "2027-12-31T23:59:59+08:00"
+```
+
+- 依赖：dsh-wecom 已安装（提供 `wecom_send_message` 与邮件能力）。
+- v1.0：agent 自行调 `wecom_send_message` 完成推送；v1.1 可改为 agent
+  只产出 summary、由 `delivery.wecom` 原生通道投递（与任务逻辑解耦，
+  失败可重试/告警）。
+
+### 场景 B：定时巡检多个仓库的 open PR / issue，分配给 agent 处理
+
+```yaml
+- id: dsh-cron
+  config:
+    jobs:
+      - name: repo-triage
+        schedule: { cron: "0 9,15 * * 1-5", timeZone: "Asia/Shanghai" }
+        task:
+          kind: agent
+          prompt: >
+            对 shiliai/dsh-plugins、shiliai/dsh-reading 两个仓库执行
+            `gh pr list --state open` 与 `gh issue list --state open`，
+            过滤掉已指派和 draft；对每个可处理项调用 subagent 工具开一个
+            后台 agent 处理（修复/评审/回复），最后汇总本次分派结果。
+          cwd: /path/to/workspaces
+          timeoutSeconds: 1800
+        policy: { overlap: skip, misfire: runOnce }
+        endAt: "2027-12-31T23:59:59+08:00"
+```
+
+- cron agent 是一次性 root agent，`subagent` 工具可用——"分配给 agent
+  处理"即由它扇出后台子 agent，各自独立上下文处理单个 PR/issue。
+- 仓库较多或处理耗时时，建议每仓库一个 job 错峰（分散 quota 与故障面）。
+- 需要人在回路的项（如合并决策）可在 prompt 里约定只出建议、经
+  delivery 推送后由人确认。
+
+## 12. 明确不做
 
 - 不投递进存活交互会话（fan56 的 followup/steer 模式）——v1 每次触发
   一律新开一次性 agent，语义简单且 Host 有 profile 即可触发。
