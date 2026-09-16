@@ -89,8 +89,11 @@
 - 点 agent run 跳转该 run 的完整会话回放；点 command run（或会话已清理的
   agent run）打开中栏 run-detail 页（状态/时长/退出码/argv/输出尾）。
 - 创建/编辑模态单屏完成：触发预设（每小时/每天/工作日/每周）+ 自定义层
-  （cron 表达式/间隔/一次性），任务类型、model/preset/permission（留空继承
-  默认）、工作目录浏览、超时、overlap/misfire 策略；时区静默取浏览器值
+  （cron 表达式/间隔/一次性），任务类型、**agent 预设 / model / permission**
+  （三者留空均继承宿主默认）——agent 预设即 `ctx.agents.create` 的 preset，
+  决定该次运行的系统人格、默认工具集与权限基线（如 code-reviewer /
+  researcher / ops-bot）；model 钉死后不跟随聊天选择器变化，额度可预期——
+  工作目录浏览、超时、overlap/misfire 策略；时区静默取浏览器值
   （编辑时保留 job 原值）。
 - host 半侧：`GET /dsh-cron/api/state` + 写接口要求 `application/json`
   （挡跨站 simple request）；仅在 webServer 存在时注册路由，headless
@@ -137,7 +140,7 @@
   修复/时钟纪律；`cron_*` 工具 + cron-create skill；command delivery。
 - **v1.1**：plugin 服务（`ctx.cron.registerJob` + callback 任务）；
   dsh-wecom 原生投递通道；config 声明式 jobs。
-- **v1.2**：每任务 model 钉死 UI、会话 GC 面板、orfan job 管理完善。
+- **v1.2**：会话 GC 面板、orphan job 管理完善、任务统计视图。
 
 ## 11. 典型场景验证
 
