@@ -182,9 +182,19 @@ describe('RemoteGateway', () => {
     socket.send('realtime')
     await expectMessage(socket, 'realtime')
 
+    const terminal = new WebSocket(`${baseUrl.replace('http:', 'ws:')}/sidebar/ws/terminal?sessionId=test-session&tab=terminal%3Atest&cwd=%2Ftmp`, {
+      headers: { cookie }, origin: 'https://zsh.onlyservice.io',
+    })
+    await once(terminal, 'open')
+    expect(webSocketRequests.at(-1)).toEqual({ origin: upstreamOrigin, host: new URL(upstreamOrigin).host, cookie: '' })
+    terminal.send('terminal-input')
+    await expectMessage(terminal, 'terminal-input')
+
+    const socketClosed = once(socket, 'close')
+    const terminalClosed = once(terminal, 'close')
     const next = await state.rotate()
     gateway.closeSessionsBefore(next.sessionVersion)
-    await once(socket, 'close')
+    await Promise.all([socketClosed, terminalClosed])
 
     expect((await fetch(`${baseUrl}/after-rotation`, { headers: { cookie } })).status).toBe(401)
     expect((await fetch(`${baseUrl}/__dsh_remote/session`, {
