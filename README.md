@@ -23,7 +23,11 @@ installation and routine verification run from the repository root.
 
 Reading and Obsidian share `@dsh-plugins/dsh-reading-core`, which defines the
 context reference format, workspace registry, and scoped skill provider/store.
-The Reading library and Obsidian vault remain separate adapters: both register
+The core is workspace source only: both plugins resolve it through build-time
+aliases and bundle it into their `lib/` output, so no published package
+declares it as a dependency (a git-hosted subdependency would trip pnpm 11
+`blockExoticSubdeps` on GitHub-source installs). The Reading library and
+Obsidian vault remain separate adapters: both register
 their active workspace with the conversation and expose skills from
 `.agents/skills`; Obsidian additionally keeps note editing and vault mutations.
 Injected paths therefore stay absolute and use the same context and skill

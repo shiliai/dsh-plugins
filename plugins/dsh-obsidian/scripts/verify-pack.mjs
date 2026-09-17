@@ -11,7 +11,7 @@ try {
   const archive = (await readdir(directory)).find(name => name.endsWith('.tgz'))
   if (archive === undefined) throw new Error('pnpm pack did not create an archive')
   const entries = execFileSync('tar', ['-tzf', join(directory, archive)], { encoding: 'utf8' })
-  for (const required of ['package/lib/index.js', 'package/lib/client.js', 'package/lib/types/index.d.ts', 'package/lib/types/client/index.d.ts']) {
+  for (const required of ['package/lib/index.js', 'package/lib/client.js', 'package/lib/index.d.ts']) {
     if (!entries.includes(required)) throw new Error(`archive is missing ${required}`)
   }
   const consumer = join(directory, 'consumer')
@@ -31,7 +31,6 @@ try {
       [packageJson.name]: `file:${join(directory, archive)}`,
     },
   }))
-  await writeFile(join(consumer, 'pnpm-workspace.yaml'), `overrides:\n  '@dsh-plugins/dsh-reading-core': 'link:${join(root, '..', '..', 'packages/dsh-reading-core')}'\n`)
   await writeFile(join(consumer, 'check.ts'), `import '${packageJson.name}'\nimport '${packageJson.name}/client'\n`)
   execFileSync('pnpm', ['install', '--prefer-offline', '--ignore-scripts', '--config.auto-install-peers=false'], { cwd: consumer, stdio: 'inherit' })
   await access(join(consumer, 'node_modules', packageJson.name, 'lib', 'index.js'))
