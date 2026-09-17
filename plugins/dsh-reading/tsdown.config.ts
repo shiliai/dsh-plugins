@@ -1,12 +1,17 @@
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { basename, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'tsdown'
 
 const PACKAGE_ID = '@dsh-plugins/dsh-reading'
 const CSS_PREFIX = '\0dsh-reading-css:'
 const CSS_SUFFIX = '.mjs'
 const RAW_PREFIX = '\0dsh-reading-raw:'
+// The shared core is bundled from workspace source instead of being declared
+// as a dependency: a git-hosted subdependency trips pnpm 11 blockExoticSubdeps
+// on every GitHub-source install of this plugin.
+const READING_CORE_SOURCE = fileURLToPath(new URL('../../packages/dsh-reading-core/src/index.ts', import.meta.url))
 const require = createRequire(import.meta.url)
 
 interface InlineCssPlugin {
@@ -91,8 +96,9 @@ export default defineConfig([
     outDir: 'lib',
     format: ['esm'],
     platform: 'node',
-    dts: false,
+    dts: true,
     clean: true,
+    alias: { '@dsh-plugins/dsh-reading-core': READING_CORE_SOURCE },
     external: [/^@deepseek-ai\//],
   },
   {
@@ -104,6 +110,7 @@ export default defineConfig([
     minify: true,
     dts: false,
     clean: false,
+    alias: { '@dsh-plugins/dsh-reading-core': READING_CORE_SOURCE },
     external: [
       'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client',
       '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-runtime/client',

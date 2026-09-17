@@ -1,10 +1,15 @@
 import { readFile } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'tsdown'
 
 const PACKAGE_ID = '@dsh-plugins/dsh-obsidian'
 const CSS_PREFIX = '\0dsh-obsidian-css:'
 const CSS_SUFFIX = '.mjs'
+// The shared core is bundled from workspace source instead of being declared
+// as a dependency: a git-hosted subdependency trips pnpm 11 blockExoticSubdeps
+// on every GitHub-source install of this plugin.
+const READING_CORE_SOURCE = fileURLToPath(new URL('../../packages/dsh-reading-core/src/index.ts', import.meta.url))
 
 interface InlineCssPlugin {
   name: string
@@ -58,8 +63,9 @@ export default defineConfig([
     outDir: 'lib',
     format: ['esm'],
     platform: 'node',
-    dts: false,
+    dts: true,
     clean: true,
+    alias: { '@dsh-plugins/dsh-reading-core': READING_CORE_SOURCE },
     external: [/^@deepseek-ai\//],
   },
   {
@@ -71,6 +77,7 @@ export default defineConfig([
     minify: true,
     dts: false,
     clean: false,
+    alias: { '@dsh-plugins/dsh-reading-core': READING_CORE_SOURCE },
     external: [
       'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client',
       '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-runtime/client',

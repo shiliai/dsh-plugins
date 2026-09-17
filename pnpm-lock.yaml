@@ -180,9 +180,6 @@ importers:
       '@deepseek-ai/dsh-tools':
         specifier: 0.1.0-rc.6
         version: 0.1.0-rc.6(f8724372086ccc1457fc84e7becee2e0)
-      '@dsh-plugins/dsh-reading-core':
-        specifier: github:shiliai/dsh-plugins#path:/packages/dsh-reading-core
-        version: link:../../packages/dsh-reading-core
       dompurify:
         specifier: ^3.2.6
         version: 3.4.13
@@ -253,9 +250,6 @@ importers:
       '@deepseek-ai/dsh-host-webserver':
         specifier: 0.1.0-rc.6
         version: 0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1))
-      '@dsh-plugins/dsh-reading-core':
-        specifier: github:shiliai/dsh-plugins#path:/packages/dsh-reading-core
-        version: link:../../packages/dsh-reading-core
       foliate-js:
         specifier: ^1.0.1
         version: 1.0.1(patch_hash=4b5b10b1be8899a3e34595837f7c08d0b6e564494b92c1ef07292b599b5d538c)

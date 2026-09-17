@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/dsh-reading",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Immersive reading workbench for DeepSeek Harness: EPUB/PDF reading with progress, OPDS library, Wallabag read-later, and Obsidian export",
   "license": "MIT",
   "repository": {
@@ -15,16 +15,13 @@
   },
   "type": "module",
   "main": "lib/index.js",
-  "types": "lib/types/index.d.ts",
+  "types": "lib/index.d.ts",
   "exports": {
     ".": {
-      "types": "./lib/types/index.d.ts",
+      "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./client": {
-      "types": "./lib/types/client/index.d.ts",
-      "default": "./lib/client.js"
-    },
+    "./client": "./lib/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
@@ -35,8 +32,7 @@
     "README.zh.md"
   ],
   "scripts": {
-    "prebuild": "node scripts/ensure-reading-core.mjs",
-    "build": "tsdown && tsc -p tsconfig.build.json",
+    "build": "tsdown",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check": "pnpm run typecheck && pnpm run test && pnpm run build",
@@ -102,7 +98,6 @@
     }
   },
   "dependencies": {
-    "@dsh-plugins/dsh-reading-core": "github:shiliai/dsh-plugins#path:/packages/dsh-reading-core",
     "foliate-js": "^1.0.1",
     "lucide-react": "^0.468.0",
     "mathjax-full": "^3.2.2",
