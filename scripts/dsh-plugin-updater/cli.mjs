@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const plugins = [
+  { name: '@dsh-plugins/dsh-cron', directory: 'plugins/dsh-cron' },
   { name: '@dsh-plugins/dsh-file-attachment', directory: 'plugins/dsh-file-attachment' },
   { name: '@dsh-plugins/dsh-obsidian', directory: 'plugins/dsh-obsidian' },
   { name: '@dsh-plugins/dsh-remote', directory: 'plugins/dsh-remote' },
