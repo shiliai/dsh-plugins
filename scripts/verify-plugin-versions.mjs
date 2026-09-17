@@ -4,6 +4,10 @@ import { readFile } from 'node:fs/promises'
 const repositoryUrl = 'git+https://github.com/shiliai/dsh-plugins.git'
 const plugins = [
   {
+    directory: 'plugins/dsh-cron',
+    packageName: '@dsh-plugins/dsh-cron',
+  },
+  {
     directory: 'plugins/dsh-file-attachment',
     packageName: '@dsh-plugins/dsh-file-attachment',
   },

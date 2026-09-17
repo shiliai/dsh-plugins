@@ -1,0 +1,104 @@
+{
+  "name": "@dsh-plugins/dsh-cron",
+  "version": "0.1.0",
+  "description": "Host-side unattended scheduler for DeepSeek Harness: cron / interval / one-shot jobs that run one-shot agents through the full DSH tool chain or spawn command subprocesses",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shiliai/dsh-plugins.git",
+    "directory": "plugins/dsh-cron"
+  },
+  "homepage": "https://github.com/shiliai/dsh-plugins/tree/main/plugins/dsh-cron#readme",
+  "bugs": "https://github.com/shiliai/dsh-plugins/issues",
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsdown && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "pnpm run typecheck && pnpm run test && pnpm run build",
+    "pack:check": "pnpm run build && node scripts/verify-pack.mjs",
+    "release:check": "pnpm run check && pnpm run pack:check",
+    "smoke:boot": "node scripts/smoke-boot.mjs",
+    "prepare": "pnpm run build",
+    "prepack": "pnpm run build"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0",
+    "@deepseek-ai/dsh-client-runtime": ">=0.1.0-rc.6 <0.1.0-rc.9",
+    "@deepseek-ai/dsh-client-ui-layout": ">=0.1.0-rc.6 <0.1.0-rc.9",
+    "@deepseek-ai/dsh-client-ui-sidebar": ">=0.1.0-rc.6 <0.1.0-rc.9",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.1.0-rc.6 <0.1.0-rc.9",
+    "@deepseek-ai/dsh-host-webserver": ">=0.1.0-rc.6 <0.1.0-rc.9",
+    "@deepseek-ai/dsh-agent": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-agent-presets": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-session": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
+    "react": ">=18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": { "optional": true },
+    "@deepseek-ai/dsh-client-runtime": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-layout": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-sidebar": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-slots": { "optional": true },
+    "@deepseek-ai/dsh-host-webserver": { "optional": true },
+    "@deepseek-ai/dsh-agent": { "optional": true },
+    "@deepseek-ai/dsh-agent-presets": { "optional": true },
+    "@deepseek-ai/dsh-llm": { "optional": true },
+    "@deepseek-ai/dsh-session": { "optional": true },
+    "@deepseek-ai/dsh-tools": { "optional": true },
+    "react": { "optional": true }
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh": "0.1.0-rc.6",
+    "@deepseek-ai/cordis-plugin-loader": "1.0.2",
+    "@types/node": "^24.0.0",
+    "@types/react": "~18.3.1",
+    "react": "^18.3.1",
+    "tsdown": "^0.15.6",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
