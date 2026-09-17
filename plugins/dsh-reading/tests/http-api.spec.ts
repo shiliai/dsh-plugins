@@ -1,13 +1,15 @@
 import { createServer, type IncomingMessage as IncomingMessageLike, type Server, type ServerResponse as ServerResponseLike } from 'node:http'
+import { readFile, stat } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseRange, registerReadingApi } from '../src/http-api.ts'
 import { LocalLibrary } from '../src/library.ts'
 import { ReadingStateStore } from '../src/state-store.ts'
 import { SkillStore } from '@dsh-plugins/dsh-reading-core'
+import { WallabagAdapter } from '../src/wallabag-adapter.ts'
 
 let dir: string
 let server: Server
@@ -145,5 +147,237 @@ describe('reading HTTP API', () => {
     expect(listed.result.skills.map(skill => skill.name)).toEqual(['summarize'])
     const removed = await fetch(`${base}/skill?name=summarize&expectedRevision=${encodeURIComponent(createdBody.result.value.revision)}`, { method: 'DELETE' })
     expect(removed.status).toBe(200)
+  })
+})
+
+const WALLABAG_ERROR_CONTENT = `wallabag can't retrieve contents for this article. Please <a href="https://doc.wallabag.org/en/user/errors_during_fetching.html#how-can-i-help-to-fix-that">troubleshoot this issue</a>.`
+
+const ZAI_BUNDLE = [
+  'function d(e){',
+  'let t={a:`a`,blockquote:`blockquote`,code:`code`,h1:`h1`,img:`img`,li:`li`,p:`p`,pre:`pre`,strong:`strong`,ul:`ul`,...e.components};',
+  'return(0,u.jsxs)(u.Fragment,{children:[',
+  '(0,u.jsx)(t.p,{children:`Locally extracted body.`}),',
+  '(0,u.jsx)(t.pre,{children:(0,u.jsx)(t.code,{className:`language-Python`,children:`x < y\\n`})})',
+  ']})}',
+  'function f(e={}){}',
+  '(0,c.createRoot)(document.getElementById(`root`)).render((0,u.jsx)(a,{date:`2026-02-03`,title:`Local Title`,children:(0,u.jsx)(s,{})}));',
+].join('\n')
+
+const zaiPageHtml = (slug: string): string => `<!doctype html><html><head>
+<meta property="og:title" content="Local Title">
+<script type="module" crossorigin src="/blog/assets/${slug}.js"></script>
+</head><body><div id="root"></div></body></html>`
+
+interface WallabagEntry extends Record<string, unknown> {
+  id: number
+  url: string
+  title: string
+  content: string
+  is_archived: number
+  created_at: string
+}
+
+describe('reading HTTP API with wallabag (open-first flow)', () => {
+  let dir: string
+  let server: Server
+  let base: string
+  let entries: Map<number, WallabagEntry>
+  let nextId: number
+  let patchCalls: Array<{ id: number; fields: URLSearchParams }>
+  let httpFetch: typeof fetch
+
+  const findByUrl = (target: string): WallabagEntry | undefined =>
+    [...entries.values()].find(entry => entry.url === target || entry.origin_url === target)
+
+  beforeEach(async () => {
+    httpFetch = globalThis.fetch
+    dir = await mkdtemp(join(tmpdir(), 'dsh-reading-api-w-'))
+    server = createServer()
+    entries = new Map()
+    entries.set(7, { id: 7, url: 'https://z.ai/blog/healthy-post', title: 'Healthy post', content: '<p>Healthy body</p>', is_archived: 0, created_at: 'stub-created-at-7' })
+    entries.set(9, { id: 9, url: 'https://z.ai/blog/broken-post', title: 'Broken post', content: WALLABAG_ERROR_CONTENT, is_archived: 0, created_at: 'stub-created-at-9' })
+    entries.set(11, { id: 11, url: 'https://z.ai/blog/unextractable-post', title: 'Unextractable post', content: WALLABAG_ERROR_CONTENT, is_archived: 0, created_at: 'stub-created-at-11' })
+    nextId = 100
+    patchCalls = []
+
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = new URL(String(input instanceof Request ? input.url : input))
+      const method = init?.method ?? 'GET'
+      const jsonResponse = (value: unknown, status = 200): Response => new Response(JSON.stringify(value), { status })
+      if (url.hostname === 'wallabag.test') {
+        if (url.pathname === '/oauth/v2/token') return jsonResponse({ access_token: 'token', expires_in: 3600 })
+        if (url.pathname === '/api/entries/exists.json') return jsonResponse({ exists: findByUrl(url.searchParams.get('url') ?? '') !== undefined })
+        if (url.pathname === '/api/search.json') {
+          const hit = findByUrl(url.searchParams.get('term') ?? '')
+          return jsonResponse({ _embedded: { items: hit === undefined ? [] : [hit] } })
+        }
+        if (url.pathname === '/api/entries.json' && method === 'POST') {
+          const target = new URLSearchParams(String(init?.body ?? '')).get('url') ?? ''
+          const entry: WallabagEntry = { id: nextId, url: target, title: target, content: WALLABAG_ERROR_CONTENT, is_archived: 0, created_at: 'stub-created-at-new' }
+          nextId += 1
+          entries.set(entry.id, entry)
+          return jsonResponse({ id: entry.id })
+        }
+        const entryMatch = /\/api\/entries\/(\d+)(\.json)?$/.exec(url.pathname)
+        if (entryMatch !== null) {
+          const id = Number(entryMatch[1])
+          const entry = entries.get(id)
+          if (entry === undefined) return new Response('missing', { status: 404 })
+          if (method === 'PATCH') {
+            const fields = new URLSearchParams(String(init?.body ?? ''))
+            patchCalls.push({ id, fields })
+            if (fields.has('content')) entry.content = fields.get('content') ?? ''
+            if (fields.has('title')) entry.title = fields.get('title') ?? ''
+            if (fields.has('published_at')) entry.published_at = fields.get('published_at') ?? ''
+          }
+          return jsonResponse(entry)
+        }
+        return new Response('unexpected', { status: 500 })
+      }
+      // Local z.ai extraction endpoints (page shell + MDX bundle).
+      if (url.hostname === 'z.ai') {
+        if (url.pathname === '/blog/assets/unextractable-post.js') return new Response('this is not a parseable bundle', { status: 200, headers: { 'Content-Type': 'text/javascript' } })
+        if (url.pathname.startsWith('/blog/assets/')) return new Response(ZAI_BUNDLE, { status: 200, headers: { 'Content-Type': 'text/javascript' } })
+        const slug = url.pathname.replace(/^\/blog\//u, '').replace(/\/$/u, '')
+        return new Response(zaiPageHtml(slug), { status: 200, headers: { 'Content-Type': 'text/html' } })
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wallabag = new WallabagAdapter({ origin: 'http://wallabag.test', clientId: 'id-stub', clientSecret: 'cs-stub-value', username: 'account-stub', password: 'pw-stub-value' })
+    const fakeWebServer = {
+      register(route: { handler: (req: IncomingMessageLike, res: ServerResponseLike) => Promise<void> }) {
+        const listener = (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse): void => {
+          void route.handler(req as IncomingMessageLike, res as ServerResponseLike)
+        }
+        server.on('request', listener)
+        return () => server.off('request', listener)
+      },
+    }
+    registerReadingApi(fakeWebServer as never, new LocalLibrary(dir), await ReadingStateStore.create(dir), wallabag, undefined, {
+      get: () => ({ rootDir: dir, createSessionOnOpen: false }),
+      update: async () => undefined,
+      skills: () => new SkillStore(dir),
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/dsh-reading/api`
+  })
+
+  afterEach(async () => {
+    server.close()
+    await rm(dir, { recursive: true, force: true })
+    vi.unstubAllGlobals()
+  })
+
+  const postJson = async (path: string, body: unknown): Promise<{ status: number; payload: Record<string, unknown> }> => {
+    const response = await httpFetch(`${base}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    return { status: response.status, payload: await response.json() as Record<string, unknown> }
+  }
+
+  it('serves a healthy wallabag entry untouched on /articles/open', async () => {
+    const { status, payload } = await postJson('/articles/open', { url: 'https://z.ai/blog/healthy-post' })
+    expect(status).toBe(200)
+    expect(payload.extraction).toBe('wallabag')
+    const article = payload.article as { id: string; extractedHtml?: string }
+    expect(article.id).toBe('wallabag:7')
+    expect(article.extractedHtml).toBe('<p>Healthy body</p>')
+    expect(patchCalls).toHaveLength(0)
+  })
+
+  it('repairs a broken wallabag entry from the local pipeline on /articles/open', async () => {
+    const { status, payload } = await postJson('/articles/open', { url: 'https://z.ai/blog/broken-post' })
+    expect(status).toBe(200)
+    expect(payload.extraction).toBe('repaired')
+    const article = payload.article as { id: string; extractedHtml?: string; publishedAt?: string }
+    expect(article.id).toBe('wallabag:9')
+    expect(article.extractedHtml).toContain('<p>Locally extracted body.</p>')
+    expect(article.extractedHtml).toContain('<pre><code class="language-Python">x &lt; y\n</code></pre>')
+    expect(article.publishedAt).toBe('2026-02-03')
+    expect(patchCalls).toHaveLength(1)
+    expect(patchCalls[0]?.id).toBe(9)
+    expect(patchCalls[0]?.fields.get('title')).toBe('Local Title')
+  })
+
+  it('keeps the stored broken entry when local extraction also fails on /articles/open', async () => {
+    const { payload } = await postJson('/articles/open', { url: 'https://z.ai/blog/unextractable-post' })
+    expect(payload.extraction).toBe('wallabag')
+    const article = payload.article as { id: string; extractedHtml?: string }
+    expect(article.id).toBe('wallabag:11')
+    expect(patchCalls).toHaveLength(0)
+  })
+
+  it('opens non-wallabag articles via local extraction on /articles/open', async () => {
+    const { status, payload } = await postJson('/articles/open', { url: 'https://z.ai/blog/extractable-post' })
+    expect(status).toBe(200)
+    expect(payload.extraction).toBe('local')
+    const article = payload.article as { id: string; source: string; url: string; originalUrl: string; domain?: string; extractedHtml?: string; isArchived: boolean; publishedAt?: string }
+    expect(article.source).toBe('extract')
+    expect(article.id).toMatch(/^extract:[0-9a-f]{16}$/u)
+    expect(article.url).toBe('https://z.ai/blog/extractable-post')
+    expect(article.originalUrl).toBe('https://z.ai/blog/extractable-post')
+    expect(article.domain).toBe('z.ai')
+    expect(article.isArchived).toBe(false)
+    expect(article.publishedAt).toBe('2026-02-03')
+    expect(article.extractedHtml).toContain('<p>Locally extracted body.</p>')
+    expect(patchCalls).toHaveLength(0)
+  })
+
+  it('falls back to wallabag import when local extraction misses on /articles/open', async () => {
+    const { status, payload } = await postJson('/articles/open', { url: 'https://example.com/plain-post' })
+    expect(status).toBe(200)
+    expect(payload.extraction).toBe('imported')
+    const article = payload.article as { id: string; source: string; url: string }
+    expect(article.source).toBe('wallabag')
+    expect(article.url).toBe('https://example.com/plain-post')
+    expect(entries.size).toBe(4)
+  })
+
+  it('collects a new entry with provided content', async () => {
+    const { status, payload } = await postJson('/articles/collect', { url: 'https://example.com/collect-new', title: 'Provided', html: '<p>Provided body</p>' })
+    expect(status).toBe(200)
+    expect(payload.action).toBe('created')
+    const article = payload.article as { id: string; extractedHtml?: string }
+    expect(article.extractedHtml).toBe('<p>Provided body</p>')
+    expect(patchCalls).toHaveLength(1)
+  })
+
+  it('repairs an existing broken entry on collect and reports unchanged for healthy ones', async () => {
+    const repaired = await postJson('/articles/collect', { url: 'https://z.ai/blog/broken-post', html: '<p>Fixed body</p>' })
+    expect(repaired.payload.action).toBe('repaired')
+    const article = repaired.payload.article as { id: string; extractedHtml?: string }
+    expect(article.id).toBe('wallabag:9')
+    expect(article.extractedHtml).toBe('<p>Fixed body</p>')
+
+    const unchanged = await postJson('/articles/collect', { url: 'https://z.ai/blog/healthy-post', html: '<p>Ignored body</p>' })
+    expect(unchanged.payload.action).toBe('unchanged')
+    expect((unchanged.payload.article as { extractedHtml?: string }).extractedHtml).toBe('<p>Healthy body</p>')
+  })
+
+  it('writes the article project purely from the request body', async () => {
+    const { status, payload } = await postJson('/project/article', {
+      article: {
+        id: 'extract:abcdef0123456789', source: 'extract', url: 'https://z.ai/blog/project-post', title: 'Project post',
+        domain: 'z.ai', extractedHtml: '<p>Project body text</p>', isArchived: false, savedAt: 'stub-saved-at',
+      },
+    })
+    expect(status).toBe(200)
+    const { path, absolutePath } = payload as { path: string; absolutePath: string }
+    expect(absolutePath).toContain('articles')
+    const metadata = JSON.parse(await readFile(join(absolutePath, 'metadata.json'), 'utf8')) as Record<string, unknown>
+    expect(metadata).toMatchObject({ kind: 'article', id: 'extract:abcdef0123456789', title: 'Project post', source: 'extract', path })
+    const articleMd = await readFile(join(absolutePath, 'article.md'), 'utf8')
+    expect(articleMd).toContain('# Project post')
+    expect(articleMd).toContain('Source: https://z.ai/blog/project-post')
+    expect(articleMd).toContain('Project body text')
+    await stat(path === '' ? absolutePath : `${dir}/${path}`)
+  })
+
+  it('self-heals broken entries served by GET /wallabag/entries/:id', async () => {
+    const response = await httpFetch(`${base}/wallabag/entries/9`)
+    expect(response.status).toBe(200)
+    const { article } = await response.json() as { article: { id: string; extractedHtml?: string } }
+    expect(article.extractedHtml).toContain('<p>Locally extracted body.</p>')
+    expect(patchCalls.map(call => call.id)).toContain(9)
   })
 })
