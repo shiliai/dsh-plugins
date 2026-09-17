@@ -72,6 +72,40 @@ describe('scheduler', () => {
     }
   })
 
+  it('fires a newly created cron job without using an infinite cursor', { timeout: 20_000 }, async () => {
+    const world = await makeWorld()
+    try {
+      // Keep the simulated tick just after a minute boundary so the first
+      // matching beat is recent enough to execute rather than misfire-skip.
+      const now = Math.floor(Date.now() / 60_000) * 60_000 + 1_000
+      const job = quickJob({
+        createdAt: now - 61_000,
+        updatedAt: now - 61_000,
+        trigger: { kind: 'cron', expr: '* * * * *', timeZone: 'UTC' },
+        task: { kind: 'command', argv: [process.execPath, '-e', 'process.exit(0)'] },
+      })
+      await world.store.putJob(job)
+      await expect(world.scheduler.tick(now)).resolves.toBeUndefined()
+      await waitFor(() => world.store.listRuns(job.id)[0]?.status === 'ok')
+    } finally {
+      await world.cleanup()
+    }
+  })
+
+  it('isolates a broken job so another job still gets scheduled', { timeout: 20_000 }, async () => {
+    const world = await makeWorld()
+    try {
+      const broken = quickJob({ name: 'broken', trigger: { kind: 'cron', expr: '* * * * *', timeZone: 'Invalid/Zone' } })
+      const healthy = quickJob({ name: 'healthy', anchorMs: Date.now() - 2_000 })
+      await world.store.putJob(broken)
+      await world.store.putJob(healthy)
+      await expect(world.scheduler.tick()).resolves.toBeUndefined()
+      await waitFor(() => world.store.listRuns(healthy.id)[0]?.status === 'ok')
+    } finally {
+      await world.cleanup()
+    }
+  })
+
   it('records a skipped run for stale beats under misfire=skip', { timeout: 20_000 }, async () => {
     const world = await makeWorld()
     try {
@@ -124,6 +158,28 @@ describe('scheduler', () => {
       await world.scheduler.tick()
       await waitFor(() => world.store.listRuns(job.id).some(run => run.status === 'skipped'), 20_000)
       await waitFor(() => world.store.listRuns(job.id).some(run => run.status === 'ok'), 20_000)
+    } finally {
+      await world.cleanup()
+    }
+  })
+
+  it('overlap=replace keeps the replacement run live after the old run settles', { timeout: 30_000 }, async () => {
+    const world = await makeWorld()
+    try {
+      const job = quickJob({
+        anchorMs: Date.now() + 3_600_000,
+        overlap: 'replace',
+        task: { kind: 'command', argv: [process.execPath, '-e', 'await new Promise(r => setTimeout(r, 700))'] },
+      })
+      await world.store.putJob(job)
+      expect((await world.scheduler.runNow(job.id)).ok).toBe(true)
+      job.anchorMs = Date.now() - 2_000
+      await world.store.putJob(job)
+      await world.scheduler.tick()
+      const replacement = world.scheduler.runningOf(job.id)
+      expect(replacement).not.toBeNull()
+      expect(replacement?.seq).toBe(2)
+      await waitFor(() => world.store.listRuns(job.id).filter(run => run.status === 'ok').length === 1)
     } finally {
       await world.cleanup()
     }

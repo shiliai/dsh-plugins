@@ -69,7 +69,13 @@ export class CronScheduler {
     try {
       for (const job of this.deps.store.listJobs()) {
         if (this.disposed) return
-        await this.processJob(job, nowMs)
+        try {
+          await this.processJob(job, nowMs)
+        } catch (error) {
+          // A malformed or otherwise broken job must not stop other jobs or the host.
+          const detail = error instanceof Error ? error.message : String(error)
+          this.deps.warn(`任务 ${job.name} 调度失败: ${detail}`)
+        }
       }
     } finally {
       this.ticking = false
@@ -85,7 +91,12 @@ export class CronScheduler {
     }
     if (!job.enabled || job.archivedAt !== undefined) return
 
-    const due = lastDueBeat(job, job.lastFiredMs ?? Number.NEGATIVE_INFINITY, nowMs)
+    // A new cron job needs a finite cursor: Intl rejects the -Infinity date
+    // that an unset lastFiredMs would otherwise feed into nextCronFire().
+    // Interval arithmetic, however, intentionally uses -Infinity so its
+    // explicit anchor can determine the first beat.
+    const cursor = job.lastFiredMs ?? (job.trigger.kind === 'cron' ? job.createdAt : Number.NEGATIVE_INFINITY)
+    const due = lastDueBeat(job, cursor, nowMs)
     if (due === null) return
     if (due <= (job.lastFiredMs ?? Number.NEGATIVE_INFINITY)) return
 
@@ -164,7 +175,10 @@ export class CronScheduler {
     await this.deps.store.putRun(run, this.deps.config.historyLimit)
     this.deps.notify?.()
     void this.execute(job, run, controller).finally(() => {
-      this.live.delete(job.id)
+      // With overlap=replace, a newer run may have occupied this slot before
+      // the aborted older run reaches finally. Only the owner may clear it.
+      const current = this.live.get(job.id)
+      if (current?.run.seq === run.seq && current.controller === controller) this.live.delete(job.id)
       void this.drainQueue(job)
     })
   }

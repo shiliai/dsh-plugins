@@ -182,7 +182,7 @@ importers:
         version: 0.1.0-rc.6(f8724372086ccc1457fc84e7becee2e0)
       '@dsh-plugins/dsh-reading-core':
         specifier: github:shiliai/dsh-plugins#path:/packages/dsh-reading-core
-        version: git+ssh://git@github.com/shiliai/dsh-plugins.git#f45c30d5ffb50525c60767ef9ef26646dbe21884&path:/packages/dsh-reading-core
+        version: link:../../packages/dsh-reading-core
       dompurify:
         specifier: ^3.2.6
         version: 3.4.13
@@ -255,7 +255,7 @@ importers:
         version: 0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1))
       '@dsh-plugins/dsh-reading-core':
         specifier: github:shiliai/dsh-plugins#path:/packages/dsh-reading-core
-        version: git+ssh://git@github.com/shiliai/dsh-plugins.git#f45c30d5ffb50525c60767ef9ef26646dbe21884&path:/packages/dsh-reading-core
+        version: link:../../packages/dsh-reading-core
       foliate-js:
         specifier: ^1.0.1
         version: 1.0.1(patch_hash=4b5b10b1be8899a3e34595837f7c08d0b6e564494b92c1ef07292b599b5d538c)
@@ -2559,10 +2559,6 @@ packages:
 
   '@deepseek-ai/schemastery@3.18.1':
     resolution: {integrity: sha512-Qn0FCSwCQnpnj6SB31I6i2sIKgKWnkbJM8O0EU91Gv2UsYVvtZTl6IA0sCwk2e2MZf5S8w5hpq9QkeVvK9qwxg==}
-
-  '@dsh-plugins/dsh-reading-core@git+ssh://git@github.com/shiliai/dsh-plugins.git#f45c30d5ffb50525c60767ef9ef26646dbe21884&path:/packages/dsh-reading-core':
-    resolution: {commit: f45c30d5ffb50525c60767ef9ef26646dbe21884, path: /packages/dsh-reading-core, repo: git@github.com:shiliai/dsh-plugins.git, type: git}
-    version: 0.1.0
 
   '@earendil-works/pi-ai@0.82.1':
     resolution: {integrity: sha512-3WFYRhEp3lQB3444EhPMBcM7zSaEUE3eJgHOR7s4081NLqbw/FsWilIKWXSua0Gv3sRr7m9xMidR3pPDE7jI/A==}
@@ -7822,8 +7818,6 @@ snapshots:
     dependencies:
       '@deepseek-ai/cosmokit': 1.8.2
       '@standard-schema/spec': 1.1.0
-
-  '@dsh-plugins/dsh-reading-core@git+ssh://git@github.com/shiliai/dsh-plugins.git#f45c30d5ffb50525c60767ef9ef26646dbe21884&path:/packages/dsh-reading-core': {}
 
   '@earendil-works/pi-ai@0.82.1(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3)':
     dependencies:
