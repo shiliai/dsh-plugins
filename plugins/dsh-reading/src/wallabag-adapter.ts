@@ -96,6 +96,47 @@ export class WallabagAdapter {
     return this.toArticle(fetched)
   }
 
+  /**
+   * Resolve the wallabag entry id for a URL, or `undefined` when the URL is not
+   * saved yet (or wallabag cannot be asked). `exists.json` only returns a
+   * boolean, so the id is recovered from a search over `url`/`origin_url`.
+   */
+  async findEntryByUrl(url: string): Promise<string | undefined> {
+    let target: URL
+    try { target = new URL(url.trim()) } catch { return undefined }
+    try {
+      const exists = await this.request(`/entries/exists.json?url=${encodeURIComponent(target.toString())}`)
+      if (!isRecord(exists) || exists.exists !== true) return undefined
+      const search = await this.request(`/search.json?term=${encodeURIComponent(target.toString())}`)
+      const items = isRecord(search) && isRecord(search._embedded) && Array.isArray(search._embedded.items) ? search._embedded.items : []
+      for (const item of items) {
+        if (!isRecord(item)) continue
+        const itemUrl = typeof item.url === 'string' ? item.url : ''
+        const originUrl = typeof item.origin_url === 'string' ? item.origin_url : typeof item.original_url === 'string' ? item.original_url : ''
+        if (itemUrl === target.toString() || originUrl === target.toString()) {
+          const id = String(item.id ?? '')
+          return id === '' ? undefined : id
+        }
+      }
+      return undefined
+    } catch {
+      // Missing entry, network trouble, or auth trouble: treat as "not saved".
+      return undefined
+    }
+  }
+
+  /** Patch an entry (content/title/published_at) and invalidate the list cache. */
+  async updateEntry(id: string, patch: { content?: string; title?: string; publishedAt?: string }): Promise<void> {
+    if (!/^\d+$/u.test(id) && !/^[-\w]+$/u.test(id)) throw new ReadingError('Entry id is invalid.', 'INVALID_ID', 400)
+    const fields = new URLSearchParams()
+    if (patch.content !== undefined) fields.set('content', patch.content)
+    if (patch.title !== undefined) fields.set('title', patch.title)
+    if (patch.publishedAt !== undefined) fields.set('published_at', patch.publishedAt)
+    if ([...fields.keys()].length === 0) return
+    await this.request(`/entries/${encodeURIComponent(id)}.json`, { method: 'PATCH', body: fields, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } })
+    this.#entriesCache = undefined
+  }
+
   private async token(): Promise<string> {
     if (this.#bearerToken !== undefined && Date.now() < this.#expiresAt) return this.#bearerToken
     const body = new URLSearchParams({ grant_type: 'password', client_id: this.#config.clientId, client_secret: this.#config.clientSecret, username: this.#config.username, password: this.#config.password })
@@ -166,8 +207,19 @@ function readCredentialRefs(env: NodeJS.ProcessEnv): Record<string, string> {
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) }
 
+/** Marker text wallabag writes into entries whose extraction failed. */
+const UNEXTRACTED_MARKERS = ['doc.wallabag.org', "can't retrieve contents"] as const
+
+/** Detect wallabag's "can't retrieve contents" error placeholder (or missing content). */
+export function isUnextractedContent(html: string | undefined): boolean {
+  if (html === undefined) return true
+  if (html.trim() === '') return true
+  const lowered = html.toLowerCase()
+  return UNEXTRACTED_MARKERS.some(marker => lowered.includes(marker))
+}
+
 /** Keep Wallabag article markup inert before it crosses the HTML boundary. */
-function sanitizeHtml(value: string): string {
+export function sanitizeHtml(value: string): string {
   return value
     .replace(/<\/?(?:script|style|iframe|object|embed|form)(?:\s[^>]*)?>[\s\S]*?<\/?(?:script|style|iframe|object|embed|form)>/gi, '')
     .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')

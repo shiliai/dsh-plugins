@@ -3,11 +3,13 @@ import { createReadStream } from 'node:fs'
 import { copyFile, mkdir, stat, writeFile, access, rename } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { createHash } from 'node:crypto'
 import type { WebServer } from '@deepseek-ai/dsh-host-webserver'
-import type { Annotation, Locator, ReadingProgress } from './contracts.ts'
+import type { Annotation, Article, Locator, ReadingProgress } from './contracts.ts'
 import { LocalLibrary, ReadingError } from './library.ts'
 import { ReadingStateStore } from './state-store.ts'
-import { WallabagAdapter } from './wallabag-adapter.ts'
+import { WallabagAdapter, isUnextractedContent, sanitizeHtml } from './wallabag-adapter.ts'
+import { extractArticle, type ExtractedArticle } from './extract/index.ts'
 import { OpdsAdapter } from './opds-adapter.ts'
 import { articleMetadata, bookMetadata, projectDirectory, relativeProjectPath, type ReadingProjectConfig, writeProjectMetadata } from './project-cache.ts'
 import type { AgentSkillInput, SkillStore } from '@dsh-plugins/dsh-reading-core'
@@ -15,6 +17,8 @@ import type { AgentSkillInput, SkillStore } from '@dsh-plugins/dsh-reading-core'
 const API_PREFIX = '/dsh-reading/api'
 const MAX_IMPORT_BYTES = 512 * 1024 * 1024
 const execFileAsync = promisify(execFile)
+
+type ProjectAccess = { get(): ReadingProjectConfig; update(value: ReadingProjectConfig): Promise<void>; skills?(): SkillStore }
 
 const MIME_BY_FORMAT: Record<string, string> = {
   epub: 'application/epub+zip',
@@ -24,7 +28,7 @@ const MIME_BY_FORMAT: Record<string, string> = {
   azw: 'application/vnd.amazon.ebook',
 }
 
-export function registerReadingApi(webServer: WebServer, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter, project?: { get(): ReadingProjectConfig; update(value: ReadingProjectConfig): Promise<void>; skills?(): SkillStore }): () => void {
+export function registerReadingApi(webServer: WebServer, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter, project?: ProjectAccess): () => void {
   return webServer.register({
     kind: 'prefix',
     path: API_PREFIX,
@@ -38,7 +42,7 @@ export function registerReadingApi(webServer: WebServer, library: LocalLibrary, 
   })
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter, project?: { get(): ReadingProjectConfig; update(value: ReadingProjectConfig): Promise<void>; skills?(): SkillStore }): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter, project?: ProjectAccess): Promise<void> {
   const url = new URL(request.url ?? '/', 'http://dsh.local')
   const endpoint = url.pathname.slice(API_PREFIX.length) || '/'
 
@@ -122,10 +126,43 @@ async function route(request: IncomingMessage, response: ServerResponse, library
     await writeProjectMetadata(dir, metadata); sendJson(response, 200, { path, absolutePath: dir, metadata }); return
   }
 
+  // Body-based variant of the route below: writes the article project from the
+  // request payload alone, so locally extracted (non-wallabag) articles work too.
+  if (request.method === 'POST' && endpoint === '/project/article' && project !== undefined) {
+    const body = await readJson(request, 4 * 1024 * 1024)
+    if (!isRecord(body) || !isRecord(body.article)) throw new ReadingError('Request body requires article.', 'INVALID_BODY', 400)
+    const raw = body.article
+    if (typeof raw.id !== 'string' || raw.id === '' || typeof raw.title !== 'string' || raw.title === '' || typeof raw.url !== 'string' || raw.url === '') {
+      throw new ReadingError('Article requires id, title and url.', 'INVALID_BODY', 400)
+    }
+    const article: Article = {
+      id: raw.id,
+      source: raw.source === 'extract' ? 'extract' : 'wallabag',
+      url: raw.url,
+      title: raw.title,
+      ...(typeof raw.domain === 'string' ? { domain: raw.domain } : {}),
+      ...(typeof raw.originalUrl === 'string' ? { originalUrl: raw.originalUrl } : {}),
+      ...(typeof raw.publishedAt === 'string' ? { publishedAt: raw.publishedAt } : {}),
+      ...(typeof raw.updatedAt === 'string' ? { updatedAt: raw.updatedAt } : {}),
+      isArchived: raw.isArchived === true,
+      savedAt: typeof raw.savedAt === 'string' ? raw.savedAt : new Date().toISOString(),
+      ...(typeof raw.extractedHtml === 'string' ? { extractedHtml: sanitizeHtml(raw.extractedHtml) } : {}),
+    }
+    await writeArticleProject(project, article)
+    const cfg = project.get()
+    const dir = projectDirectory(cfg, 'articles', article.id, article.title)
+    sendJson(response, 200, { path: relativeProjectPath(cfg.rootDir, dir), absolutePath: dir })
+    return
+  }
+
   const projectArticle = /^\/project\/article\/([^/]+)$/u.exec(endpoint)
   if (projectArticle !== null && request.method === 'POST' && project !== undefined && wallabag !== undefined) {
-    const article = await wallabag.getEntry(decodeURIComponent(projectArticle[1]!)); const cfg = project.get(); const dir = projectDirectory(cfg, 'articles', article.id, article.title); await mkdir(dir, { recursive: true })
-    const path = relativeProjectPath(cfg.rootDir, dir); await writeProjectMetadata(dir, articleMetadata(article, path)); const plain = (article.extractedHtml ?? '').replace(/<[^>]+>/gu, ' ').replace(/\s+/gu, ' ').trim(); await writeFile(`${dir}/article.md`, `# ${article.title}\n\nSource: ${article.url}\n\n${plain}\n`, 'utf8'); sendJson(response, 200, { path, absolutePath: dir }); return
+    const article = await wallabag.getEntry(decodeURIComponent(projectArticle[1]!))
+    await writeArticleProject(project, article)
+    const cfg = project.get()
+    const dir = projectDirectory(cfg, 'articles', article.id, article.title)
+    sendJson(response, 200, { path: relativeProjectPath(cfg.rootDir, dir), absolutePath: dir })
+    return
   }
 
   if (request.method === 'GET' && endpoint === '/opds/books') {
@@ -160,6 +197,89 @@ async function route(request: IncomingMessage, response: ServerResponse, library
     return
   }
 
+  // Open-first article flow: local extraction happens before/without wallabag,
+  // so CSR pages that wallabag cannot fetch stay readable.
+  if (request.method === 'POST' && endpoint === '/articles/open') {
+    const body = await readJson(request, 64 * 1024)
+    if (!isRecord(body) || typeof body.url !== 'string' || body.url.trim() === '') throw new ReadingError('Request body requires url.', 'INVALID_BODY', 400)
+    const target = normalizeHttpUrl(body.url)
+    if (wallabag !== undefined) {
+      const entryId = await wallabag.findEntryByUrl(target)
+      if (entryId !== undefined) {
+        const article = await wallabag.getEntry(entryId)
+        if (isUnextractedContent(article.extractedHtml)) {
+          // Stored entry holds wallabag's fetch-error placeholder; repair from
+          // the local pipeline and fall back to the stored entry on failure.
+          const repaired = await repairWallabagEntry(wallabag, entryId, target)
+          sendJson(response, 200, repaired === undefined ? { article, extraction: 'wallabag' } : { article: repaired, extraction: 'repaired' })
+          return
+        }
+        sendJson(response, 200, { article, extraction: 'wallabag' })
+        return
+      }
+    }
+    const local = await extractArticle(target).catch(() => undefined)
+    if (local !== undefined) {
+      sendJson(response, 200, { article: localExtractArticle(target, local), extraction: 'local' })
+      return
+    }
+    if (wallabag !== undefined) {
+      sendJson(response, 200, { article: await wallabag.importUrl(target), extraction: 'imported' })
+      return
+    }
+    throw new ReadingError('无法提取该页面正文。', 'EXTRACT_FAILED', 502)
+  }
+
+  // Second step of the flow: persist the article into wallabag in the
+  // background. Repairing a broken entry takes priority over duplicating it.
+  if (request.method === 'POST' && endpoint === '/articles/collect') {
+    if (wallabag === undefined) throw new ReadingError('Wallabag is not configured.', 'WALLABAG_UNAVAILABLE', 503)
+    const body = await readJson(request, 2 * 1024 * 1024)
+    if (!isRecord(body) || typeof body.url !== 'string' || body.url.trim() === '') throw new ReadingError('Request body requires url.', 'INVALID_BODY', 400)
+    const target = normalizeHttpUrl(body.url)
+    const providedTitle = typeof body.title === 'string' && body.title.trim() !== '' ? body.title.trim() : undefined
+    const providedHtml = typeof body.html === 'string' && body.html.trim() !== '' ? body.html : undefined
+    const providedPublishedAt = typeof body.publishedAt === 'string' && body.publishedAt.trim() !== '' ? body.publishedAt.trim() : undefined
+
+    // Client-provided html wins; remaining gaps are filled by local extraction.
+    let contentHtml = providedHtml !== undefined ? sanitizeHtml(providedHtml) : undefined
+    let contentTitle = providedTitle
+    let contentPublishedAt = providedPublishedAt
+    if (contentHtml === undefined || contentTitle === undefined || contentPublishedAt === undefined) {
+      const extracted = await extractArticle(target).catch(() => undefined)
+      if (extracted !== undefined) {
+        if (contentHtml === undefined) contentHtml = sanitizeHtml(extracted.html)
+        if (contentTitle === undefined) contentTitle = extracted.title
+        if (contentPublishedAt === undefined) contentPublishedAt = extracted.publishedAt
+      }
+    }
+
+    const entryId = await wallabag.findEntryByUrl(target)
+    let action: string
+    let id: string
+    if (entryId !== undefined) {
+      id = entryId
+      const current = await wallabag.getEntry(id)
+      if (isUnextractedContent(current.extractedHtml) && contentHtml !== undefined) {
+        await patchEntryContent(wallabag, id, contentHtml, contentTitle, contentPublishedAt)
+        action = 'repaired'
+      } else {
+        action = 'unchanged'
+      }
+    } else {
+      // Always create the entry, even without content: saving intent wins.
+      const created = await wallabag.importUrl(target)
+      id = created.id.replace(/^wallabag:/u, '')
+      if (isUnextractedContent(created.extractedHtml) && contentHtml !== undefined) {
+        await patchEntryContent(wallabag, id, contentHtml, contentTitle, contentPublishedAt)
+      }
+      action = 'created'
+    }
+    const article = await wallabag.getEntry(id)
+    sendJson(response, 200, { article, action })
+    return
+  }
+
   if (endpoint === '/wallabag/entries') {
     if (wallabag === undefined) throw new ReadingError('Wallabag is not configured.', 'WALLABAG_UNAVAILABLE', 503)
     if (request.method === 'GET') {
@@ -172,13 +292,7 @@ async function route(request: IncomingMessage, response: ServerResponse, library
       const body = await readJson(request, 32 * 1024)
       if (!isRecord(body) || typeof body.url !== 'string' || body.url.trim() === '') throw new ReadingError('Request body requires url.', 'INVALID_BODY', 400)
       const article = await wallabag.importUrl(body.url)
-      if (project !== undefined) {
-        const dir = projectDirectory(project.get(), 'articles', article.id, article.title)
-        await writeProjectMetadata(dir, articleMetadata(article, relativeProjectPath(project.get().rootDir, dir)))
-        const { writeFile } = await import('node:fs/promises')
-        const plain = (article.extractedHtml ?? '').replace(/<[^>]+>/gu, ' ').replace(/\s+/gu, ' ').trim()
-        await writeFile(`${dir}/article.md`, `# ${article.title}\n\nSource: ${article.url}\n\n${plain}\n`, 'utf8')
-      }
+      if (project !== undefined) await writeArticleProject(project, article)
       sendJson(response, 200, { article })
       return
     }
@@ -186,14 +300,14 @@ async function route(request: IncomingMessage, response: ServerResponse, library
   const articleMatch = /^\/wallabag\/entries\/([^/]+)$/u.exec(endpoint)
   if (articleMatch !== null && articleMatch[1] !== undefined && request.method === 'GET') {
     if (wallabag === undefined) throw new ReadingError('Wallabag is not configured.', 'WALLABAG_UNAVAILABLE', 503)
-    const article = await wallabag.getEntry(decodeURIComponent(articleMatch[1]))
-    if (project !== undefined) {
-      const dir = projectDirectory(project.get(), 'articles', article.id, article.title)
-      await writeProjectMetadata(dir, articleMetadata(article, relativeProjectPath(project.get().rootDir, dir)))
-      const { writeFile } = await import('node:fs/promises')
-      const plain = (article.extractedHtml ?? '').replace(/<[^>]+>/gu, ' ').replace(/\s+/gu, ' ').trim()
-      await writeFile(`${dir}/article.md`, `# ${article.title}\n\nSource: ${article.url}\n\n${plain}\n`, 'utf8')
+    const entryId = decodeURIComponent(articleMatch[1])
+    let article = await wallabag.getEntry(entryId)
+    if (isUnextractedContent(article.extractedHtml)) {
+      // Self-heal legacy entries whose content is wallabag's error placeholder.
+      const repaired = await repairWallabagEntry(wallabag, entryId, article.url)
+      if (repaired !== undefined) article = repaired
     }
+    if (project !== undefined) await writeArticleProject(project, article)
     sendJson(response, 200, { article })
     return
   }
@@ -257,6 +371,64 @@ async function route(request: IncomingMessage, response: ServerResponse, library
 function toPublicBook<T extends { filePath: string }>(book: T): Omit<T, 'filePath'> {
   const { filePath: _filePath, ...publicBook } = book
   return publicBook
+}
+
+function normalizeHttpUrl(value: string): string {
+  let parsed: URL
+  try { parsed = new URL(value.trim()) } catch { throw new ReadingError('URL is invalid.', 'INVALID_URL', 400) }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new ReadingError('Only http(s) URLs can be used.', 'INVALID_URL', 400)
+  return parsed.toString()
+}
+
+/** Stable client-side id for locally extracted articles (no wallabag entry yet). */
+function sha1Prefix(value: string): string {
+  return createHash('sha1').update(value).digest('hex').slice(0, 16)
+}
+
+function localExtractArticle(target: string, extracted: ExtractedArticle): Article {
+  return {
+    id: `extract:${sha1Prefix(target)}`,
+    source: 'extract',
+    url: target,
+    originalUrl: target,
+    title: extracted.title,
+    domain: new URL(target).hostname,
+    ...(extracted.publishedAt !== undefined ? { publishedAt: extracted.publishedAt } : {}),
+    isArchived: false,
+    savedAt: new Date().toISOString(),
+    extractedHtml: sanitizeHtml(extracted.html),
+  }
+}
+
+/** Best-effort: write locally extracted content over a wallabag error placeholder. */
+async function repairWallabagEntry(wallabag: WallabagAdapter, id: string, url: string): Promise<Article | undefined> {
+  try {
+    const extracted = await extractArticle(url)
+    if (extracted === undefined) return undefined
+    await patchEntryContent(wallabag, id, sanitizeHtml(extracted.html), extracted.title, extracted.publishedAt)
+    return await wallabag.getEntry(id)
+  } catch {
+    return undefined
+  }
+}
+
+async function patchEntryContent(wallabag: WallabagAdapter, id: string, content: string, title?: string, publishedAt?: string): Promise<void> {
+  await wallabag.updateEntry(id, {
+    content,
+    ...(title !== undefined ? { title } : {}),
+    ...(publishedAt !== undefined ? { publishedAt } : {}),
+  })
+}
+
+/** Mirror an article into the Reading workspace (metadata.json + article.md). */
+async function writeArticleProject(project: ProjectAccess, article: Article): Promise<void> {
+  const cfg = project.get()
+  const dir = projectDirectory(cfg, 'articles', article.id, article.title)
+  await mkdir(dir, { recursive: true })
+  const path = relativeProjectPath(cfg.rootDir, dir)
+  await writeProjectMetadata(dir, articleMetadata(article, path))
+  const plain = (article.extractedHtml ?? '').replace(/<[^>]+>/gu, ' ').replace(/\s+/gu, ' ').trim()
+  await writeFile(`${dir}/article.md`, `# ${article.title}\n\nSource: ${article.url}\n\n${plain}\n`, 'utf8')
 }
 
 /** Stream a local book file, honoring `Range` (required by PDF.js). */

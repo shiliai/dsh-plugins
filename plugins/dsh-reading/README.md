@@ -13,6 +13,10 @@ Immersive reading workbench for DeepSeek Harness. Read EPUB / PDF side-by-side w
 - **PDF**: rendered by [pdf.js](https://mozilla.github.io/pdf.js/) in continuous-scroll mode with lazy page rendering.
 - **Progress**: persisted locally in the plugin data dir (`state.json`); EPUB restores by epubcfi, PDF by page + scroll ratio.
 - **Wallabag read-later**: paste an HTTP(S) URL to save it, fetch the extracted article, open it in the middle pane, and persist article scroll progress.
+
+### Open-first reading flow
+
+Pasting a URL no longer waits for Wallabag's own extraction. The article opens immediately from the local extraction pipeline (built-in adapter for client-rendered z.ai blog posts: the page shell references an MDX bundle, which is parsed into HTML without executing JavaScript), and the article is saved to Wallabag in the background afterwards — a failed save never blocks reading. Existing Wallabag entries whose content is the "wallabag can't retrieve contents" error placeholder are repaired automatically on open/view by re-extracting the content locally and writing it back via the Wallabag API.
 - **Math rendering**: `\(...\)` / `\[...\]` LaTeX fragments inside Wallabag articles (e.g. WeChat formula articles extracted by a patched graby) render via bundled MathJax SVG output — no network fonts needed.
 - **NAS Calibre-Web OPDS**: browse the configured nasubuntu catalogue and download a selected book into the local reader cache.
 - **Import**: click 导入 in the library pane (`.epub` / `.pdf` / `.azw3` / `.mobi` / `.azw` accepted; Amazon formats render after the M3 conversion pipeline).

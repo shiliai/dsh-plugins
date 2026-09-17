@@ -23,6 +23,7 @@ export function ReadLaterView({ onOpen, onSendMetadata }: Props) {
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [menu, setMenu] = useState<{ article: Article; x: number; y: number } | null>(null)
 
   const refresh = async () => {
@@ -46,11 +47,25 @@ export function ReadLaterView({ onOpen, onSendMetadata }: Props) {
     if (value === '') return
     setSubmitting(true)
     setError(null)
+    setNotice(null)
     try {
-      const result = await readingApi.importUrl(value)
+      // Open-first: reading starts from the local pipeline and never waits for
+      // wallabag extraction.
+      const result = await readingApi.openArticle(value)
       setUrl('')
       setArticles(current => [result.article, ...current.filter(item => item.id !== result.article.id)])
       onOpen(result.article)
+      // Collect in the background: saving must not block reading.
+      const extracted = result.extraction === 'local' && result.article.extractedHtml !== undefined
+        ? {
+            title: result.article.title,
+            html: result.article.extractedHtml,
+            ...(result.article.publishedAt === undefined ? {} : { publishedAt: result.article.publishedAt }),
+          }
+        : undefined
+      void readingApi.collectArticle(value, extracted)
+        .then(() => { setNotice('已收藏到稍后读'); return refresh() })
+        .catch(err => { setError(`收藏失败:${err instanceof Error ? err.message : String(err)}`) })
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -75,16 +90,17 @@ export function ReadLaterView({ onOpen, onSendMetadata }: Props) {
         <input className={css.readLaterInput} type="url" value={url} onChange={event => setUrl(event.target.value)}
           placeholder="粘贴文章 URL" aria-label="文章 URL" disabled={submitting} />
         <button className={css.toolButton} type="submit" disabled={submitting || url.trim() === ''}>
-          <Send size={13} /> {submitting ? '收藏中…' : '收藏并阅读'}
+          <Send size={13} /> {submitting ? '打开中…' : '打开阅读'}
         </button>
         <button className={css.iconButton} type="button" title="刷新稍后读" aria-label="刷新稍后读" onClick={() => void refresh()} disabled={loading}>
           <RefreshCw size={14} />
         </button>
       </form>
       {error !== null && <div className={css.libraryError} role="alert">{error}</div>}
+      {error === null && notice !== null && <div className={css.libraryError} role="status">{notice}</div>}
       <div className={css.readLaterList}>
         {loading && articles.length === 0 ? <div className={css.panelLoading}>加载中…</div> : null}
-        {!loading && articles.length === 0 ? <div className={css.panelLoading}><Clock size={26} /><p>暂无稍后读。粘贴 URL 收藏一篇文章。</p></div> : null}
+        {!loading && articles.length === 0 ? <div className={css.panelLoading}><Clock size={26} /><p>暂无稍后读。粘贴 URL 打开阅读,文章会自动收藏。</p></div> : null}
         {articles.map(article => (
           <button key={article.id} type="button" className={css.articleCard} onClick={() => void openArticle(article)} onContextMenu={event => { event.preventDefault(); setMenu({ article, x: event.clientX, y: event.clientY }) }} title="右键打开操作菜单">
             <span className={css.articleMeta}>

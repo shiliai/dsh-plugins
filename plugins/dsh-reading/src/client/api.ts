@@ -58,7 +58,23 @@ export const readingApi = {
     body: JSON.stringify({ url }),
   }),
   wallabagEntry: (id: string) => request<{ article: Article }>(`/wallabag/entries/${encodeURIComponent(id.replace(/^wallabag:/u, ''))}`),
-  ensureArticleProject: (id: string) => request<{ path: string; absolutePath: string }>(`/project/article/${encodeURIComponent(id.replace(/^wallabag:/u, ''))}`, { method: 'POST' }),
+  /** Open-first: read the article from the local pipeline (wallabag stays optional). */
+  openArticle: (url: string) => request<{ article: Article; extraction: string }>('/articles/open', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  }),
+  /** Second step: persist into wallabag in the background; failures never block reading. */
+  collectArticle: (url: string, extracted?: { title: string; html: string; publishedAt?: string }) => request<{ article: Article; action: string }>('/articles/collect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url, ...(extracted === undefined ? {} : extracted) }),
+  }),
+  ensureArticleProjectFor: (article: Article) => request<{ path: string; absolutePath: string }>('/project/article', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ article }),
+  }),
   skillList: () => request<{ result: AgentSkillListResult }>('/skills'),
   skillGet: (name: string) => request<AgentSkillDocument>(`/skill?name=${encodeURIComponent(name)}`),
   skillWrite: (payload: { input: AgentSkillInput; previousName?: string; expectedRevision?: string }) => request<{ result: { value: AgentSkillDocument } }>('/skill', {

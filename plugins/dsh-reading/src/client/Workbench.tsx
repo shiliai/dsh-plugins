@@ -112,7 +112,7 @@ export function Workbench({ store, close, addArticleContext, addBookContext, add
   }
 
   const onOpenArticle = (value: Article) => {
-    void readingApi.ensureArticleProject(value.id).then(result => {
+    void readingApi.ensureArticleProjectFor(value).then(result => {
       const enriched = { ...value, projectPath: result.path, projectAbsolutePath: result.absolutePath }
       return openProjectSession(result.absolutePath).then(() => enriched)
     }).catch(() => value).then(async enriched => {

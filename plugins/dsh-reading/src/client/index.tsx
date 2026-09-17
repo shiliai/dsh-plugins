@@ -89,7 +89,7 @@ export function apply(ctx: ClientContext): void {
     const settings = await readingApi.settings()
     await ensureReadingWorkspace(settings.rootDir)
     const project = article.projectAbsolutePath === undefined || article.projectPath === undefined
-      ? await readingApi.ensureArticleProject(article.id)
+      ? await readingApi.ensureArticleProjectFor(article)
       : { path: article.projectPath, absolutePath: article.projectAbsolutePath }
     const vaultRoot = await getVaultRoot()
     if (vaultRoot !== undefined) await workspaces.register(vaultRoot)
