@@ -37,9 +37,11 @@ test('keeps note workflow and composer routing usable across session transitions
   }
   await page.getByLabel('Obsidian notes').click()
   await expect(page.locator('[data-dsh-obsidian-workbench]')).toBeVisible()
+  const settingsDialog = page.getByRole('dialog', { name: 'Settings' })
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  await expect(page.getByRole('dialog', { name: 'dsh-obsidian settings' })).toBeVisible()
-  await page.getByRole('dialog', { name: 'dsh-obsidian settings' }).getByLabel('Back to sessions').click()
+  await settingsDialog.getByRole('button', { name: 'Plugins' }).click()
+  await expect(settingsDialog.getByText('Obsidian skills')).toBeVisible()
+  await settingsDialog.getByRole('button', { name: 'Close' }).click()
   await page.getByLabel('Select vault directory').click()
   await expect(page.getByRole('region', { name: 'Select vault directory' })).toBeVisible()
   await page.getByRole('button', { name: 'Projects' }).click()
