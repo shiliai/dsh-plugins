@@ -178,28 +178,61 @@ export class CalibreWebClient {
     return response.text()
   }
 
+  /**
+   * Fetch with explicit redirect handling: the session cookie rotates across
+   * login redirects (302 → GET /), and fetch only exposes the final response's
+   * set-cookie headers, which would drop the authenticated session. Following
+   * redirects manually lets the jar capture every hop.
+   */
   async #request(path: string, init: { method?: string; headers?: Record<string, string>; body?: string | Uint8Array; timeoutMs?: number } = {}): Promise<Response> {
-    const headers: Record<string, string> = { 'User-Agent': USER_AGENT, ...(this.#cookies.size > 0 ? { Cookie: [...this.#cookies.entries()].map(([key, value]) => `${key}=${value}`).join('; ') } : {}), ...init.headers }
-    let response: Response
-    try {
-      // Typed-array body types vary across DOM/undici typings; BodyInit keeps the exact bytes.
-      const body = init.body as BodyInit | undefined
-      response = await this.#fetch(`${this.#config.url}${path}`, {
-        method: init.method ?? 'GET',
-        ...(body === undefined ? {} : { body }),
-        headers,
-        signal: AbortSignal.timeout(init.timeoutMs ?? this.#config.timeoutMs ?? 60_000),
-      })
-    } catch (error) {
-      if (error instanceof ReadingError) throw error
-      throw new ReadingError('calibre-web 不可达。', 'CALIBRE_UNAVAILABLE', 503)
+    let url = `${this.#config.url}${path}`
+    let method = init.method ?? 'GET'
+    let body = init.body as BodyInit | undefined
+    for (let hop = 0; hop < 6; hop++) {
+      const headers: Record<string, string> = {
+        'User-Agent': USER_AGENT,
+        ...(this.#cookies.size > 0 ? { Cookie: [...this.#cookies.entries()].map(([key, value]) => `${key}=${value}`).join('; ') } : {}),
+        ...init.headers,
+      }
+      let response: Response
+      try {
+        response = await this.#fetch(url, {
+          method,
+          // Typed-array body types vary across DOM/undici typings; BodyInit keeps the exact bytes.
+          ...(body === undefined ? {} : { body }),
+          headers,
+          redirect: 'manual',
+          signal: AbortSignal.timeout(init.timeoutMs ?? this.#config.timeoutMs ?? 60_000),
+        })
+      } catch (error) {
+        if (error instanceof ReadingError) throw error
+        throw new ReadingError('calibre-web 不可达。', 'CALIBRE_UNAVAILABLE', 503)
+      }
+      for (const cookie of response.headers.getSetCookie()) {
+        const pair = cookie.split(';', 1)[0] ?? ''
+        const index = pair.indexOf('=')
+        if (index > 0) this.#cookies.set(pair.slice(0, index).trim(), pair.slice(index + 1).trim())
+      }
+      const location = response.headers.get('location')
+      if (response.status >= 300 && response.status < 400 && location !== null) {
+        await response.body?.cancel().catch(() => {})
+        // 301/302/303 rewrite POST to GET; the body must not ride along.
+        if (method !== 'GET' && (response.status === 301 || response.status === 302 || response.status === 303)) {
+          method = 'GET'
+          body = undefined
+          if (init.headers !== undefined) delete init.headers['Content-Type']
+        }
+        url = new URL(location, url).toString()
+        continue
+      }
+      try {
+        if (response.url !== url) Object.defineProperty(response, 'url', { value: url, configurable: true })
+      } catch {
+        // Test doubles may pin url as non-configurable; the status checks still hold.
+      }
+      return response
     }
-    for (const cookie of response.headers.getSetCookie()) {
-      const pair = cookie.split(';', 1)[0] ?? ''
-      const index = pair.indexOf('=')
-      if (index > 0) this.#cookies.set(pair.slice(0, index).trim(), pair.slice(index + 1).trim())
-    }
-    return response
+    throw new ReadingError('calibre-web 重定向次数过多。', 'CALIBRE_RESPONSE', 502)
   }
 }
 

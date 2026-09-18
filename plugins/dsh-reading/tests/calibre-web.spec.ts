@@ -100,6 +100,29 @@ describe('CalibreWebClient.uploadBook', () => {
     expect(String(titleCall?.init?.body)).toBe(JSON.stringify({ pk: [42], value: '我的书' }))
   })
 
+  it('follows login redirects and keeps the rotated session cookie', async () => {
+    const requests: Array<{ url: string; cookie?: string | undefined }> = []
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = String(input)
+      const cookie = (init?.headers as Record<string, string> | undefined)?.Cookie
+      requests.push({ url, cookie })
+      if (url.endsWith('/login') && (init?.method ?? 'GET') === 'GET') {
+        return respond(loginPage('csrf-rot'), { headers: { 'set-cookie': 'session=anonymous; Path=/; HttpOnly' } })
+      }
+      if (url.includes('/login') && init?.method === 'POST') {
+        // Successful logins rotate the session cookie on the 302 hop; a fetch
+        // that only surfaces final-response headers would lose it.
+        return respond('', { status: 302, headers: { location: '/', 'set-cookie': 'session=authenticated; Path=/; HttpOnly' } })
+      }
+      if (new URL(url).pathname === '/') return respond('<html>home</html>')
+      return respond('unexpected', { status: 500 })
+    })
+    const client = new CalibreWebClient(config, fetchMock as unknown as typeof fetch)
+    await client.login()
+    const homeGet = requests.find(request => new URL(request.url).pathname === '/')
+    expect(homeGet?.cookie).toContain('session=authenticated')
+  })
+
   it('surfaces missing upload permission as a clear error', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       const url = String(input)
