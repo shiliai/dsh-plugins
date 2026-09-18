@@ -108,6 +108,38 @@ describe('reading HTTP API', () => {
     expect(outOfRange.status).toBe(416)
   })
 
+  it('reads and writes book metadata sidecars', async () => {
+    const { book } = await (await fetch(`${base}/import?filename=meta%20book.pdf`, {
+      method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: Buffer.from('%PDF-1.4 fake'),
+    })).json() as { book: { id: string; title: string } }
+    expect(book.title).toBe('meta book')
+
+    const missing = await fetch(`${base}/book/${encodeURIComponent(book.id)}/metadata`)
+    expect(missing.status).toBe(200)
+    expect((await missing.json() as { metadata: unknown }).metadata).toBeNull()
+
+    const put = await fetch(`${base}/book/${encodeURIComponent(book.id)}/metadata`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: '元数据标题', author: '作者', tags: ['标签甲', '标签乙'], summary: '概要内容' }),
+    })
+    expect(put.status).toBe(200)
+    const { book: updated } = await put.json() as { book: { title: string; author: string; metadata: { tags: string[] } } }
+    expect(updated.title).toBe('元数据标题')
+    expect(updated.author).toBe('作者')
+    expect(updated.metadata.tags).toEqual(['标签甲', '标签乙'])
+
+    const listed = await (await fetch(`${base}/library`)).json() as { books: Array<{ id: string; title: string }> }
+    expect(listed.books[0]).toMatchObject({ id: book.id, title: '元数据标题' })
+
+    const got = await (await fetch(`${base}/book/${encodeURIComponent(book.id)}/metadata`)).json() as { metadata: { summary: string } }
+    expect(got.metadata.summary).toBe('概要内容')
+
+    const bad = await fetch(`${base}/book/${encodeURIComponent(book.id)}/metadata`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tags: 'not-an-array' }),
+    })
+    expect(bad.status).toBe(400)
+  })
+
   it('persists reading progress', async () => {
     const { book } = await (await fetch(`${base}/import?filename=p.epub`, {
       method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: Buffer.from('fake'),
@@ -379,5 +411,68 @@ describe('reading HTTP API with wallabag (open-first flow)', () => {
     const { article } = await response.json() as { article: { id: string; extractedHtml?: string } }
     expect(article.extractedHtml).toContain('<p>Locally extracted body.</p>')
     expect(patchCalls.map(call => call.id)).toContain(9)
+  })
+
+  it('reports calibre-web as unconfigured when no client is registered', async () => {
+    const response = await httpFetch(`${base}/calibre/upload`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookId: 'local:x' }),
+    })
+    expect(response.status).toBe(503)
+    expect((await response.json() as { code: string }).code).toBe('CALIBRE_UNAVAILABLE')
+  })
+})
+
+describe('reading HTTP API /calibre/upload', () => {
+  it('streams the local file to calibre-web with the requested metadata', async () => {
+    const local = await mkdtemp(join(tmpdir(), 'dsh-reading-calibre-api-'))
+    const calibreServer = createServer()
+    try {
+      const calibreLibrary = new LocalLibrary(local)
+      const calibreStore = await ReadingStateStore.create(local)
+      const uploaded: { fileName?: string; metadata?: unknown } = {}
+      const fakeCalibre = {
+        uploadBook: vi.fn(async (fileName: string, data: Buffer, metadata?: unknown) => {
+          uploaded.fileName = fileName
+          uploaded.metadata = metadata
+          expect(data.toString()).toBe('%PDF-1.4 calibre upload payload')
+          return { calibreBookId: '9', location: '/admin/book/9', warnings: ['calibre-web 账号缺少编辑权限，作者 未写入。'] }
+        }),
+      }
+      const fakeWebServer = {
+        register(route: { handler: (req: IncomingMessageLike, res: ServerResponseLike) => Promise<void> }) {
+          const listener = (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse): void => {
+            void route.handler(req as IncomingMessageLike, res as ServerResponseLike)
+          }
+          calibreServer.on('request', listener)
+          return () => calibreServer.off('request', listener)
+        },
+      }
+      registerReadingApi(fakeWebServer as never, calibreLibrary, calibreStore, undefined, undefined, undefined, fakeCalibre as never)
+      await new Promise<void>(resolve => calibreServer.listen(0, '127.0.0.1', resolve))
+      const calibreBase = `http://127.0.0.1:${(calibreServer.address() as AddressInfo).port}/dsh-reading/api`
+
+      const { book } = await (await fetch(`${calibreBase}/import?filename=up%20book.pdf`, {
+        method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: Buffer.from('%PDF-1.4 calibre upload payload'),
+      })).json() as { book: { id: string } }
+
+      const response = await fetch(`${calibreBase}/calibre/upload`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookId: book.id, title: '上传标题', author: '作者', tags: ['甲'], summary: '概要' }),
+      })
+      expect(response.status).toBe(200)
+      const { result } = await response.json() as { result: { calibreBookId: string; warnings: string[] } }
+      expect(result.calibreBookId).toBe('9')
+      expect(result.warnings).toHaveLength(1)
+      expect(uploaded.fileName).toBe('up book.pdf')
+      expect(uploaded.metadata).toMatchObject({ title: '上传标题', author: '作者', tags: ['甲'], summary: '概要' })
+
+      const missing = await fetch(`${calibreBase}/calibre/upload`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookId: 'local:missing' }),
+      })
+      expect(missing.status).toBe(404)
+    } finally {
+      calibreServer.close()
+      await rm(local, { recursive: true, force: true })
+    }
   })
 })

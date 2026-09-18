@@ -1,16 +1,17 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createReadStream } from 'node:fs'
-import { copyFile, mkdir, stat, writeFile, access, rename } from 'node:fs/promises'
+import { copyFile, mkdir, stat, writeFile, access, rename, readFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createHash } from 'node:crypto'
 import type { WebServer } from '@deepseek-ai/dsh-host-webserver'
-import type { Annotation, Article, Locator, ReadingProgress } from './contracts.ts'
+import type { Annotation, Article, BookMetadata, Locator, ReadingProgress } from './contracts.ts'
 import { LocalLibrary, ReadingError } from './library.ts'
 import { ReadingStateStore } from './state-store.ts'
 import { WallabagAdapter, isUnextractedContent, sanitizeHtml } from './wallabag-adapter.ts'
 import { extractArticle, type ExtractedArticle } from './extract/index.ts'
 import { OpdsAdapter } from './opds-adapter.ts'
+import { CalibreWebClient } from './calibre-web.ts'
 import { articleMetadata, bookMetadata, projectDirectory, relativeProjectPath, type ReadingProjectConfig, writeProjectMetadata } from './project-cache.ts'
 import type { AgentSkillInput, SkillStore } from '@dsh-plugins/dsh-reading-core'
 
@@ -28,13 +29,13 @@ const MIME_BY_FORMAT: Record<string, string> = {
   azw: 'application/vnd.amazon.ebook',
 }
 
-export function registerReadingApi(webServer: WebServer, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter, project?: ProjectAccess): () => void {
+export function registerReadingApi(webServer: WebServer, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter, project?: ProjectAccess, calibre?: CalibreWebClient): () => void {
   return webServer.register({
     kind: 'prefix',
     path: API_PREFIX,
     handler: async (request, response) => {
       try {
-        await route(request, response, library, store, wallabag, opds, project)
+        await route(request, response, library, store, wallabag, opds, project, calibre)
       } catch (error) {
         sendError(response, error)
       }
@@ -42,7 +43,7 @@ export function registerReadingApi(webServer: WebServer, library: LocalLibrary, 
   })
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter, project?: ProjectAccess): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter, project?: ProjectAccess, calibre?: CalibreWebClient): Promise<void> {
   const url = new URL(request.url ?? '/', 'http://dsh.local')
   const endpoint = url.pathname.slice(API_PREFIX.length) || '/'
 
@@ -364,6 +365,42 @@ async function route(request: IncomingMessage, response: ServerResponse, library
     return
   }
 
+  const bookMetadataMatch = /^\/book\/([^/]+)\/metadata$/u.exec(endpoint)
+  if (bookMetadataMatch !== null && bookMetadataMatch[1] !== undefined) {
+    const bookId = decodeURIComponent(bookMetadataMatch[1])
+    if (request.method === 'GET') {
+      const book = (await library.listBooks(store.snapshot.progress)).find(item => item.id === bookId)
+      if (book === undefined) throw new ReadingError('Book not found.', 'NOT_FOUND', 404)
+      sendJson(response, 200, { metadata: book.metadata ?? null })
+      return
+    }
+    if (request.method === 'PUT') {
+      const body = await readJson(request, 256 * 1024)
+      const patch = normalizeMetadataPatch(body)
+      const book = await library.saveMetadata(bookId, patch, store.snapshot.progress)
+      sendJson(response, 200, { book: toPublicBook(book), metadata: book.metadata ?? null })
+      return
+    }
+  }
+
+  if (request.method === 'POST' && endpoint === '/calibre/upload') {
+    if (calibre === undefined) throw new ReadingError('calibre-web 未配置（READING_CALIBRE_WEB_URL）。', 'CALIBRE_UNAVAILABLE', 503)
+    const body = await readJson(request, 256 * 1024)
+    if (!isRecord(body) || typeof body.bookId !== 'string' || body.bookId === '') throw new ReadingError('Request body requires bookId.', 'INVALID_BODY', 400)
+    const book = (await library.listBooks(store.snapshot.progress)).find(item => item.id === body.bookId)
+    if (book === undefined) throw new ReadingError('Book not found.', 'NOT_FOUND', 404)
+    const file = await library.resolveFile(book.id)
+    const data = await readFile(file.filePath)
+    const result = await calibre.uploadBook(file.fileName, data, {
+      ...(typeof body.title === 'string' ? { title: body.title } : {}),
+      ...(typeof body.author === 'string' ? { author: body.author } : {}),
+      ...(Array.isArray(body.tags) ? { tags: body.tags.filter((tag): tag is string => typeof tag === 'string') } : {}),
+      ...(typeof body.summary === 'string' ? { summary: body.summary } : {}),
+    })
+    sendJson(response, 200, { result })
+    return
+  }
+
   throw new ReadingError('API endpoint not found.', 'NOT_FOUND', 404)
 }
 
@@ -512,6 +549,22 @@ function isSameOrigin(origin: string, request: IncomingMessage): boolean {
   } catch {
     return false
   }
+}
+
+function normalizeMetadataPatch(body: unknown): Partial<Omit<BookMetadata, 'updatedAt'>> {
+  if (!isRecord(body)) throw new ReadingError('Metadata body must be an object.', 'INVALID_BODY', 400)
+  const patch: Partial<Omit<BookMetadata, 'updatedAt'>> = {}
+  if (typeof body.title === 'string') patch.title = body.title
+  if (typeof body.author === 'string') patch.author = body.author
+  if (body.tags !== undefined) {
+    if (!Array.isArray(body.tags) || body.tags.some(tag => typeof tag !== 'string')) throw new ReadingError('Metadata tags must be a string array.', 'INVALID_BODY', 400)
+    patch.tags = body.tags
+  }
+  if (typeof body.summary === 'string') patch.summary = body.summary
+  if (patch.title === undefined && patch.author === undefined && patch.tags === undefined && patch.summary === undefined) {
+    throw new ReadingError('Metadata body requires at least one field.', 'INVALID_BODY', 400)
+  }
+  return patch
 }
 
 function normalizeProgress(bookId: string, body: unknown): ReadingProgress {

@@ -4,10 +4,12 @@ import X from 'lucide-react/dist/esm/icons/x'
 import Clock from 'lucide-react/dist/esm/icons/clock'
 import PenLine from 'lucide-react/dist/esm/icons/pen-line'
 import BookOpen from 'lucide-react/dist/esm/icons/book-open'
+import Library from 'lucide-react/dist/esm/icons/library'
 import PanelRightClose from 'lucide-react/dist/esm/icons/panel-right-close'
 import type { Article, PublicBookWithProgress } from '../contracts.ts'
 import type { ReadingStore } from './store.ts'
-import { NasLibraryView } from './LibraryView.tsx'
+import { LibraryView, NasLibraryView } from './LibraryView.tsx'
+import { BookMetadataDialog } from './BookMetadataDialog.tsx'
 import { ReaderView } from './ReaderView.tsx'
 import { ArticleReader, ReadLaterView } from './ReadLaterView.tsx'
 import { readingApi } from './api.ts'
@@ -15,9 +17,10 @@ import { findConversationAnchor, type ConversationAnchor } from './workbench-anc
 import { calculateReadingLayout, MIN_CHAT, MIN_LIBRARY, type ReadingWidths, type WorkbenchRect } from './workbench-geometry.ts'
 import css from './styles.module.css?dsh-inline'
 
-type LeftTab = 'nas' | 'readlater' | 'annotations'
+type LeftTab = 'local' | 'nas' | 'readlater' | 'annotations'
 
-const TAB_LABEL: Record<LeftTab, string> = { nas: 'NAS 书库', readlater: '稍后读', annotations: '批注' }
+const TAB_LABEL: Record<LeftTab, string> = { local: '本地书库', nas: 'NAS 书库', readlater: '稍后读', annotations: '批注' }
+const TAB_ICON: Record<LeftTab, typeof BookOpen> = { local: Library, nas: BookOpen, readlater: Clock, annotations: PenLine }
 const LAYOUT_STORAGE_KEY = 'dsh-reading.layout'
 const COMPACT_BREAKPOINT = 900
 const DEFAULT_WIDTHS: ReadingWidths = { library: 248, chat: 400 }
@@ -29,15 +32,17 @@ interface Props {
   addBookContext(book: PublicBookWithProgress): Promise<void>
   addObsidianReadingContext(): Promise<void>
   openProjectSession(path: string): Promise<void>
+  generateBookSummary?(book: PublicBookWithProgress): Promise<string>
 }
 
-export function Workbench({ store, close, addArticleContext, addBookContext, addObsidianReadingContext, openProjectSession }: Props) {
+export function Workbench({ store, close, addArticleContext, addBookContext, addObsidianReadingContext, openProjectSession, generateBookSummary }: Props) {
   const state = store.useSnapshot()
   const [anchor, setAnchor] = useState<ConversationAnchor | null>(() => findConversationAnchor())
-  const [tab, setTab] = useState<LeftTab>('nas')
+  const [tab, setTab] = useState<LeftTab>('local')
   const [article, setArticle] = useState<Article | null>(null)
   const [openArticles, setOpenArticles] = useState<Article[]>([])
   const [openBooks, setOpenBooks] = useState<PublicBookWithProgress[]>([])
+  const [metadataBook, setMetadataBook] = useState<PublicBookWithProgress | null>(null)
   const [leftVisible, setLeftVisible] = useState(true)
   const [widths, setWidths] = useState<ReadingWidths>(() => loadWidths())
   const originalMargin = useRef<{ element: HTMLElement; left: string } | null>(null)
@@ -150,15 +155,24 @@ export function Workbench({ store, close, addArticleContext, addBookContext, add
       {!compact && leftVisible && (
         <section className={css.leftColumn} style={paneStyle(libraryRect)} aria-label="书库栏">
           <nav className={css.leftTabs}>
-            {(Object.keys(TAB_LABEL) as LeftTab[]).map(key => (
-              <button key={key} type="button" className={`${css.leftTab} ${tab === key ? css.selected : ''}`} onClick={() => setTab(key)}>
-                {key === 'nas' ? <BookOpen size={13} /> : key === 'readlater' ? <Clock size={13} /> : <PenLine size={13} />}
-                {TAB_LABEL[key]}
-              </button>
-            ))}
+            {(Object.keys(TAB_LABEL) as LeftTab[]).map(key => {
+              const Icon = TAB_ICON[key]
+              return (
+                <button key={key} type="button" className={`${css.leftTab} ${tab === key ? css.selected : ''}`} onClick={() => setTab(key)}>
+                  <Icon size={13} />
+                  {TAB_LABEL[key]}
+                </button>
+              )
+            })}
           </nav>
           <div className={css.leftBody}>
-            {tab === 'nas' ? <NasLibraryView store={store} onSendMetadata={addBookContext} /> : tab === 'readlater' ? <ReadLaterView onOpen={onOpenArticle} onSendMetadata={addArticleContext} /> : (
+            {tab === 'local' ? (
+              <LibraryView store={store} onOpen={onOpenBook} onSendMetadata={addBookContext} onEdit={setMetadataBook} />
+            ) : tab === 'nas' ? (
+              <NasLibraryView store={store} onSendMetadata={addBookContext} />
+            ) : tab === 'readlater' ? (
+              <ReadLaterView onOpen={onOpenArticle} onSendMetadata={addArticleContext} />
+            ) : (
               <div className={css.panelLoading}>批注中心将在 M3 接入。</div>
             )}
           </div>
@@ -200,6 +214,10 @@ export function Workbench({ store, close, addArticleContext, addBookContext, add
         </button>
         <button type="button" className={css.iconButton} title="关闭阅读工作台" aria-label="关闭阅读工作台" onClick={close}><X size={16} /></button>
       </div>
+
+      {metadataBook !== null && (
+        <BookMetadataDialog book={metadataBook} {...(generateBookSummary === undefined ? {} : { generateSummary: generateBookSummary })} onClose={() => setMetadataBook(null)} />
+      )}
     </div>,
     document.body,
   )

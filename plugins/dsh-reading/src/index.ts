@@ -7,6 +7,7 @@ import { LocalLibrary, ReadingError } from './library.ts'
 import { ReadingStateStore } from './state-store.ts'
 import { WallabagAdapter, type WallabagConfig } from './wallabag-adapter.ts'
 import { OpdsAdapter, type OpdsConfig } from './opds-adapter.ts'
+import { CalibreWebClient } from './calibre-web.ts'
 import { defaultProjectConfig, readProjectConfig, saveProjectConfig, type ReadingProjectConfig } from './project-cache.ts'
 import { ScopedSkillProvider, SkillStore } from '@dsh-plugins/dsh-reading-core'
 
@@ -28,6 +29,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const store = await ReadingStateStore.create(dataDir)
   const wallabag = config.wallabag === null ? undefined : config.wallabag === undefined ? WallabagAdapter.fromEnv() : new WallabagAdapter(config.wallabag)
   const opds = config.opds === null ? undefined : config.opds === undefined ? OpdsAdapter.fromEnv() : new OpdsAdapter(config.opds)
+  const calibre = CalibreWebClient.fromEnv()
   const configFile = join(dataDir, 'reading-settings.json')
   const fallback = { ...defaultProjectConfig(dataDir), ...(typeof config.projectRoot === 'string' && config.projectRoot.trim() !== '' ? { rootDir: expandHome(config.projectRoot) } : {}), ...(typeof config.createSessionOnOpen === 'boolean' ? { createSessionOnOpen: config.createSessionOnOpen } : {}) }
   let projectConfig: ReadingProjectConfig = await readProjectConfig(configFile, fallback)
@@ -43,7 +45,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       get: () => projectConfig,
       update: async (next: ReadingProjectConfig) => { projectConfig = next; readingSkills = new SkillStore(next.rootDir); readingProvider?.setStore(readingSkills); await saveProjectConfig(configFile, next) },
       skills: () => readingSkills,
-    }),
+    }, calibre),
     'dsh-reading: reading HTTP API',
   )
 }
@@ -70,7 +72,9 @@ export { WallabagAdapter } from './wallabag-adapter.ts'
 export type { WallabagConfig } from './wallabag-adapter.ts'
 export { OpdsAdapter } from './opds-adapter.ts'
 export type { OpdsConfig, OpdsBook } from './opds-adapter.ts'
+export { CalibreWebClient } from './calibre-web.ts'
+export type { CalibreWebConfig, CalibreUploadMetadata, CalibreUploadResult } from './calibre-web.ts'
 export type {
-  Annotation, Book, BookFormat, BookWithProgress, Locator, PublicBook, PublicBookWithProgress, ReadingProgress, ReadingStateSnapshot,
+  Annotation, Book, BookFormat, BookMetadata, BookWithProgress, Locator, PublicBook, PublicBookWithProgress, ReadingProgress, ReadingStateSnapshot,
   Article,
 } from './contracts.ts'

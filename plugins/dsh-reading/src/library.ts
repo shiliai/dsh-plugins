@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { access, mkdir, readdir, stat, writeFile, rename } from 'node:fs/promises'
-import { basename, extname, join, relative } from 'node:path'
-import { BOOK_FORMATS, isBookFormat, type Book, type BookFormat, type BookWithProgress, type ReadingProgress } from './contracts.ts'
+import { access, mkdir, readdir, readFile, stat, writeFile, rename } from 'node:fs/promises'
+import { basename, dirname, extname, join, relative } from 'node:path'
+import { BOOK_FORMATS, isBookFormat, type Book, type BookFormat, type BookMetadata, type BookWithProgress, type ReadingProgress } from './contracts.ts'
 
 const IMPORT_DIR = 'books'
 
@@ -39,6 +39,9 @@ export class LocalLibrary {
       } catch {
         continue
       }
+      // A metadata.json sidecar in the book directory carries user-edited
+      // metadata; it is not a book file and is skipped by the format filter.
+      const sidecar = await readMetadataFile(dir)
       for (const fileName of files) {
         const format = extname(fileName).slice(1).toLowerCase()
         if (!isBookFormat(format)) continue
@@ -59,6 +62,11 @@ export class LocalLibrary {
           fileName,
           fileSize: info.size,
           addedAt: info.birthtime.toISOString(),
+        }
+        if (sidecar !== undefined) {
+          if (sidecar.title !== undefined && sidecar.title.trim() !== '') book.title = sidecar.title.trim()
+          if (sidecar.author !== undefined && sidecar.author.trim() !== '') book.author = sidecar.author.trim()
+          book.metadata = sidecar
         }
         const bookProgress = progress[book.id]
         books.push(bookProgress === undefined ? book : { ...book, progress: bookProgress })
@@ -118,6 +126,40 @@ export class LocalLibrary {
     }
     return { filePath: book.filePath, format: book.format, fileName: book.fileName, fileSize: book.fileSize }
   }
+
+  /**
+   * Merge user-edited metadata into the book's metadata.json sidecar
+   * (stored beside the book file inside the book directory). Fields set to
+   * undefined are left untouched; empty strings clear the field.
+   */
+  async saveMetadata(id: string, patch: Partial<Omit<BookMetadata, 'updatedAt'>>, progress: Record<string, ReadingProgress> = {}): Promise<BookWithProgress> {
+    const book = (await this.listBooks(progress)).find(item => item.id === id)
+    if (book === undefined) throw new ReadingError('Book not found.', 'NOT_FOUND', 404)
+    const current = book.metadata ?? { updatedAt: new Date().toISOString() }
+    const next: BookMetadata = {
+      ...current,
+      ...(patch.title !== undefined ? { title: patch.title } : {}),
+      ...(patch.author !== undefined ? { author: patch.author } : {}),
+      ...(patch.tags !== undefined ? { tags: patch.tags.filter(tag => tag.trim() !== '').map(tag => tag.trim()) } : {}),
+      ...(patch.summary !== undefined ? { summary: patch.summary } : {}),
+      updatedAt: new Date().toISOString(),
+    }
+    const dir = dirname(book.filePath)
+    await mkdir(dir, { recursive: true })
+    const target = join(dir, 'metadata.json')
+    const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
+    await writeFile(tmp, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+    await rename(tmp, target)
+    const { author: _derivedAuthor, ...rest } = book
+    const updated: Book = {
+      ...rest,
+      title: next.title !== undefined && next.title.trim() !== '' ? next.title.trim() : book.title,
+      ...(next.author !== undefined && next.author.trim() !== '' ? { author: next.author.trim() } : {}),
+      metadata: next,
+    }
+    const bookProgress = progress[id]
+    return bookProgress === undefined ? updated : { ...updated, progress: bookProgress }
+  }
 }
 
 export class ReadingError extends Error {
@@ -134,6 +176,23 @@ export function bookIdFor(relativePath: string): string {
 function titleFromFileName(fileName: string): string {
   const stem = basename(fileName, extname(fileName))
   return stem.replaceAll(/[._]+/gu, ' ').trim() || stem
+}
+
+/** Best-effort read of a book directory's metadata.json sidecar; malformed files are ignored. */
+async function readMetadataFile(dir: string): Promise<BookMetadata | undefined> {
+  try {
+    const raw = JSON.parse(await readFile(join(dir, 'metadata.json'), 'utf8')) as unknown
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined
+    const record = raw as Record<string, unknown>
+    const metadata: BookMetadata = { updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : new Date().toISOString() }
+    if (typeof record.title === 'string') metadata.title = record.title
+    if (typeof record.author === 'string') metadata.author = record.author
+    if (Array.isArray(record.tags)) metadata.tags = record.tags.filter((tag): tag is string => typeof tag === 'string')
+    if (typeof record.summary === 'string') metadata.summary = record.summary
+    return metadata
+  } catch {
+    return undefined
+  }
 }
 
 function sanitizeFileName(name: string): string {
