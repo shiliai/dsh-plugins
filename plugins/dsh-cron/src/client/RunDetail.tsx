@@ -21,9 +21,16 @@ function statusColor(status: string): string | undefined {
   return undefined
 }
 
-export function RunDetail(props: { view: ClientJobView; run: ClientRun; nowMs: number }): JSX.Element {
-  const { run, view } = props
-  const job = view.job
+export interface RunDetailProps {
+  view: ClientJobView
+  run: ClientRun
+  nowMs: number
+  /** Present when the run has a session and the client runtime can open it. */
+  onOpenSession?: (() => void) | undefined
+}
+
+export function RunDetail(props: RunDetailProps): JSX.Element {
+  const { run } = props
   const running = run.status === 'running'
   return (
     <div className={css.detail}>
@@ -39,7 +46,15 @@ export function RunDetail(props: { view: ClientJobView; run: ClientRun; nowMs: n
       </div>
 
       {run.sessionId !== undefined && (
-        <div className={css.hint}>会话 <span className={css.mono}>{run.sessionId}</span>{job.task.kind === 'agent' ? '(在左侧历史点击 ↗ 可打开原生会话回放)' : ''}</div>
+        <div className={css.hint}>
+          会话 <span className={css.mono}>{run.sessionId}</span>
+          {props.onOpenSession !== undefined && (
+            <>
+              {' '}
+              <button className={css.btn} type="button" onClick={props.onOpenSession}>↗ 打开会话回放</button>
+            </>
+          )}
+        </div>
       )}
       {run.argv !== undefined && run.argv.length > 0 && (
         <>

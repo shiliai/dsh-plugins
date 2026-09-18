@@ -17,7 +17,7 @@ import type { CronConfig, CronJob, CronRun, CronStateView, JobView, RunningRun }
 export interface SchedulerDeps {
   ctx: Context
   store: CronStore
-  config: Required<Pick<CronConfig, 'historyLimit' | 'tickIntervalMs' | 'maxConcurrentRuns'>>
+  config: Required<Pick<CronConfig, 'historyLimit' | 'tickIntervalMs' | 'maxConcurrentRuns' | 'defaultCwd'>>
   warn(message: string): void
   info(message: string): void
   /** Fired after any state change so the Web UI can refresh promptly. */
@@ -199,7 +199,7 @@ export class CronScheduler {
     let patch: Partial<CronRun>
     try {
       if (job.task.kind === 'agent') {
-        const outcome = await runAgentTask(this.deps.ctx, job, job.task.prompt, run.targetMs, timeoutMs, controller.signal)
+        const outcome = await runAgentTask(this.deps.ctx, job, job.task.prompt, run.targetMs, timeoutMs, controller.signal, this.deps.config.defaultCwd)
         patch = {
           finishedAt: Date.now(),
           status: outcome.ok ? 'ok' : outcome.timedOut === true ? 'timeout' : outcome.aborted === true ? 'killed' : 'failed',

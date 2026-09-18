@@ -112,10 +112,16 @@ export function CronPanel(props: CronPanelProps): JSX.Element {
 
   const openRun = useCallback((view: ClientJobView, run: ClientRun) => {
     if (view.job.task.kind === 'agent' && run.sessionId !== undefined && props.openSession !== undefined) {
-      props.openSession(run.sessionId)
-      pushToast(`已打开 ${view.job.name} #${run.seq} 的会话回放`, 'ok')
-      props.close()
-      return
+      try {
+        props.openSession(run.sessionId)
+        pushToast(`已打开 ${view.job.name} #${run.seq} 的会话回放`, 'ok')
+        props.close()
+        return
+      } catch {
+        // Not in the client's session list (attach failed or list stale) —
+        // fall through to the run detail instead of dying silently.
+        pushToast('会话暂未出现在界面列表,已显示运行详情', 'err')
+      }
     }
     setDetailRun({ jobId: view.job.id, seq: run.seq })
   }, [props, pushToast])
@@ -215,7 +221,14 @@ export function CronPanel(props: CronPanelProps): JSX.Element {
               )}
             </div>
           ) : (
-            <RunDetail view={detailView.view} run={detailView.run} nowMs={nowMs} />
+            <RunDetail
+              view={detailView.view}
+              run={detailView.run}
+              nowMs={nowMs}
+              onOpenSession={detailView.run.sessionId !== undefined && props.openSession !== undefined
+                ? () => openRun(detailView.view, detailView.run)
+                : undefined}
+            />
           )}
         </div>
       </main>

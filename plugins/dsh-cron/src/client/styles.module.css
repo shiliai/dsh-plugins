@@ -71,8 +71,10 @@
 .emptyNote { padding: 8px 10px; color: #6b7280; font-size: 12px; }
 
 /* ---- job card ---- */
+/* No overflow:hidden here: the ⋯ dropdown is absolutely positioned inside the
+   card and must be allowed to escape its bounds (children never paint past
+   the rounded border, so clipping buys nothing). */
 .job {
-  overflow: hidden;
   margin-bottom: 8px;
   border: 1px solid #242933;
   border-radius: 10px;

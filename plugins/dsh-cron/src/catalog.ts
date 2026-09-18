@@ -14,9 +14,20 @@ interface ModelSelectionLike {
   currentSelection(): { provider: string; model: string }
 }
 
+/** Shape shared by `llm.listModels` rows and `llm.resolveModelInfo` results. */
+type ReasoningSource = {
+  reasoning?: { efforts?: Array<{ id?: string; name?: string; description?: string }>; defaultEffort?: string }
+}
+
 interface LlmRuntimeLike {
   listProviders(): Array<{ name: string; label?: string }>
-  listModels(provider: string): Promise<Array<{ id?: string; name?: string; model?: string; label?: string; displayName?: string; reasoning?: { efforts?: Array<{ id?: string; name?: string; description?: string }>; defaultEffort?: string } }>>
+  listModels(provider: string): Promise<Array<{ id?: string; name?: string; model?: string; label?: string; displayName?: string } & ReasoningSource>>
+  /**
+   * Exact-route resolution; the only source of reasoning metadata on current
+   * hosts (`listModels` results are stripped to identity + description).
+   * Optional so older hosts keep working through the legacy fallback.
+   */
+  resolveModelInfo?(provider: string, model: string): Promise<ReasoningSource>
 }
 
 interface PresetsLike {
@@ -64,19 +75,31 @@ async function buildModels(ctx: Context): Promise<CatalogModel[]> {
     for (const model of models) {
       const modelId = model.id ?? model.model ?? model.name
       if (typeof modelId !== 'string' || modelId.length === 0) continue
-      const efforts: ModelEffortInfo[] = (model.reasoning?.efforts ?? [])
-        .filter(effort => typeof effort?.id === 'string')
-        .map(effort => ({
-          id: effort.id!,
-          name: typeof effort.name === 'string' && effort.name ? effort.name : effort.id!,
-          ...(typeof effort.description === 'string' ? { description: effort.description } : {}),
-        }))
+      // Reasoning efforts live only on the exact-route resolution; a failed
+      // or missing resolution just means the effort row stays disabled.
+      let reasoning: ModelEffortInfo[] = []
+      let defaultEffort: string | undefined
+      try {
+        const resolved = typeof llm.resolveModelInfo === 'function'
+          ? await llm.resolveModelInfo(provider.name, modelId)
+          : model
+        reasoning = (resolved.reasoning?.efforts ?? [])
+          .filter(effort => typeof effort?.id === 'string')
+          .map(effort => ({
+            id: effort.id!,
+            name: typeof effort.name === 'string' && effort.name ? effort.name : effort.id!,
+            ...(typeof effort.description === 'string' ? { description: effort.description } : {}),
+          }))
+        if (typeof resolved.reasoning?.defaultEffort === 'string') defaultEffort = resolved.reasoning.defaultEffort
+      } catch {
+        // Adapter rejected this exact route; keep the model listed without efforts.
+      }
       out.push({
         provider: provider.name,
         model: modelId,
         label: typeof model.label === 'string' && model.label ? model.label : typeof model.displayName === 'string' && model.displayName ? model.displayName : modelId,
-        ...(efforts.length > 0
-          ? { reasoning: { efforts, ...(typeof model.reasoning?.defaultEffort === 'string' ? { defaultEffort: model.reasoning.defaultEffort } : {}) } }
+        ...(reasoning.length > 0
+          ? { reasoning: { efforts: reasoning, ...(defaultEffort !== undefined ? { defaultEffort } : {}) } }
           : {}),
       })
     }

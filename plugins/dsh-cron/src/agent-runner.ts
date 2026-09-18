@@ -7,7 +7,9 @@
  * @module @dsh-plugins/dsh-cron/agent-runner
  */
 
+import { mkdir } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
+import path from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -109,10 +111,25 @@ export function lastAssistantText(events: readonly SessionEventLike[], firstSeq:
 
 export function summarizeAssistant(text: string): string {
   const compact = text.trim()
-  return compact.length > 600 ? `${compact.slice(0, 600)}…` : compact
+  return compact.length > 2000 ? `${compact.slice(0, 2000)}…` : compact
 }
 
-export async function runAgentTask(ctx: Context, job: CronJob, prompt: string, targetMs: number, timeoutMs: number, signal: AbortSignal): Promise<AgentRunOutcome> {
+/**
+ * Cwd for a run that doesn't pin one: the dedicated cron runs directory
+ * (`configDefaultCwd`, else `<DSH_HOME>/cron-runs`). Never `process.cwd()` —
+ * under launchd that is `/`, which used to drop every cron session into an
+ * untitled `/` workspace no one could find. Created on demand so both the
+ * session assembly and the workspace registry's realpath succeed.
+ */
+export async function resolveRunCwd(configDefaultCwd: string | undefined): Promise<string> {
+  const cwd = configDefaultCwd && path.isAbsolute(configDefaultCwd)
+    ? configDefaultCwd
+    : path.join(process.env.DSH_HOME || process.cwd(), 'cron-runs')
+  await mkdir(cwd, { recursive: true }).catch(() => undefined)
+  return cwd
+}
+
+export async function runAgentTask(ctx: Context, job: CronJob, prompt: string, targetMs: number, timeoutMs: number, signal: AbortSignal, configDefaultCwd?: string): Promise<AgentRunOutcome> {
   const agents = ctx.agents
   const presets = ctx.get('agentPresets') as PresetsLike | undefined
   const defaultModel = ctx.get('agentDefaultModel') as ModelSelectionLike | undefined
@@ -129,7 +146,7 @@ export async function runAgentTask(ctx: Context, job: CronJob, prompt: string, t
   const sessionId = `session-${randomUUID()}`
   // The persona prompt references the {{cwd}} prompt variable; a session
   // without meta.cwd fails its first assembly, so always resolve one.
-  const cwd = job.cwd || process.cwd()
+  const cwd = job.cwd ?? await resolveRunCwd(configDefaultCwd)
   const framing = cronRunFraming(job, targetMs)
 
   const setup = async (agentCtx: Context): Promise<void> => {
