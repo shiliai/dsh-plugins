@@ -191,6 +191,12 @@ export interface CronConfig {
   /** Global concurrent-run cap; 0 means unlimited (default). */
   maxConcurrentRuns?: number
   /**
+   * Working directory for agent runs whose job doesn't pin a cwd, and the
+   * workspace their sessions group under in the web UI. Default:
+   * `<DSH_HOME>/cron-runs`. Must be an absolute path; created on demand.
+   */
+  defaultCwd?: string
+  /**
    * Cron agent session GC. Deliberately OFF in v1.0: automatic deletion of
    * persisted session journals is destructive and the v1.2 panel owns it.
    */
