@@ -14,6 +14,12 @@ const RAW_PREFIX = '\0dsh-reading-raw:'
 const READING_CORE_SOURCE = fileURLToPath(new URL('../../packages/dsh-reading-core/src/index.ts', import.meta.url))
 const require = createRequire(import.meta.url)
 
+// Dev hot-iteration loop (live DSH + cordis-plugin-hmr watching lib/): the
+// rebuild must keep the lib directory inode — `clean: true` deletes the whole
+// directory, which silently kills the host's file watcher. Release builds
+// keep the default clean behavior.
+const DEV_HOT_LOOP = process.env.DSH_DEV_HOT_LOOP === '1'
+
 interface InlineCssPlugin {
   name: string
   resolveId(source: string, importer: string | undefined): string | null
@@ -97,7 +103,7 @@ export default defineConfig([
     format: ['esm'],
     platform: 'node',
     dts: true,
-    clean: true,
+    clean: !DEV_HOT_LOOP,
     alias: { '@dsh-plugins/dsh-reading-core': READING_CORE_SOURCE },
     external: [/^@deepseek-ai\//],
   },
