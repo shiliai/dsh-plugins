@@ -190,7 +190,8 @@ describe('CalibreWebClient.uploadBook', () => {
         return respond(loginPage('csrf-exp'))
       }
       if (url.endsWith('/upload') && method === 'POST') {
-        if (!authenticated) return respond('forbidden', { status: 403 })
+        // Stock calibre-web expiry: anonymous POSTs bounce through /login.
+        if (!authenticated) return respond('', { status: 302, headers: { location: '/login?next=%2Fupload' } })
         return respond(JSON.stringify({ location: '/book/5' }))
       }
       return respond('unexpected', { status: 500 })

@@ -86,7 +86,7 @@ export class CalibreWebClient {
    */
   async login(): Promise<void> {
     if (this.#authenticated) return
-    const page = await this.#getText('/login')
+    const page = await this.#getText('/login', undefined, true)
     const csrf = extractCsrf(page)
     if (csrf === undefined) throw new ReadingError('calibre-web 登录页缺少 csrf_token。', 'CALIBRE_RESPONSE', 502)
     const body = new URLSearchParams({ next: '/', csrf_token: csrf, username: this.#config.username ?? '', password: this.#config.password ?? '', submit: 'Login' })
@@ -148,6 +148,9 @@ export class CalibreWebClient {
       body: new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength),
       timeoutMs: this.#config.uploadTimeoutMs ?? 300_000,
     })
+    if (new URL(response.url).pathname.endsWith('/login')) {
+      throw new ReadingError('calibre-web 会话已过期，需要重新登录。', 'CALIBRE_AUTH', 502)
+    }
     const raw = await response.text()
     if (response.status === 403) throw new ReadingError('calibre-web 账号缺少上传权限（Upload）。', 'CALIBRE_FORBIDDEN', 403)
     if (!response.ok) throw new ReadingError(`calibre-web 上传失败（HTTP ${response.status}）。`, 'CALIBRE_REQUEST', 502)
@@ -222,8 +225,13 @@ export class CalibreWebClient {
     return warnings
   }
 
-  async #getText(path: string, forbiddenMessage?: string): Promise<string> {
+  async #getText(path: string, forbiddenMessage?: string, allowLoginPage = false): Promise<string> {
     const response = await this.#request(path)
+    // An expired cached session bounces any page through /login; surface that
+    // as an auth failure so the upload retry path re-logins.
+    if (!allowLoginPage && new URL(response.url).pathname.endsWith('/login')) {
+      throw new ReadingError('calibre-web 会话已过期，需要重新登录。', 'CALIBRE_AUTH', 502)
+    }
     if (response.status === 403 || response.status === 405) {
       throw new ReadingError(forbiddenMessage ?? 'calibre-web 拒绝访问（账号权限不足）。', 'CALIBRE_FORBIDDEN', 403)
     }
