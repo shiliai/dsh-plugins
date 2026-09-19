@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/dsh-file-attachment",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Host-local temporary file attachments for DeepSeek Harness text-model conversations",
   "license": "MIT",
   "repository": {

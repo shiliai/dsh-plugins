@@ -52,6 +52,34 @@ describe('TemporaryFileStore', () => {
     expect(files[0]).toMatchObject({ name: 'attachment', bytes: 0, mediaType: 'application/octet-stream' })
   })
 
+  it('rejects base64 padding outside the final group', () => {
+    expect(() => decodeCanonicalBase64('=AAA')).toThrowError(AttachmentError)
+    expect(() => decodeCanonicalBase64('AB=C')).toThrowError(AttachmentError)
+    expect(() => decodeCanonicalBase64('A===')).toThrowError(AttachmentError)
+    expect(() => decodeCanonicalBase64('AAB=CDEF')).toThrowError(AttachmentError)
+    expect(() => decodeCanonicalBase64('AA==AA==')).toThrowError(AttachmentError) // padding mid-string
+    expect(() => decodeCanonicalBase64('AAB=')).toThrowError(AttachmentError) // length not a multiple of 4
+    expect(() => decodeCanonicalBase64('AB==')).toThrowError(AttachmentError) // shape ok, non-zero trailing bits
+    expect(() => decodeCanonicalBase64('ABC=')).toThrowError(AttachmentError) // shape ok, non-zero trailing bits
+    expect(decodeCanonicalBase64('AA==')).toEqual(Buffer.alloc(1))
+    expect(decodeCanonicalBase64('ABE=')).toEqual(Buffer.from([0x00, 0x11]))
+  })
+
+  it('validates multi-megabyte base64 without overflowing the call stack (#109)', { timeout: 30_000 }, () => {
+    // ~5.6M chars: the previous whole-string `(?:[...]{4})*` regex threw
+    // `RangeError: Maximum call stack size exceeded` at this size.
+    const huge = Buffer.alloc(4_193_280).toString('base64') // 5_591_040 base64 chars
+    expect(huge.length).toBeGreaterThan(5_300_000)
+    expect(decodeCanonicalBase64(huge).equals(Buffer.alloc(4_193_280))).toBe(true)
+    // An invalid character near the end must still be rejected as INVALID_BASE64.
+    const corrupt = huge.slice(0, -2) + '@@'
+    expect(() => decodeCanonicalBase64(corrupt)).toThrowError(AttachmentError)
+    // Padding in the final group of a huge payload stays canonical.
+    expect(decodeCanonicalBase64(huge.slice(0, -4) + 'AA==').equals(Buffer.alloc(4_193_278))).toBe(true)
+    expect(decodeCanonicalBase64(huge.slice(0, -4) + 'AAA=').equals(Buffer.alloc(4_193_279))).toBe(true)
+    expect(() => decodeCanonicalBase64(huge.slice(0, -4) + '=AAA')).toThrowError(AttachmentError)
+  })
+
   it('enforces file, count, and aggregate limits across sequential draft uploads', async () => {
     const target = await store()
     await expect(target.saveBatch([{ name: 'large', mediaType: '', data: Buffer.alloc(17).toString('base64') }])).rejects.toMatchObject({ code: 'FILE_TOO_LARGE' })

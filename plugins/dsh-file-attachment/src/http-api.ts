@@ -118,6 +118,12 @@ function sendJson(response: ServerResponse, status: number, value: unknown): voi
 }
 
 function sendError(response: ServerResponse, error: unknown): void {
+  // Unexpected failures used to surface to the browser as a bare 500 with no
+  // host-side trace at all (issue #109), so log everything that is not a
+  // deliberate AttachmentError rejection.
+  if (!(error instanceof AttachmentError)) {
+    console.error('dsh-file-attachment: unhandled API error:', error instanceof Error ? error.stack ?? error.message : error)
+  }
   if (response.headersSent) {
     response.destroy(error instanceof Error ? error : undefined)
     return
