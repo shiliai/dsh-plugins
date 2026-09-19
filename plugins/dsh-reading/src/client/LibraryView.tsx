@@ -14,11 +14,12 @@ interface Props {
   store: ReadingStore
   onOpen(book: PublicBookWithProgress): void
   onSendMetadata(book: PublicBookWithProgress): Promise<void>
+  onEdit?(book: PublicBookWithProgress): void
 }
 
 const FORMAT_LABEL: Record<string, string> = { epub: 'EPUB', pdf: 'PDF', azw3: 'AZW3', mobi: 'MOBI', azw: 'AZW' }
 
-export function LibraryView({ store, onOpen, onSendMetadata }: Props) {
+export function LibraryView({ store, onOpen, onSendMetadata, onEdit }: Props) {
   const state = store.useSnapshot()
   const fileInput = useRef<HTMLInputElement | null>(null)
   const [menu, setMenu] = useState<{ book: PublicBookWithProgress; x: number; y: number } | null>(null)
@@ -69,7 +70,7 @@ export function LibraryView({ store, onOpen, onSendMetadata }: Props) {
           </button>
         ))}
       </div>
-      {menu !== null && <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} onSend={() => void onSendMetadata(menu.book)} onOpen={() => onOpen(menu.book)} />}
+      {menu !== null && <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} onSend={() => void onSendMetadata(menu.book)} onOpen={() => onOpen(menu.book)} {...(onEdit === undefined ? {} : { onEdit: () => onEdit(menu.book) })} />}
     </div>
   )
 }

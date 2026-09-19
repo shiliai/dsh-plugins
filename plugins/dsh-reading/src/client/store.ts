@@ -68,6 +68,15 @@ export class ReadingStore {
     await this.refresh()
   }
 
+  /** Splice one updated book (e.g. after a metadata save) into the list. */
+  applyBook(book: PublicBookWithProgress): void {
+    // Replace, not merge: the server omits keys it cleared (e.g. author), and
+    // a shallow merge would keep the stale value in the store.
+    const books = this.#state.books.map(item => item.id === book.id ? book : item)
+    const current = this.#state.current?.id === book.id ? book : this.#state.current
+    this.#set({ books, current })
+  }
+
   /** Debounced progress persistence; flushes on close/unmount. */
   reportProgress(bookId: string, locator: Locator, percent: number): void {
     const pending = this.#progressFlush

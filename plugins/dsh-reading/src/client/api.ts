@@ -1,4 +1,4 @@
-import type { Annotation, Article, Locator, PublicBook, PublicBookWithProgress, ReadingProgress } from '../contracts.ts'
+import type { Annotation, Article, BookMetadata, Locator, PublicBook, PublicBookWithProgress, ReadingProgress } from '../contracts.ts'
 import type { AgentSkillDocument, AgentSkillInput, AgentSkillListResult } from '@dsh-plugins/dsh-reading-core'
 import type { OpdsBook } from '../opds-adapter.ts'
 
@@ -27,6 +27,19 @@ export const readingApi = {
   importOpdsBook: (id: string) => request<{ book: PublicBook }>(`/opds/books/${encodeURIComponent(id)}/import`, { method: 'POST' }),
   ensureBookProject: (id: string) => request<{ path: string; absolutePath: string }>(`/project/book/${encodeURIComponent(id)}`, { method: 'POST' }),
   book: (id: string) => request<{ book: PublicBookWithProgress }>(`/book/${encodeURIComponent(id)}`),
+  bookMetadata: (id: string) => request<{ metadata: BookMetadata | null }>(`/book/${encodeURIComponent(id)}/metadata`),
+  saveBookMetadata: (id: string, metadata: { title?: string; author?: string; tags?: string[]; summary?: string }) =>
+    request<{ book: PublicBookWithProgress; metadata: BookMetadata | null }>(`/book/${encodeURIComponent(id)}/metadata`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(metadata),
+    }),
+  uploadToCalibre: (payload: { bookId: string; title?: string; author?: string; tags?: string[]; summary?: string }) =>
+    request<{ result: { calibreBookId: string; location: string; warnings: string[] } }>('/calibre/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
   bookFileUrl: (id: string) => `${API}/book/${encodeURIComponent(id)}/file`,
   importBook: (file: File) => request<{ book: PublicBook }>(`/import?filename=${encodeURIComponent(file.name)}`, {
     method: 'POST',
