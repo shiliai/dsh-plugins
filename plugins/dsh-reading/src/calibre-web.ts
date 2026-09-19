@@ -133,9 +133,28 @@ export class CalibreWebClient {
     this.#cookies.clear()
   }
 
+  /**
+   * Fetch the upload form page and its csrf token. Some calibre-web builds
+   * register /upload as POST-only, so the GET probe fails with 405 even for
+   * accounts holding the upload permission; fall back to the home page in
+   * that case — its navbar renders a csrf_token only when the session is
+   * allowed to upload, so a missing token there still signals 403.
+   */
+  async #getUploadPage(): Promise<string> {
+    const forbidden = 'calibre-web 账号缺少上传权限（Upload），请在管理后台为该账号勾选上传权限。'
+    try {
+      return await this.#getText('/upload', forbidden)
+    } catch (error) {
+      if (!(error instanceof ReadingError) || error.status !== 405) throw error
+      const home = await this.#getText('/')
+      if (extractCsrf(home) === undefined) throw new ReadingError(forbidden, 'CALIBRE_FORBIDDEN', 403)
+      return home
+    }
+  }
+
   async #uploadOnce(fileName: string, data: Buffer, metadata?: CalibreUploadMetadata): Promise<CalibreUploadResult> {
     await this.login()
-    const page = await this.#getText('/upload', 'calibre-web 账号缺少上传权限（Upload），请在管理后台为该账号勾选上传权限。')
+    const page = await this.#getUploadPage()
     const csrf = extractCsrf(page)
     if (csrf === undefined) throw new ReadingError('calibre-web 上传页缺少 csrf_token。', 'CALIBRE_RESPONSE', 502)
     this.#csrfToken = csrf
@@ -181,7 +200,7 @@ export class CalibreWebClient {
   async editBookMetadata(bookId: string, metadata: CalibreUploadMetadata): Promise<string[]> {
     const csrf = this.#csrfToken
     if (csrf === undefined) {
-      const page = await this.#getText('/upload', 'calibre-web 账号缺少上传权限（Upload）。')
+      const page = await this.#getUploadPage()
       const parsed = extractCsrf(page)
       if (parsed === undefined) throw new ReadingError('calibre-web 上传页缺少 csrf_token。', 'CALIBRE_RESPONSE', 502)
       this.#csrfToken = parsed
@@ -233,7 +252,9 @@ export class CalibreWebClient {
       throw new ReadingError('calibre-web 会话已过期，需要重新登录。', 'CALIBRE_AUTH', 502)
     }
     if (response.status === 403 || response.status === 405) {
-      throw new ReadingError(forbiddenMessage ?? 'calibre-web 拒绝访问（账号权限不足）。', 'CALIBRE_FORBIDDEN', 403)
+      // Keep the original status: 405 means the route is method-restricted
+      // (e.g. POST-only /upload), not a permission failure.
+      throw new ReadingError(forbiddenMessage ?? 'calibre-web 拒绝访问（账号权限不足）。', 'CALIBRE_FORBIDDEN', response.status)
     }
     if (!response.ok) throw new ReadingError(`calibre-web 请求失败（HTTP ${response.status}）。`, 'CALIBRE_REQUEST', 502)
     return response.text()

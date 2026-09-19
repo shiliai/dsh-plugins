@@ -5,6 +5,11 @@ function loginPage(csrf: string): string {
   return `<html><body><form method="POST"><input type="hidden" name="csrf_token" value="${csrf}"><input name="username"><input name="password" type="password"></form></body></html>`
 }
 
+/** Home page whose navbar carries the csrf token (upload-capable sessions only). */
+function homePage(csrf?: string): string {
+  return `<html><body><nav>${csrf === undefined ? '' : `<input type="hidden" name="csrf_token" value="${csrf}">`}</nav></body></html>`
+}
+
 /** Response whose final URL differs from the request URL (redirect following). */
 function respond(body: string, init: ResponseInit & { url?: string } = {}): Response {
   const { url, ...rest } = init
@@ -211,6 +216,43 @@ describe('CalibreWebClient.uploadBook', () => {
       if (url.endsWith('/login') && (init?.method ?? 'GET') === 'GET') return respond(loginPage('login-csrf'))
       if (url.includes('/login') && init?.method === 'POST') return respond('home', { url: 'http://calibre.local/' })
       if (url.endsWith('/upload')) return respond('forbidden', { status: 403 })
+      return respond('unexpected', { status: 500 })
+    })
+    const client = new CalibreWebClient(config, fetchMock as unknown as typeof fetch)
+    await expect(client.uploadBook('a.pdf', Buffer.from('pdf'))).rejects.toMatchObject({ code: 'CALIBRE_FORBIDDEN', status: 403 })
+  })
+
+  it('falls back to the home page csrf when /upload is a POST-only route', async () => {
+    // Some calibre-web builds answer GET /upload with 405 even for accounts
+    // holding the upload permission; the live NAS server behaves this way.
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = String(input)
+      calls.push(init === undefined ? { url } : { url, init })
+      if (url.endsWith('/login') && (init?.method ?? 'GET') === 'GET') return respond(loginPage('login-csrf'))
+      if (url.includes('/login') && init?.method === 'POST') return respond('', { status: 302, headers: { location: '/' }, url: 'http://calibre.local/' })
+      if (url.endsWith('/upload') && (init?.method ?? 'GET') === 'GET') return respond('method not allowed', { status: 405 })
+      if (new URL(url).pathname === '/') return respond(homePage('home-csrf'))
+      if (url.endsWith('/upload') && init?.method === 'POST') return respond(JSON.stringify({ location: '/book/9' }))
+      if (url.includes('/ajax/editbooks/')) return respond(JSON.stringify({ success: true }))
+      return respond('unexpected', { status: 500 })
+    })
+    const client = new CalibreWebClient(config, fetchMock as unknown as typeof fetch)
+    const result = await client.uploadBook('a.pdf', Buffer.from('pdf'), { title: 'T' })
+    expect(result).toMatchObject({ calibreBookId: '9', warnings: [] })
+    const uploadPost = calls.find(call => call.url.endsWith('/upload') && call.init?.method === 'POST')
+    const multipart = Buffer.from(uploadPost?.init?.body as ArrayBufferLike).toString('utf8')
+    expect(multipart).toContain('home-csrf')
+    expect(calls.some(call => call.url.endsWith('/ajax/editbooks/title'))).toBe(true)
+  })
+
+  it('reports 403 when a POST-only /upload serves a csrf-free home page', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = String(input)
+      if (url.endsWith('/login') && (init?.method ?? 'GET') === 'GET') return respond(loginPage('login-csrf'))
+      if (url.includes('/login') && init?.method === 'POST') return respond('home', { url: 'http://calibre.local/' })
+      if (url.endsWith('/upload') && (init?.method ?? 'GET') === 'GET') return respond('method not allowed', { status: 405 })
+      if (new URL(url).pathname === '/') return respond(homePage())
       return respond('unexpected', { status: 500 })
     })
     const client = new CalibreWebClient(config, fetchMock as unknown as typeof fetch)
