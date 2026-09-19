@@ -140,8 +140,29 @@ export function sanitizeDisplayName(value: string): string {
   return (compact || 'attachment').slice(0, 100)
 }
 
+// A counted repeated group like `(?:[A-Za-z0-9+/]{4})*` makes V8 recurse once
+// per repetition, so running it over one multi-megabyte paste (>= ~5.3M chars)
+// overflows the call stack with `RangeError: Maximum call stack size exceeded`
+// (issue #109). Validate in bounded slices instead: the head slices only need
+// alphabet membership (grouping is already guaranteed by the length check),
+// and only the final 4-char group may carry padding.
+const BASE64_GROUP_CHARS = 4
+const BASE64_SLICE_CHARS = 4096
+const BASE64_ALPHABET_SLICE = /^[A-Za-z0-9+/]*$/u
+const BASE64_TAIL_GROUP = /^(?:[A-Za-z0-9+/]{4}|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)$/u
+
+function isCanonicalBase64Shape(value: string): boolean {
+  if (value.length % BASE64_GROUP_CHARS !== 0) return false
+  if (value.length === 0) return true
+  const tailStart = value.length - BASE64_GROUP_CHARS
+  for (let offset = 0; offset < tailStart; offset += BASE64_SLICE_CHARS) {
+    if (!BASE64_ALPHABET_SLICE.test(value.slice(offset, Math.min(offset + BASE64_SLICE_CHARS, tailStart)))) return false
+  }
+  return BASE64_TAIL_GROUP.test(value.slice(tailStart))
+}
+
 export function decodeCanonicalBase64(value: string): Buffer {
-  if (value.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)) {
+  if (!isCanonicalBase64Shape(value)) {
     throw new AttachmentError('File data must be canonical base64.', 'INVALID_BASE64', 400)
   }
   const data = Buffer.from(value, 'base64')

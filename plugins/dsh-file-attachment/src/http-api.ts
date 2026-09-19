@@ -118,13 +118,21 @@ function sendJson(response: ServerResponse, status: number, value: unknown): voi
 }
 
 function sendError(response: ServerResponse, error: unknown): void {
+  // Unexpected failures used to surface to the browser as a bare 500 with no
+  // host-side trace at all (issue #109), so log everything that is not a
+  // deliberate AttachmentError rejection. The response body stays generic:
+  // internal error messages can carry host-local paths.
+  const known = error instanceof AttachmentError
+  if (!known) {
+    console.error('dsh-file-attachment: unhandled API error:', error instanceof Error ? error.stack ?? error.message : error)
+  }
   if (response.headersSent) {
     response.destroy(error instanceof Error ? error : undefined)
     return
   }
   const payload: ApiErrorPayload = {
-    error: error instanceof Error ? error.message : 'Unexpected attachment error.',
-    code: error instanceof AttachmentError ? error.code : 'INTERNAL_ERROR',
+    error: known ? error.message : 'Unexpected attachment error.',
+    code: known ? error.code : 'INTERNAL_ERROR',
   }
-  sendJson(response, error instanceof AttachmentError ? error.status : 500, payload)
+  sendJson(response, known ? error.status : 500, payload)
 }
