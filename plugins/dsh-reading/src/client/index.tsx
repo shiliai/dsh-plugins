@@ -44,6 +44,73 @@ function appendContext(draft: string, block: string): string {
   return trimmed === '' ? block : `${trimmed}\n\n${block}`
 }
 
+type SessionFace = NonNullable<ReturnType<ClientContext['sessions']['sessionOf']>>
+
+/**
+ * Subscribe to the conversation until the in-flight turn settles and a new
+ * assistant message with text arrives; returns its text. Rejects on timeout or
+ * when the turn ends without producing any assistant text.
+ */
+function waitForAssistantReply(face: SessionFace, afterSeq: number, timeoutMs: number): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    let settled = false
+    let sawNewNode = false
+    let idleStrikes = 0
+    let idleTimer: ReturnType<typeof setTimeout> | undefined
+    let unsubscribe: () => void = () => {}
+    const timer = setTimeout(() => fail(new Error('生成概要超时，请稍后在对话中查看结果。')), timeoutMs)
+    const fail = (error: Error): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (idleTimer !== undefined) clearTimeout(idleTimer)
+      unsubscribe()
+      reject(error)
+    }
+    const succeed = (text: string): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (idleTimer !== undefined) clearTimeout(idleTimer)
+      unsubscribe()
+      resolve(text)
+    }
+    function check(): void {
+      if (settled) return
+      const snapshot = face.getSnapshot()
+      if (snapshot.promptError !== null) {
+        fail(new Error(snapshot.promptError.error.message ?? '生成概要失败。'))
+        return
+      }
+      for (let index = snapshot.nodes.length - 1; index >= 0; index--) {
+        const node = snapshot.nodes[index]!
+        if (node.seq <= afterSeq) break
+        sawNewNode = true
+        if (node.kind === 'assistant' && node.interrupted !== true) {
+          const text = node.blocks.filter(block => block.kind === 'text').map(block => block.text).join('\n').trim()
+          if (text !== '') {
+            succeed(text)
+            return
+          }
+        }
+      }
+      if (sawNewNode && !snapshot.running && snapshot.partial === null) {
+        // The queued user node and the host's turn/start can land as separate
+        // snapshot emissions; require the idle condition to persist briefly
+        // before concluding nothing was produced.
+        idleStrikes += 1
+        if (idleStrikes >= 2) fail(new Error('对话未产生概要内容，请检查对话状态后重试。'))
+        else idleTimer = setTimeout(() => { check() }, 400)
+      } else {
+        idleStrikes = 0
+        if (idleTimer !== undefined) { clearTimeout(idleTimer); idleTimer = undefined }
+      }
+    }
+    unsubscribe = face.subscribe(check)
+    check()
+  })
+}
+
 export function apply(ctx: ClientContext): void {
   const store = new ReadingStore()
   const workspaces = new WorkspaceRegistry(ctx.workspaces)
@@ -109,6 +176,30 @@ export function apply(ctx: ClientContext): void {
     const input = currentInput(); input.setDraft(appendContext(input.state.getSnapshot().draft, bookContext(enriched)))
   }
 
+  /**
+   * Ask the current conversation's LLM to write a summary, then capture the
+   * assistant reply. The book context is already injected in the conversation
+   * when the book was opened, so the model can draw on both the book and the
+   * preceding discussion.
+   */
+  const generateBookSummary = async (book: { title: string }): Promise<string> => {
+    const sessionId = ctx.sessions.list.getSnapshot().current
+    if (sessionId === undefined) throw new Error('请先打开一个会话再生成概要。')
+    const actx = ctx.sessions.scope(sessionId)
+    if (actx === undefined) throw new Error('当前会话不可用。')
+    const face = ctx.sessions.sessionOf(actx)
+    if (face === undefined) throw new Error('会话连接不可用，请刷新后重试。')
+    const nodes = face.getSnapshot().nodes
+    const afterSeq = nodes.length === 0 ? -1 : nodes[nodes.length - 1]!.seq
+    const prompt = [
+      `请为《${book.title}》写一段 150~250 字的中文概要，覆盖主题、核心内容/论点与阅读价值。`,
+      '只输出概要正文本身，不要标题、列表、引号或任何额外说明。',
+    ].join('')
+    const result = await face.prompt([{ type: 'text', text: prompt }], 'queue')
+    if (!result.ok) throw new Error(result.error.message ?? '发送生成请求失败。')
+    return waitForAssistantReply(face, afterSeq, 180_000)
+  }
+
   const addObsidianReadingContext = async (): Promise<void> => {
     const input = currentInput()
     const response = await fetch('/dsh-obsidian/api/context?kind=directory&value=reading')
@@ -141,7 +232,7 @@ export function apply(ctx: ClientContext): void {
           aria-pressed={open} onClick={() => toggle(!open)}>
           <BookOpen size={18} />
         </button>
-        {open && <Workbench store={store} close={() => toggle(false)} addArticleContext={addArticleContext} addBookContext={addBookContext} addObsidianReadingContext={addObsidianReadingContext} openProjectSession={openProjectSession} />}
+        {open && <Workbench store={store} close={() => toggle(false)} addArticleContext={addArticleContext} addBookContext={addBookContext} addObsidianReadingContext={addObsidianReadingContext} openProjectSession={openProjectSession} generateBookSummary={generateBookSummary} />}
       </>
     )
   }

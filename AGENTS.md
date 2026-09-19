@@ -36,6 +36,50 @@
 - Preserve the late socket-error protections introduced by commit `d9022d1`
   in every `dsh-remote` release.
 
+## Local plugin hot-iteration workflow (no host restart)
+
+The preferred way to test local plugin changes on a live host. Verified
+end-to-end on DSH 0.1.3-alpha.1 (see issue #110 for the full recipe, evidence,
+and pitfalls). This replaces "deploy + external restart" during development —
+the host process never exits, so the restart-safety rules above are not
+triggered and the session journal keeps its single writer.
+
+- Load the dev copy through a patch overlay instead of installing it. In
+  `$DSH_HOME/cordis.patch.yml` (watched live by the web profile's default
+  `patchReload: "live"`): enable the bundle's `hmr` entry
+  (`- id: hmr, disabled: false, config: { root: [<workspace>/lib] }`), disable
+  the installed copy (`- id: <short-name>, disabled: true`), and insert the
+  workspace build (`- insert: [{ name: <relative path to lib/index.js> }]` —
+  relative names resolve against the patch file's directory). Do not symlink
+  or link the workspace into `node_modules`.
+- Build with the hot loop: `DSH_DEV_HOT_LOOP=1 pnpm build`. The build MUST NOT
+  delete the output directory (`clean: false`): tsdown's default `clean: true`
+  replaces the `lib` directory inode, which silently kills the host's file
+  watcher — manual writes then reload fine but builds never do. The flag is
+  implemented in dsh-reading's `tsdown.config.ts`; copy the pattern to other
+  plugins before relying on it there.
+- After a rebuild the server-side plugin remounts with the new code in ~1–2s
+  (cordis-plugin-hmr clears the ESM + CJS module caches); the client bundle is
+  re-hashed by `dsh-client-hmr` (500ms poll) and the new rev is injected into
+  the served index. Refresh the browser page to pick up client changes.
+- Know the boundaries:
+  - Editing the overlay itself (adding/removing the dev insert, changing its
+    config) has a known defect: the entry remounts but with the stale composed
+    config. Restart the dev instance (an isolated sandbox on another port —
+    cheap, and never the real host) after overlay changes.
+  - A dev overlay is development-only. Production installs must always go
+    through `dsh plugin dlx` into `DSH_HOME`; remove the overlay and verify
+    the installed copy serves before releasing.
+  - Diagnostics are silent: cordis logger output and PENDING fibers produce
+    nothing on stdout without a console exporter. To observe reloads, insert a
+    temporary diagnostic plugin that writes to a file, and check behavior over
+    HTTP rather than logs.
+  - Do not put the dev sandbox home under `/private/tmp` on macOS: FSEvents
+    does not report sandboxed writes there and every watch appears dead.
+    Real paths under the home directory work.
+- Restarting a dev sandbox is not restarting DSH: it is a separate process on
+  its own `$DSH_HOME` and port, safe to start and stop from inside a session.
+
 ## Config changes must not break the next boot
 
 Past incidents share one shape: edit a DSH config surface, restart DSH, and the

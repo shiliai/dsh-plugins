@@ -1,8 +1,6 @@
+import { readCredentialRefs } from './credentials.ts'
 import type { Article } from './contracts.ts'
 import { ReadingError } from './library.ts'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
-import { readFileSync } from 'node:fs'
 import { readRemoteCache, writeRemoteCache } from './remote-cache.ts'
 
 export interface WallabagConfig {
@@ -190,20 +188,6 @@ export class WallabagAdapter {
 }
 
 /** Read current rc.8 flat credentials and legacy version/refs files for standalone hosts. */
-function readCredentialRefs(env: NodeJS.ProcessEnv): Record<string, string> {
-  const home = env.DSH_HOME?.trim() || join(homedir(), '.local', 'dsh_home')
-  try {
-    const text = readFileSync(join(home, '.credentials.yaml'), 'utf8')
-    const refs: Record<string, string> = {}
-    for (const line of text.split(/\r?\n/u)) {
-      // Current DSH writes top-level keys; the optional two-space form keeps
-      // older `refs:` files readable during migration.
-      const match = /^\s{0,2}([A-Z0-9_]+):\s*(.*?)\s*$/u.exec(line)
-      if (match?.[1] !== undefined && match[2] !== undefined) refs[match[1]] = match[2].replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/u, '$1$2')
-    }
-    return refs
-  } catch { return {} }
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) }
 

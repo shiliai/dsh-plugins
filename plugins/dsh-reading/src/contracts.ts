@@ -8,6 +8,16 @@ export function isBookFormat(value: string): value is BookFormat {
   return (BOOK_FORMATS as readonly string[]).includes(value.toLowerCase())
 }
 
+export interface BookMetadata {
+  /** Display title overriding the file-name-derived one. */
+  title?: string
+  author?: string
+  tags?: string[]
+  /** Free-form summary shown in the metadata dialog and sent to calibre-web as comments. */
+  summary?: string
+  updatedAt: string
+}
+
 export interface Book {
   id: string
   source: 'local'
@@ -20,6 +30,8 @@ export interface Book {
   fileSize: number
   checksum?: string
   addedAt: string
+  /** User-edited sidecar metadata (title/author overlay applied by the library scan). */
+  metadata?: BookMetadata
   convertedTo?: { path: string; at: string }
   /** Stable project path relative to the Reading workspace root. */
   projectPath?: string

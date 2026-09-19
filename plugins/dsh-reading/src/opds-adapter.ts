@@ -1,8 +1,6 @@
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 import type { BookFormat } from './contracts.ts'
+import { readCredentialRefs } from './credentials.ts'
 import { LocalLibrary, ReadingError } from './library.ts'
 import { readRemoteCache, writeRemoteCache } from './remote-cache.ts'
 
@@ -134,19 +132,6 @@ export class OpdsAdapter {
       throw new ReadingError('OPDS is unavailable.', 'OPDS_UNAVAILABLE', 503)
     }
   }
-}
-
-function readCredentialRefs(env: NodeJS.ProcessEnv): Record<string, string> {
-  const home = env.DSH_HOME?.trim() || join(homedir(), '.local', 'dsh_home')
-  try {
-    const text = readFileSync(join(home, '.credentials.yaml'), 'utf8')
-    const refs: Record<string, string> = {}
-    for (const line of text.split(/\r?\n/u)) {
-      const match = /^\s{0,2}([A-Z0-9_]+):\s*(.*?)\s*$/u.exec(line)
-      if (match?.[1] !== undefined && match[2] !== undefined) refs[match[1]] = match[2].replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/u, '$1$2')
-    }
-    return refs
-  } catch { return {} }
 }
 
 function parseFeed(xml: string, baseUrl: string): OpdsBook[] {
