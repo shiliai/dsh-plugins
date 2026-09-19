@@ -1,9 +1,11 @@
 /**
  * One-shot agent task execution: create a disposable agent through
  * `ctx.agents.create`, submit the framed prompt, wait for silence, take the
- * last assistant message as the run summary, then dispose. The run session is
- * a real persisted DSH session (`session-<uuid>`), so the Web UI can open its
- * native replay later.
+ * last assistant message as the run summary. The run session is a real
+ * persisted DSH session (`session-<uuid>`), so the Web UI can open its native
+ * replay later. The handle is NOT disposed here — disposal also removes the
+ * session from the host's live store, which makes the client drop it from the
+ * UI; the caller keeps it (retention) or releases it deliberately.
  * @module @dsh-plugins/dsh-cron/agent-runner
  */
 
@@ -15,7 +17,7 @@ import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import type { CronJob } from './types.ts'
+import type { CronJob, RunTokenUsage } from './types.ts'
 
 export interface AgentRunOutcome {
   ok: boolean
@@ -26,6 +28,12 @@ export interface AgentRunOutcome {
   timedOut?: boolean
   /** 'aborted' when the user stopped the run; the agent was cancelled. */
   aborted?: boolean
+  /** Exact model id the run executed with. */
+  model?: string
+  /** Summed provider usage over the run's assistant messages, when reported. */
+  usage?: RunTokenUsage
+  /** Live handle; dispose to release the session from the host's live store. */
+  handle?: { sessionId: string; dispose(): Promise<void> }
 }
 
 interface PresetsLike {
@@ -43,12 +51,19 @@ interface WorkspaceRegistryLike {
   create?(path: string, title?: string): Promise<{ attachSession(id: unknown): Promise<void> }>
 }
 
-interface SessionEventLike {
+export interface SessionEventLike {
   seq?: number
   type?: string
   data?: {
     message?: { content?: Array<{ type?: string; text?: string }> }
     reason?: { kind?: string }
+    usage?: {
+      inputTokens?: number
+      outputTokens?: number
+      cacheReadTokens?: number
+      cacheWriteTokens?: number
+      reasoningTokens?: number
+    }
   }
 }
 
@@ -112,6 +127,38 @@ export function lastAssistantText(events: readonly SessionEventLike[], firstSeq:
 export function summarizeAssistant(text: string): string {
   const compact = text.trim()
   return compact.length > 2000 ? `${compact.slice(0, 2000)}…` : compact
+}
+
+/**
+ * Sum the provider usage records carried by the run's `assistant/message`
+ * events (same records the host's session-stats projection folds). Counts are
+ * disjoint — cached input is separate — and figures the provider did not
+ * report stay absent. `undefined` when nothing reported.
+ */
+export function usageOf(events: readonly SessionEventLike[], firstSeq: number): RunTokenUsage | undefined {
+  const keys = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'] as const
+  const totals: Partial<Record<(typeof keys)[number], number>> = {}
+  let any = false
+  for (const event of events) {
+    if (event.type !== 'assistant/message') continue
+    if (event.seq === undefined || event.seq < firstSeq) continue
+    const usage = event.data?.usage
+    if (usage === undefined || typeof usage !== 'object') continue
+    for (const key of keys) {
+      const value = usage[key]
+      if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+        totals[key] = (totals[key] ?? 0) + value
+        any = true
+      }
+    }
+  }
+  if (!any) return undefined
+  const out: RunTokenUsage = {}
+  for (const key of keys) {
+    const total = totals[key]
+    if (total !== undefined) out[key] = total
+  }
+  return out
 }
 
 /**
@@ -208,31 +255,46 @@ export async function runAgentTask(ctx: Context, job: CronJob, prompt: string, t
       try {
         handle.agent.cancel((outcome === 'timeout' ? 'cron 任务超时' : 'cron 运行被停止') as never)
       } catch {
-        // Cancel is best-effort; disposal below owns teardown.
+        // Cancel is best-effort; the caller's retention owns teardown.
       }
     }
     const sessions = ctx.sessions
     if (sessions && typeof (sessions as { flush?: unknown }).flush === 'function') {
       await sessions.flush(handle.agent.session).catch(() => undefined)
     }
-    const { text, completed } = lastAssistantText(sessionEventsOf(handle.agent), firstSeq)
+    const events = sessionEventsOf(handle.agent)
+    const { text, completed } = lastAssistantText(events, firstSeq)
     const summary = summarizeAssistant(text)
+    const usage = usageOf(events, firstSeq)
+    // Live handle handed to the caller: keeping it keeps the session listed
+    // and replayable in the web UI; disposing removes it from the live store.
+    const handleRef = { sessionId, dispose: async (): Promise<void> => { await handle.dispose() } }
+    const base = {
+      summary,
+      sessionId,
+      model: selection.model,
+      handle: handleRef,
+      ...(usage !== undefined ? { usage } : {}),
+    }
 
     if (outcome === 'timeout') {
-      return { ok: false, summary, sessionId, error: `任务超时(${Math.round(timeoutMs / 1000)}s),已取消`, timedOut: true }
+      return { ok: false, ...base, error: `任务超时(${Math.round(timeoutMs / 1000)}s),已取消`, timedOut: true }
     }
     if (outcome === 'aborted') {
-      return { ok: false, summary, sessionId, error: '运行被用户停止', aborted: true }
+      return { ok: false, ...base, error: '运行被用户停止', aborted: true }
     }
     if (!completed) {
-      return { ok: false, summary, sessionId, error: 'agent 回合未正常结束(turn/end != completed)' }
+      return { ok: false, ...base, error: 'agent 回合未正常结束(turn/end != completed)' }
     }
     if (!summary) {
-      return { ok: false, summary: '', sessionId, error: 'agent 未产出任何 assistant 文本' }
+      return { ok: false, ...base, error: 'agent 未产出任何 assistant 文本' }
     }
-    return { ok: true, summary, sessionId }
-  } finally {
+    return { ok: true, ...base }
+  } catch (error) {
+    // No retention for a failed run: release the session like the pre-0.2.0
+    // behavior so a throwing path cannot leak live agents.
     await handle.dispose().catch(() => undefined)
+    throw error
   }
 }
 

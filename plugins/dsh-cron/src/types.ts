@@ -114,6 +114,12 @@ export interface CronRun {
   error?: string
   /** Agent runs only: session id for native replay. */
   sessionId?: string
+  /** What fired this run; runs created before v0.2.0 lack the field. */
+  trigger?: 'manual' | 'scheduled'
+  /** Agent runs only: exact model id the run executed with. */
+  model?: string
+  /** Agent runs only: summed token usage folded from the run's assistant messages. */
+  usage?: RunTokenUsage
   /** Command runs only. */
   exitCode?: number
   outputTail?: string
@@ -122,6 +128,20 @@ export interface CronRun {
   delivery?: { exitCode: number; outputTail?: string }
   /** Manual stop / replace bookkeeping. */
   stoppedBy?: 'user' | 'replace'
+}
+
+/**
+ * Audit-grade token accounting summed over one agent run's assistant
+ * messages. Counts are disjoint like the provider `TokenUsage`: cached input
+ * is reported separately, so billed input is the sum of the three input
+ * figures.
+ */
+export interface RunTokenUsage {
+  inputTokens?: number
+  outputTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  reasoningTokens?: number
 }
 
 /** Live execution state exposed by the scheduler. */
@@ -190,6 +210,14 @@ export interface CronConfig {
   tickIntervalMs?: number
   /** Global concurrent-run cap; 0 means unlimited (default). */
   maxConcurrentRuns?: number
+  /**
+   * How many recent agent-run sessions stay live (undisposed) after their run
+   * finishes, so they remain listed in the web UI and replay opens without a
+   * reload. Evicted sessions drop out of the live list but stay durable and
+   * reappear on the next client rebaseline. 0 releases every session
+   * immediately. Default 6.
+   */
+  sessionRetain?: number
   /**
    * Working directory for agent runs whose job doesn't pin a cwd, and the
    * workspace their sessions group under in the web UI. Default:

@@ -5,6 +5,9 @@ import { defineConfig } from 'tsdown'
 const PACKAGE_ID = '@dsh-plugins/dsh-cron'
 const CSS_PREFIX = '\0dsh-cron-css:'
 const CSS_SUFFIX = '.mjs'
+// Single source of truth for the displayed version: injected at build time so
+// src/version.ts cannot drift from package.json (the panel footer bug).
+const PLUGIN_VERSION = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8')).version as string
 
 function inlineCssModules() {
   return {
@@ -29,12 +32,13 @@ function inlineCssModules() {
 }
 
 export default defineConfig([
-  { entry: { index: 'src/index.ts' }, outDir: 'lib', format: ['esm'], platform: 'node', dts: false, clean: true, external: [/^@deepseek-ai\//] },
+  { entry: { index: 'src/index.ts' }, outDir: 'lib', format: ['esm'], platform: 'node', dts: false, clean: true, external: [/^@deepseek-ai\//], define: { __PLUGIN_VERSION__: JSON.stringify(PLUGIN_VERSION) } },
   {
     entry: { client: 'src/client/index.tsx' }, outDir: 'lib', format: ['cjs'], platform: 'browser', minify: true, dts: false, clean: false,
     external: ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-runtime/client', '@deepseek-ai/dsh-client-ui-slots'],
     noExternal: id => id.startsWith('@deepseek-ai/') ? undefined : true,
     plugins: [inlineCssModules()],
+    define: { __PLUGIN_VERSION__: JSON.stringify(PLUGIN_VERSION) },
     outputOptions: { entryFileNames: 'client.js', banner: `window.__ModuleLoader__.load({ id: ${JSON.stringify(PACKAGE_ID)}, factory: (require) => {`, footer: 'return module.exports; } });', intro: 'var module = { exports: {} }; var exports = module.exports;' },
   },
 ])

@@ -18,6 +18,7 @@ import { registerCronApi } from './http-api.ts'
 import { isLogLevel, makeLogger, type Logger, type LogLevel } from './log.ts'
 import { registerCronSkill } from './skill.ts'
 import { CronScheduler } from './scheduler.ts'
+import { SessionRetainer } from './retention.ts'
 import { CronStore, type StorageLike } from './store.ts'
 import { registerCronTools } from './tools.ts'
 import type { CronConfig } from './types.ts'
@@ -29,6 +30,7 @@ export type { CronConfig } from './types.ts'
 export { normalizeCronConfig } from './config.ts'
 export { CronController } from './controller.ts'
 export { CronScheduler } from './scheduler.ts'
+export { SessionRetainer } from './retention.ts'
 export { CronStore } from './store.ts'
 export { normalizeJobSpec, ValidationError, NAME_PATTERN, MIN_INTERVAL_SECONDS, MAX_WINDOW_SECONDS } from './validate.ts'
 
@@ -46,10 +48,12 @@ export async function apply(ctx: Context, config: CronConfig = {}, options: Appl
   const repaired = await store.repairInterrupted()
   if (repaired > 0) log.info(`crash repair: ${repaired} interrupted run(s) marked aborted`)
 
+  const retainer = new SessionRetainer(normalized.sessionRetain, message => log.info(message))
   const scheduler = new CronScheduler({
     ctx,
     store,
     config: normalized,
+    retainer,
     warn: message => log.warn(message),
     info: message => log.info(message),
   })
@@ -73,6 +77,7 @@ export async function apply(ctx: Context, config: CronConfig = {}, options: Appl
   ctx.effect(() => async () => {
     log.info('shutdown')
     scheduler.dispose().catch(() => undefined)
+    await retainer.disposeAll().catch(() => undefined)
     apiDisposer?.()
     skillDisposer?.()
     for (const dispose of toolDisposers) dispose()

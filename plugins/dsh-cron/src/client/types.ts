@@ -54,6 +54,15 @@ export interface ClientRun {
   summary?: string
   error?: string
   sessionId?: string
+  trigger?: 'manual' | 'scheduled'
+  model?: string
+  usage?: {
+    inputTokens?: number
+    outputTokens?: number
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
+    reasoningTokens?: number
+  }
   exitCode?: number
   outputTail?: string
   argv?: string[]

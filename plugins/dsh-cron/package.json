@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/dsh-cron",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Host-side unattended scheduler for DeepSeek Harness: cron / interval / one-shot jobs that run one-shot agents through the full DSH tool chain or spawn command subprocesses",
   "license": "MIT",
   "repository": {
