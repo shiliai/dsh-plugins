@@ -70,8 +70,10 @@ export class ReadingStore {
 
   /** Splice one updated book (e.g. after a metadata save) into the list. */
   applyBook(book: PublicBookWithProgress): void {
-    const books = this.#state.books.map(item => item.id === book.id ? { ...item, ...book } : item)
-    const current = this.#state.current?.id === book.id ? { ...this.#state.current, ...book } : this.#state.current
+    // Replace, not merge: the server omits keys it cleared (e.g. author), and
+    // a shallow merge would keep the stale value in the store.
+    const books = this.#state.books.map(item => item.id === book.id ? book : item)
+    const current = this.#state.current?.id === book.id ? book : this.#state.current
     this.#set({ books, current })
   }
 

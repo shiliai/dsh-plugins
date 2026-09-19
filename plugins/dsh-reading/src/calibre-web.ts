@@ -187,7 +187,14 @@ export class CalibreWebClient {
     if (calibreBookId === '') warnings.push('无法解析新书籍 id，元数据未写入。')
 
     if (metadata !== undefined && calibreBookId !== '') {
-      warnings.push(...await this.editBookMetadata(calibreBookId, metadata))
+      // The book already exists server-side at this point: transport-level
+      // failures of the metadata phase must not fail the upload (a retry
+      // would create a duplicate book) — degrade to warnings instead.
+      try {
+        warnings.push(...await this.editBookMetadata(calibreBookId, metadata))
+      } catch (error) {
+        warnings.push(`元数据写入失败（书籍已上传）：${error instanceof ReadingError ? error.message : String(error)}`)
+      }
     }
     return { calibreBookId, location, warnings }
   }
@@ -270,11 +277,19 @@ export class CalibreWebClient {
     let url = `${this.#config.url}${path}`
     let method = init.method ?? 'GET'
     let body = init.body as BodyInit | undefined
+    // Set when a 301/302/303 rewrites POST to GET: the caller's Content-Type
+    // (e.g. multipart boundary of a consumed body) must not ride along. The
+    // caller's headers object itself is never mutated.
+    let stripContentType = false
     for (let hop = 0; hop < 6; hop++) {
       const headers: Record<string, string> = {
         'User-Agent': USER_AGENT,
         ...(this.#cookies.size > 0 ? { Cookie: [...this.#cookies.entries()].map(([key, value]) => `${key}=${value}`).join('; ') } : {}),
-        ...init.headers,
+        ...(init.headers === undefined
+          ? {}
+          : stripContentType
+            ? Object.fromEntries(Object.entries(init.headers).filter(([key]) => key !== 'Content-Type'))
+            : init.headers),
       }
       let response: Response
       try {
@@ -288,6 +303,9 @@ export class CalibreWebClient {
         })
       } catch (error) {
         if (error instanceof ReadingError) throw error
+        if (error instanceof Error && error.name === 'TimeoutError') {
+          throw new ReadingError('calibre-web 请求超时。', 'CALIBRE_UNAVAILABLE', 504)
+        }
         throw new ReadingError('calibre-web 不可达。', 'CALIBRE_UNAVAILABLE', 503)
       }
       for (const cookie of response.headers.getSetCookie()) {
@@ -308,7 +326,7 @@ export class CalibreWebClient {
         if (method !== 'GET' && (response.status === 301 || response.status === 302 || response.status === 303)) {
           method = 'GET'
           body = undefined
-          if (init.headers !== undefined) delete init.headers['Content-Type']
+          stripContentType = true
         }
         url = next.toString()
         continue

@@ -152,6 +152,18 @@ describe('CalibreWebClient.uploadBook', () => {
     await expect(client.login()).rejects.toMatchObject({ code: 'CALIBRE_RESPONSE' })
   })
 
+  it('caps redirect following at six hops', async () => {
+    let hops = 0
+    const fetchMock = vi.fn(async (input: string | URL | Request): Promise<Response> => {
+      hops++
+      // Every hop (including the login POST) redirects to itself forever.
+      return respond('', { status: 302, headers: { location: String(input) } })
+    })
+    const client = new CalibreWebClient(config, fetchMock as unknown as typeof fetch)
+    await expect(client.login()).rejects.toMatchObject({ code: 'CALIBRE_RESPONSE', status: 502 })
+    expect(hops).toBeLessThanOrEqual(6)
+  })
+
   it('falls back to form-encoded ajax edits on old calibre-web servers', async () => {
     const bodies: Array<{ url: string; body?: string | undefined; contentType?: string | undefined }> = []
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {

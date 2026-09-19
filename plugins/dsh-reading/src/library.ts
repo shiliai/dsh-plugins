@@ -151,9 +151,13 @@ export class LocalLibrary {
     await writeFile(tmp, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
     await rename(tmp, target)
     const { author: _derivedAuthor, ...rest } = book
+    // The fallback title comes from the file name, not book.title: listBooks
+    // already overlaid the OLD sidecar title onto book.title, so clearing the
+    // custom title must respond with the file-derived title the next list
+    // will show.
     const updated: Book = {
       ...rest,
-      title: next.title !== undefined && next.title.trim() !== '' ? next.title.trim() : book.title,
+      title: next.title !== undefined && next.title.trim() !== '' ? next.title.trim() : titleFromFileName(book.fileName),
       ...(next.author !== undefined && next.author.trim() !== '' ? { author: next.author.trim() } : {}),
       metadata: next,
     }

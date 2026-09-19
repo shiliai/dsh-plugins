@@ -46,6 +46,33 @@ describe('LocalLibrary metadata sidecar', () => {
     expect(cleared.title).toBe('标题')
   })
 
+  it('clearing the title responds with the file-derived title, not the stale sidecar title', async () => {
+    const imported = await library.importBook(Buffer.from('%PDF-1.4 fake'), 'clear-title-test.pdf')
+    await library.saveMetadata(imported.id, { title: '自定义标题' })
+
+    const cleared = await library.saveMetadata(imported.id, { title: '' })
+    // listBooks overlays the sidecar title, so the response must fall back to
+    // the file-derived title (what the next GET /library will show).
+    expect(cleared.title).toBe('clear-title-test')
+    expect((await library.listBooks({}))[0]!.title).toBe('clear-title-test')
+  })
+
+  it('clearing tags and summary with empty values works for every field', async () => {
+    const imported = await library.importBook(Buffer.from('%PDF-1.4 fake'), 'clear-all.pdf')
+    await library.saveMetadata(imported.id, { title: 'T', author: 'A', tags: ['X'], summary: 'S' })
+
+    const clearedTags = await library.saveMetadata(imported.id, { tags: [] })
+    expect(clearedTags.metadata?.tags).toEqual([])
+
+    const clearedSummary = await library.saveMetadata(imported.id, { summary: '' })
+    expect(clearedSummary.metadata?.summary).toBe('')
+
+    const relisted = await library.listBooks({})
+    expect(relisted[0]).toMatchObject({ title: 'T', author: 'A' })
+    expect(relisted[0]!.metadata?.tags).toEqual([])
+    expect(relisted[0]!.metadata?.summary).toBe('')
+  })
+
   it('trims tags and drops empties', async () => {
     const imported = await library.importBook(Buffer.from('%PDF-1.4 fake'), 'tags-test.pdf')
     const saved = await library.saveMetadata(imported.id, { tags: [' 甲 ', '', '乙'] })

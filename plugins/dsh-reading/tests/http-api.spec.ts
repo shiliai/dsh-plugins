@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseRange, registerReadingApi } from '../src/http-api.ts'
-import { LocalLibrary } from '../src/library.ts'
+import { LocalLibrary, ReadingError } from '../src/library.ts'
 import { ReadingStateStore } from '../src/state-store.ts'
 import { SkillStore } from '@dsh-plugins/dsh-reading-core'
 import { WallabagAdapter } from '../src/wallabag-adapter.ts'
@@ -470,6 +470,52 @@ describe('reading HTTP API /calibre/upload', () => {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookId: 'local:missing' }),
       })
       expect(missing.status).toBe(404)
+    } finally {
+      calibreServer.close()
+      await rm(local, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves calibre error codes and rejects malformed bodies', async () => {
+    const local = await mkdtemp(join(tmpdir(), 'dsh-reading-calibre-err-'))
+    const calibreServer = createServer()
+    try {
+      const calibreLibrary = new LocalLibrary(local)
+      const calibreStore = await ReadingStateStore.create(local)
+      const fakeCalibre = {
+        uploadBook: vi.fn(async () => { throw new ReadingError('calibre-web 账号缺少上传权限（Upload）。', 'CALIBRE_FORBIDDEN', 403) }),
+      }
+      const fakeWebServer = {
+        register(route: { handler: (req: IncomingMessageLike, res: ServerResponseLike) => Promise<void> }) {
+          const listener = (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse): void => {
+            void route.handler(req as IncomingMessageLike, res as ServerResponseLike)
+          }
+          calibreServer.on('request', listener)
+          return () => calibreServer.off('request', listener)
+        },
+      }
+      registerReadingApi(fakeWebServer as never, calibreLibrary, calibreStore, undefined, undefined, undefined, fakeCalibre as never)
+      await new Promise<void>(resolve => calibreServer.listen(0, '127.0.0.1', resolve))
+      const calibreBase = `http://127.0.0.1:${(calibreServer.address() as AddressInfo).port}/dsh-reading/api`
+
+      const { book } = await (await fetch(`${calibreBase}/import?filename=err.pdf`, {
+        method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: Buffer.from('%PDF-1.4 x'),
+      })).json() as { book: { id: string } }
+
+      // A ReadingError from the client keeps its code and HTTP status.
+      const forbidden = await fetch(`${calibreBase}/calibre/upload`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookId: book.id }),
+      })
+      expect(forbidden.status).toBe(403)
+      expect((await forbidden.json() as { code: string }).code).toBe('CALIBRE_FORBIDDEN')
+
+      // Non-array tags are rejected before the client is consulted.
+      const malformed = await fetch(`${calibreBase}/calibre/upload`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookId: book.id, tags: 'not-an-array' }),
+      })
+      expect(malformed.status).toBe(400)
+      expect((await malformed.json() as { code: string }).code).toBe('INVALID_BODY')
+      expect(fakeCalibre.uploadBook).toHaveBeenCalledTimes(1)
     } finally {
       calibreServer.close()
       await rm(local, { recursive: true, force: true })
