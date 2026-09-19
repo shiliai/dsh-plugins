@@ -29,3 +29,6 @@ declare module '@deepseek-ai/dsh-client-runtime/client' {
 declare module '@deepseek-ai/dsh-client-ui-layout/client' {}
 declare module '@deepseek-ai/dsh-client-ui-sidebar/client' {}
 declare module '@deepseek-ai/dsh-client-ui-slots' {}
+
+/** Injected by tsdown `define` from package.json at build time. */
+declare const __PLUGIN_VERSION__: string

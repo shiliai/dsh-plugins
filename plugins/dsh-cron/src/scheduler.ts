@@ -12,12 +12,15 @@ import { runAgentTask } from './agent-runner.ts'
 import { runCommand, runDelivery } from './command-runner.ts'
 import { isStaleBeat, lastDueBeat, nextFire, windowEndMs } from './schedule.ts'
 import type { CronStore } from './store.ts'
+import type { SessionRetainer } from './retention.ts'
 import type { CronConfig, CronJob, CronRun, CronStateView, JobView, RunningRun } from './types.ts'
 
 export interface SchedulerDeps {
   ctx: Context
   store: CronStore
-  config: Required<Pick<CronConfig, 'historyLimit' | 'tickIntervalMs' | 'maxConcurrentRuns' | 'defaultCwd'>>
+  config: Required<Pick<CronConfig, 'historyLimit' | 'tickIntervalMs' | 'maxConcurrentRuns' | 'defaultCwd' | 'sessionRetain'>>
+  /** Keeps recent run sessions live so the web UI can still list and replay them. */
+  retainer?: SessionRetainer | undefined
   warn(message: string): void
   info(message: string): void
   /** Fired after any state change so the Web UI can refresh promptly. */
@@ -149,7 +152,7 @@ export class CronScheduler {
       await this.recordSkipped(job, due, '已达全局并发上限,本次跳过')
       return
     }
-    await this.launch(job, due)
+    await this.launch(job, due, 'scheduled')
   }
 
   private reserveConcurrency(): boolean {
@@ -158,7 +161,7 @@ export class CronScheduler {
     return this.live.size < max
   }
 
-  private async launch(job: CronJob, due: number): Promise<void> {
+  private async launch(job: CronJob, due: number, trigger: 'manual' | 'scheduled'): Promise<void> {
     const seq = job.seq + 1
     const startedAt = Date.now()
     const run: CronRun = {
@@ -167,6 +170,7 @@ export class CronScheduler {
       targetMs: due,
       startedAt,
       status: 'running',
+      trigger,
     }
     const controller = new AbortController()
     this.live.set(job.id, { run, controller })
@@ -191,7 +195,7 @@ export class CronScheduler {
     const fresh = this.deps.store.getJob(job.id)
     if (fresh === undefined || !fresh.enabled || fresh.archivedAt !== undefined || fresh.overlap !== 'queue') return
     if (!this.reserveConcurrency()) return
-    await this.launch(fresh, queued)
+    await this.launch(fresh, queued, 'scheduled')
   }
 
   private async execute(job: CronJob, run: CronRun, controller: AbortController): Promise<void> {
@@ -200,11 +204,22 @@ export class CronScheduler {
     try {
       if (job.task.kind === 'agent') {
         const outcome = await runAgentTask(this.deps.ctx, job, job.task.prompt, run.targetMs, timeoutMs, controller.signal, this.deps.config.defaultCwd)
+        if (outcome.handle !== undefined) {
+          // Retention keeps the session listed and replayable in the web UI;
+          // with retention off (or no retainer wired) release it immediately.
+          if (this.deps.retainer !== undefined && this.deps.config.sessionRetain > 0) {
+            this.deps.retainer.keep(outcome.handle)
+          } else {
+            await outcome.handle.dispose().catch(() => undefined)
+          }
+        }
         patch = {
           finishedAt: Date.now(),
           status: outcome.ok ? 'ok' : outcome.timedOut === true ? 'timeout' : outcome.aborted === true ? 'killed' : 'failed',
           summary: outcome.summary,
           sessionId: outcome.sessionId,
+          ...(outcome.model !== undefined ? { model: outcome.model } : {}),
+          ...(outcome.usage !== undefined ? { usage: outcome.usage } : {}),
           ...(outcome.error ? { error: outcome.error } : {}),
         }
       } else {
@@ -293,7 +308,7 @@ export class CronScheduler {
     if (job.archivedAt !== undefined) return { ok: false, error: '任务已归档' }
     if (this.live.has(jobId)) return { ok: false, error: '已有运行在进行中' }
     if (!this.reserveConcurrency()) return { ok: false, error: '已达全局并发上限' }
-    await this.launch(job, Date.now())
+    await this.launch(job, Date.now(), 'manual')
     return { ok: true }
   }
 
