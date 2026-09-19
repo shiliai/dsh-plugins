@@ -4,6 +4,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+// Release packs must never run with the dev hot-loop flag: its `clean: false`
+// build keeps stale lib artifacts that no longer correspond to src/ (issue
+// #110 mode is for the local overlay only).
+if (process.env.DSH_DEV_HOT_LOOP === '1') {
+  throw new Error('verify-pack must not run with DSH_DEV_HOT_LOOP=1 set')
+}
+
 const root = fileURLToPath(new URL('..', import.meta.url))
 const destination = await mkdtemp(join(tmpdir(), 'dsh-file-attachment-pack-'))
 try {

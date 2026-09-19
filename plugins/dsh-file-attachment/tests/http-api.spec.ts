@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { chmod, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -105,5 +105,53 @@ describe('attachment HTTP API', () => {
     })
     expect(over.status).toBe(413)
     expect(await over.json()).toMatchObject({ code: 'MESSAGE_TOO_LARGE' })
+  })
+
+  it('logs internal errors host-side and keeps the 500 body generic (#109)', async () => {
+    // A store whose root rejects writes makes the fs layer throw a plain
+    // Error (its message carries the host-local path) instead of an
+    // AttachmentError.
+    const root = await mkdtemp(join(tmpdir(), 'dsh-file-api-readonly-'))
+    roots.push(root)
+    const store = await TemporaryFileStore.create({ root, maxFileBytes: 16, maxFilesPerMessage: 2, maxMessageBytes: 16, ttlMs: 60_000 })
+    let route: PrefixRoute | undefined
+    const dispose = registerAttachmentApi({ register: (value: PrefixRoute) => { route = value; return vi.fn() } } as unknown as WebServer, store, [])
+    expect(dispose).toBeTypeOf('function')
+    if (route === undefined) throw new Error('Route was not registered.')
+    const server = createServer((request, response) => void route!.handler(request, response))
+    servers.push(server)
+    await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('Expected TCP address.')
+    const baseUrl = `http://127.0.0.1:${address.port}`
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await chmod(root, 0o500)
+      const failed = await fetch(`${baseUrl}/dsh-file-attachment/api/upload`, {
+        method: 'POST',
+        headers: { origin: baseUrl, 'content-type': 'application/json' },
+        body: JSON.stringify({ files: [{ name: 'a.txt', mediaType: '', data: 'YQ==' }], existingFileIds: [] }),
+      })
+      expect(failed.status).toBe(500)
+      const body = await failed.json() as { error: string, code: string }
+      expect(body).toEqual({ error: 'Unexpected attachment error.', code: 'INTERNAL_ERROR' })
+      expect(body.error).not.toContain(root) // no host paths to the browser
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      expect(String(errorSpy.mock.calls[0]?.[1])).toContain(root) // full trace host-side
+
+      // Deliberate AttachmentError rejections stay log-free.
+      errorSpy.mockClear()
+      const denied = await fetch(`${baseUrl}/dsh-file-attachment/api/upload`, {
+        method: 'POST',
+        headers: { origin: baseUrl, 'content-type': 'application/json' },
+        body: '{"files":"not-an-array"}',
+      })
+      expect(denied.status).toBe(400)
+      expect(errorSpy).not.toHaveBeenCalled()
+    } finally {
+      errorSpy.mockRestore()
+      await chmod(root, 0o700) // let afterEach clean up
+    }
   })
 })
