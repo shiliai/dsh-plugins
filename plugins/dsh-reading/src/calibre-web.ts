@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename } from 'node:path'
+import { readCredentialRefs } from './credentials.ts'
 import { ReadingError } from './library.ts'
 
 export interface CalibreWebConfig {
@@ -36,13 +35,23 @@ const USER_AGENT = 'dsh-reading-calibre-web/1.0'
  * GET /login → CSRF + session cookie → POST /login → GET /upload → CSRF →
  * POST /upload (multipart, field `btn-upload`) → optional metadata patches via
  * POST /ajax/editbooks/<param>. There is no clean REST API; this mirrors the
- * official web UI (verified against calibre-web 0.6.x/5.x form markup).
+ * official web UI (verified against the NAS calibre-web 5.x form markup).
+ *
+ * Notes:
+ * - calibre-web rate-limits POST /login (per-user, ~40/day), so the client
+ *   reuses one authenticated session across uploads and only re-logins after
+ *   an auth failure.
+ * - The ajax metadata edit JSON contract requires calibre-web ≥ 0.6.26; older
+ *   servers fall back to the form-encoded variant automatically.
  */
 export class CalibreWebClient {
   readonly #config: CalibreWebConfig
   readonly #fetch: typeof fetch
   readonly #cookies = new Map<string, string>()
   #csrfToken: string | undefined
+  #authenticated = false
+  /** Serializes uploads: concurrent calls must not interleave logins/CSRF. */
+  #queue: Promise<unknown> = Promise.resolve()
 
   constructor(config: CalibreWebConfig, fetchImpl: typeof fetch = fetch) {
     let parsed: URL
@@ -70,8 +79,13 @@ export class CalibreWebClient {
     })
   }
 
-  /** Log in and keep the session cookie; called automatically by uploadBook. */
+  /**
+   * Log in and keep the session cookie. Skipped when a session from a
+   * previous upload is still believed valid — calibre-web rate-limits the
+   * login endpoint, and re-sending the password per upload is unnecessary.
+   */
   async login(): Promise<void> {
+    if (this.#authenticated) return
     const page = await this.#getText('/login')
     const csrf = extractCsrf(page)
     if (csrf === undefined) throw new ReadingError('calibre-web 登录页缺少 csrf_token。', 'CALIBRE_RESPONSE', 502)
@@ -81,14 +95,45 @@ export class CalibreWebClient {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString(),
     })
-    if (response.status !== 200 || new URL(response.url).pathname === '/login') {
+    // endsWith covers reverse-proxy subpath mounts (e.g. /calibre/login).
+    if (response.status !== 200 || new URL(response.url).pathname.endsWith('/login')) {
       throw new ReadingError('calibre-web 登录失败，请检查 READING_CALIBRE_WEB_* 凭据。', 'CALIBRE_AUTH', 502)
     }
     await response.body?.cancel()
+    this.#authenticated = true
   }
 
-  /** Upload one book file; applies metadata afterwards when provided. */
-  async uploadBook(fileName: string, data: Buffer, metadata?: CalibreUploadMetadata): Promise<CalibreUploadResult> {
+  /** Upload one book file; applies metadata afterwards when provided. Serialized per client. */
+  uploadBook(fileName: string, data: Buffer, metadata?: CalibreUploadMetadata): Promise<CalibreUploadResult> {
+    const run = this.#queue.then(() => this.#uploadWithAuthRetry(fileName, data, metadata), () => this.#uploadWithAuthRetry(fileName, data, metadata))
+    this.#queue = run.then(() => undefined, () => undefined)
+    return run
+  }
+
+  /**
+   * A cached session can expire server-side mid-flight (the upload then
+   * bounces through /login and fails with an auth-flavoured error). Retry
+   * once with a fresh login in that case.
+   */
+  async #uploadWithAuthRetry(fileName: string, data: Buffer, metadata?: CalibreUploadMetadata): Promise<CalibreUploadResult> {
+    try {
+      return await this.#uploadOnce(fileName, data, metadata)
+    } catch (error) {
+      const code = error instanceof ReadingError ? error.code : ''
+      const retryable = code === 'CALIBRE_AUTH' || code === 'CALIBRE_FORBIDDEN'
+      if (!retryable || !this.#authenticated) throw error
+      this.#resetAuth()
+      return this.#uploadOnce(fileName, data, metadata)
+    }
+  }
+
+  #resetAuth(): void {
+    this.#authenticated = false
+    this.#csrfToken = undefined
+    this.#cookies.clear()
+  }
+
+  async #uploadOnce(fileName: string, data: Buffer, metadata?: CalibreUploadMetadata): Promise<CalibreUploadResult> {
     await this.login()
     const page = await this.#getText('/upload', 'calibre-web 账号缺少上传权限（Upload），请在管理后台为该账号勾选上传权限。')
     const csrf = extractCsrf(page)
@@ -156,15 +201,23 @@ export class CalibreWebClient {
         warnings.push(`calibre-web 账号缺少编辑权限，${label} 未写入。`)
         continue
       }
-      const raw = await response.text()
-      let ok = response.ok
-      let message: string | undefined
-      try {
-        const parsed = JSON.parse(raw) as { success?: unknown; msg?: unknown }
-        ok = parsed.success === true
-        message = typeof parsed.msg === 'string' ? parsed.msg : undefined
-      } catch { /* keep status-based verdict */ }
-      if (!ok) warnings.push(`calibre-web ${label} 写入失败${message !== undefined ? `：${message}` : ''}。`)
+      let raw = await response.text()
+      if (response.status >= 500 || !tryParseEditResult(raw)) {
+        // calibre-web ≤ 0.6.25 expects form encoding with a scalar pk; retry once that way.
+        const fallback = new URLSearchParams({ csrf_token: this.#csrfToken ?? '', pk: bookId, value })
+        const retry = await this.#request(`/ajax/editbooks/${param}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRFToken': this.#csrfToken ?? '' },
+          body: fallback.toString(),
+        })
+        raw = await retry.text()
+        if (retry.status === 403) {
+          warnings.push(`calibre-web 账号缺少编辑权限，${label} 未写入。`)
+          continue
+        }
+      }
+      const verdict = parseEditResult(raw)
+      if (verdict.ok !== true) warnings.push(`calibre-web ${label} 写入失败${verdict.message !== undefined ? `：${verdict.message}` : ''}。`)
     }
     return warnings
   }
@@ -216,13 +269,19 @@ export class CalibreWebClient {
       const location = response.headers.get('location')
       if (response.status >= 300 && response.status < 400 && location !== null) {
         await response.body?.cancel().catch(() => {})
+        const next = new URL(location, url)
+        // Never follow a redirect off the configured origin: the session
+        // cookie (and on 307/308 the request body) must not leak cross-origin.
+        if (next.origin !== new URL(this.#config.url).origin) {
+          throw new ReadingError('calibre-web 重定向到非本站地址，已中止。', 'CALIBRE_RESPONSE', 502)
+        }
         // 301/302/303 rewrite POST to GET; the body must not ride along.
         if (method !== 'GET' && (response.status === 301 || response.status === 302 || response.status === 303)) {
           method = 'GET'
           body = undefined
           if (init.headers !== undefined) delete init.headers['Content-Type']
         }
-        url = new URL(location, url).toString()
+        url = next.toString()
         continue
       }
       try {
@@ -257,6 +316,25 @@ function extractCsrf(html: string): string | undefined {
   return match?.[1]
 }
 
+/** True when the body parses as an ajax edit result object. */
+function tryParseEditResult(raw: string): boolean {
+  try {
+    const parsed = JSON.parse(raw) as { success?: unknown }
+    return typeof parsed === 'object' && parsed !== null && 'success' in parsed
+  } catch {
+    return false
+  }
+}
+
+function parseEditResult(raw: string): { ok: boolean; message?: string } {
+  try {
+    const parsed = JSON.parse(raw) as { success?: unknown; msg?: unknown }
+    return { ok: parsed.success === true, ...(typeof parsed.msg === 'string' ? { message: parsed.msg } : {}) }
+  } catch {
+    return { ok: false }
+  }
+}
+
 function sanitizeUploadFileName(fileName: string): string {
   const base = basename(fileName).replaceAll(/["\\\r\n]/gu, '_').trim()
   return base === '' ? 'book.bin' : base
@@ -279,15 +357,3 @@ export function buildMultipart(boundary: string, csrfToken: string, fileName: st
   return Buffer.concat([head, data, tail])
 }
 
-function readCredentialRefs(env: NodeJS.ProcessEnv): Record<string, string> {
-  const home = env.DSH_HOME?.trim() || join(homedir(), '.local', 'dsh_home')
-  try {
-    const text = readFileSync(join(home, '.credentials.yaml'), 'utf8')
-    const refs: Record<string, string> = {}
-    for (const line of text.split(/\r?\n/u)) {
-      const match = /^\s{0,2}([A-Z0-9_]+):\s*(.*?)\s*$/u.exec(line)
-      if (match?.[1] !== undefined && match[2] !== undefined) refs[match[1]] = match[2].replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/u, '$1$2')
-    }
-    return refs
-  } catch { return {} }
-}

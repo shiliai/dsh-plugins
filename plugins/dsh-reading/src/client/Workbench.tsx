@@ -65,11 +65,13 @@ export function Workbench({ store, close, addArticleContext, addBookContext, add
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
+      // While the metadata dialog is open, Escape closes only the dialog
+      // (the dialog's own handler) — never the whole workbench.
+      if (event.key === 'Escape' && metadataBook === null) close()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [close])
+  }, [close, metadataBook])
 
   // Restore the conversation view area when the workbench unmounts.
   useEffect(() => () => {
@@ -216,7 +218,12 @@ export function Workbench({ store, close, addArticleContext, addBookContext, add
       </div>
 
       {metadataBook !== null && (
-        <BookMetadataDialog book={metadataBook} {...(generateBookSummary === undefined ? {} : { generateSummary: generateBookSummary })} onClose={() => setMetadataBook(null)} />
+        <BookMetadataDialog
+          book={metadataBook}
+          {...(generateBookSummary === undefined ? {} : { generateSummary: generateBookSummary })}
+          onSaved={book => store.applyBook(book)}
+          onClose={() => setMetadataBook(null)}
+        />
       )}
     </div>,
     document.body,

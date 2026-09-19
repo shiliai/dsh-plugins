@@ -387,6 +387,9 @@ async function route(request: IncomingMessage, response: ServerResponse, library
     if (calibre === undefined) throw new ReadingError('calibre-web 未配置（READING_CALIBRE_WEB_URL）。', 'CALIBRE_UNAVAILABLE', 503)
     const body = await readJson(request, 256 * 1024)
     if (!isRecord(body) || typeof body.bookId !== 'string' || body.bookId === '') throw new ReadingError('Request body requires bookId.', 'INVALID_BODY', 400)
+    if (body.tags !== undefined && (!Array.isArray(body.tags) || body.tags.some(tag => typeof tag !== 'string'))) {
+      throw new ReadingError('Upload tags must be a string array.', 'INVALID_BODY', 400)
+    }
     const book = (await library.listBooks(store.snapshot.progress)).find(item => item.id === body.bookId)
     if (book === undefined) throw new ReadingError('Book not found.', 'NOT_FOUND', 404)
     const file = await library.resolveFile(book.id)
@@ -394,7 +397,7 @@ async function route(request: IncomingMessage, response: ServerResponse, library
     const result = await calibre.uploadBook(file.fileName, data, {
       ...(typeof body.title === 'string' ? { title: body.title } : {}),
       ...(typeof body.author === 'string' ? { author: body.author } : {}),
-      ...(Array.isArray(body.tags) ? { tags: body.tags.filter((tag): tag is string => typeof tag === 'string') } : {}),
+      ...(Array.isArray(body.tags) ? { tags: body.tags } : {}),
       ...(typeof body.summary === 'string' ? { summary: body.summary } : {}),
     })
     sendJson(response, 200, { result })

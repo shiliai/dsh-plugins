@@ -123,6 +123,87 @@ describe('CalibreWebClient.uploadBook', () => {
     expect(homeGet?.cookie).toContain('session=authenticated')
   })
 
+  it('reuses the authenticated session across uploads instead of re-logging in', async () => {
+    const loginPosts: string[] = []
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = String(input)
+      if (url.endsWith('/login') && (init?.method ?? 'GET') === 'GET') return respond(loginPage('csrf-1'))
+      if (url.includes('/login') && init?.method === 'POST') { loginPosts.push(url); return respond('home', { url: 'http://calibre.local/' }) }
+      if (url.endsWith('/upload') && (init?.method ?? 'GET') === 'GET') return respond(loginPage('csrf-u'))
+      if (url.endsWith('/upload') && init?.method === 'POST') return respond(JSON.stringify({ location: '/book/1' }))
+      return respond('unexpected', { status: 500 })
+    })
+    const client = new CalibreWebClient(config, fetchMock as unknown as typeof fetch)
+    await client.uploadBook('a.pdf', Buffer.from('x'))
+    await client.uploadBook('b.pdf', Buffer.from('y'))
+    expect(loginPosts).toHaveLength(1)
+  })
+
+  it('aborts redirects that leave the configured origin', async () => {
+    const fetchMock = vi.fn(async (): Promise<Response> => {
+      return respond('', { status: 302, headers: { location: 'http://evil.example/steal' } })
+    })
+    const client = new CalibreWebClient(config, fetchMock as unknown as typeof fetch)
+    await expect(client.login()).rejects.toMatchObject({ code: 'CALIBRE_RESPONSE' })
+  })
+
+  it('falls back to form-encoded ajax edits on old calibre-web servers', async () => {
+    const bodies: Array<{ url: string; body?: string | undefined; contentType?: string | undefined }> = []
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = String(input)
+      const contentType = (init?.headers as Record<string, string> | undefined)?.['Content-Type']
+      bodies.push({ url, body: typeof init?.body === 'string' ? init.body : undefined, contentType })
+      if (url.endsWith('/login') && (init?.method ?? 'GET') === 'GET') return respond(loginPage('csrf-old'))
+      if (url.includes('/login') && init?.method === 'POST') return respond('home', { url: 'http://calibre.local/' })
+      if (url.endsWith('/upload') && (init?.method ?? 'GET') === 'GET') return respond(loginPage('csrf-old'))
+      if (url.endsWith('/upload') && init?.method === 'POST') return respond(JSON.stringify({ location: '/book/3' }))
+      if (url.endsWith('/ajax/editbooks/title') && contentType === 'application/json') {
+        // calibre-web ≤ 0.6.25 answers the JSON contract with a 500.
+        return respond('<h1>Internal Server Error</h1>', { status: 500 })
+      }
+      if (url.endsWith('/ajax/editbooks/title')) return respond(JSON.stringify({ success: true }))
+      return respond(JSON.stringify({ success: true }))
+    })
+    const client = new CalibreWebClient(config, fetchMock as unknown as typeof fetch)
+    const result = await client.uploadBook('a.pdf', Buffer.from('x'), { title: '旧版兼容' })
+    expect(result.warnings).toEqual([])
+    const titleCalls = bodies.filter(call => call.url.endsWith('/ajax/editbooks/title'))
+    expect(titleCalls).toHaveLength(2)
+    expect(titleCalls[1]?.contentType).toBe('application/x-www-form-urlencoded')
+    expect(titleCalls[1]?.body).toContain('pk=3')
+  })
+
+  it('re-logins once when the cached session expires mid-upload', async () => {
+    let authenticated = false
+    let loginPosts = 0
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.includes('/login') && method === 'GET') {
+        authenticated = false
+        return respond(loginPage('csrf-exp'))
+      }
+      if (url.includes('/login') && method === 'POST') { loginPosts += 1; authenticated = true; return respond('home', { url: 'http://calibre.local/' }) }
+      if (url.endsWith('/upload') && method === 'GET') {
+        // Expired sessions are bounced through /login before the upload page.
+        if (!authenticated) return respond('', { status: 302, headers: { location: '/login?next=%2Fupload' } })
+        return respond(loginPage('csrf-exp'))
+      }
+      if (url.endsWith('/upload') && method === 'POST') {
+        if (!authenticated) return respond('forbidden', { status: 403 })
+        return respond(JSON.stringify({ location: '/book/5' }))
+      }
+      return respond('unexpected', { status: 500 })
+    })
+    const client = new CalibreWebClient(config, fetchMock as unknown as typeof fetch)
+    await client.uploadBook('a.pdf', Buffer.from('x'))
+    // Simulate server-side session expiry: the cached cookie no longer counts.
+    authenticated = false
+    const second = await client.uploadBook('b.pdf', Buffer.from('y'))
+    expect(second.calibreBookId).toBe('5')
+    expect(loginPosts).toBe(2)
+  })
+
   it('surfaces missing upload permission as a clear error', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       const url = String(input)

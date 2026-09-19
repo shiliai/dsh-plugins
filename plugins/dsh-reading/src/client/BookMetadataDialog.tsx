@@ -15,6 +15,8 @@ interface Props {
   book: PublicBookWithProgress
   /** Generates a summary with the current conversation's LLM; absent hides the button. */
   generateSummary?: (book: PublicBookWithProgress) => Promise<string>
+  /** Receives the updated book after a successful save so the library list refreshes in place. */
+  onSaved(book: PublicBookWithProgress): void
   onClose(): void
 }
 
@@ -27,7 +29,7 @@ function splitTags(value: string): string[] {
  * the metadata.json sidecar so the library list and future uploads pick it up;
  * uploading saves first, then pushes the file and metadata to calibre-web.
  */
-export function BookMetadataDialog({ book, generateSummary, onClose }: Props) {
+export function BookMetadataDialog({ book, generateSummary, onSaved, onClose }: Props) {
   const [title, setTitle] = useState(book.title)
   const [author, setAuthor] = useState(book.author ?? '')
   const [tags, setTags] = useState(book.metadata?.tags?.join(', ') ?? '')
@@ -69,6 +71,7 @@ export function BookMetadataDialog({ book, generateSummary, onClose }: Props) {
       setAuthor(saved.author ?? '')
       setTags(saved.metadata?.tags?.join(', ') ?? '')
       setSummary(saved.metadata?.summary ?? '')
+      onSaved(saved)
       setStatus({ kind: 'success', text: '已保存。' })
       return true
     } catch (error) {
@@ -114,7 +117,7 @@ export function BookMetadataDialog({ book, generateSummary, onClose }: Props) {
 
   return (
     <div className={css.dialogBackdrop} onClick={onClose}>
-      <div className={css.dialog} role="dialog" aria-label="书籍元数据" onClick={event => event.stopPropagation()}>
+      <div className={css.dialog} role="dialog" aria-label="书籍元数据" onClick={event => event.stopPropagation()} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); onClose() } }}>
         <h3 className={css.dialogTitle}>元数据与上传</h3>
         <p className={css.dialogHint}>{book.title} · {book.format.toUpperCase()}</p>
         <label className={css.dialogLabel}>书名</label>

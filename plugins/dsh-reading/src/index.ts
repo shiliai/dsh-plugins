@@ -29,7 +29,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const store = await ReadingStateStore.create(dataDir)
   const wallabag = config.wallabag === null ? undefined : config.wallabag === undefined ? WallabagAdapter.fromEnv() : new WallabagAdapter(config.wallabag)
   const opds = config.opds === null ? undefined : config.opds === undefined ? OpdsAdapter.fromEnv() : new OpdsAdapter(config.opds)
-  const calibre = CalibreWebClient.fromEnv()
+  // A malformed READING_CALIBRE_WEB_URL must not take down the whole plugin:
+  // degrade to "calibre upload unavailable" (503 on /calibre/upload) instead.
+  let calibre: CalibreWebClient | undefined
+  try {
+    calibre = CalibreWebClient.fromEnv()
+  } catch (error) {
+    console.error('dsh-reading: calibre-web client disabled:', error instanceof Error ? error.message : String(error))
+  }
   const configFile = join(dataDir, 'reading-settings.json')
   const fallback = { ...defaultProjectConfig(dataDir), ...(typeof config.projectRoot === 'string' && config.projectRoot.trim() !== '' ? { rootDir: expandHome(config.projectRoot) } : {}), ...(typeof config.createSessionOnOpen === 'boolean' ? { createSessionOnOpen: config.createSessionOnOpen } : {}) }
   let projectConfig: ReadingProjectConfig = await readProjectConfig(configFile, fallback)

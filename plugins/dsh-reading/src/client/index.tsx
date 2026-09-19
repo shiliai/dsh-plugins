@@ -55,12 +55,15 @@ function waitForAssistantReply(face: SessionFace, afterSeq: number, timeoutMs: n
   return new Promise<string>((resolve, reject) => {
     let settled = false
     let sawNewNode = false
+    let idleStrikes = 0
+    let idleTimer: ReturnType<typeof setTimeout> | undefined
     let unsubscribe: () => void = () => {}
     const timer = setTimeout(() => fail(new Error('生成概要超时，请稍后在对话中查看结果。')), timeoutMs)
     const fail = (error: Error): void => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      if (idleTimer !== undefined) clearTimeout(idleTimer)
       unsubscribe()
       reject(error)
     }
@@ -68,6 +71,7 @@ function waitForAssistantReply(face: SessionFace, afterSeq: number, timeoutMs: n
       if (settled) return
       settled = true
       clearTimeout(timer)
+      if (idleTimer !== undefined) clearTimeout(idleTimer)
       unsubscribe()
       resolve(text)
     }
@@ -91,7 +95,15 @@ function waitForAssistantReply(face: SessionFace, afterSeq: number, timeoutMs: n
         }
       }
       if (sawNewNode && !snapshot.running && snapshot.partial === null) {
-        fail(new Error('对话未产生概要内容，请检查对话状态后重试。'))
+        // The queued user node and the host's turn/start can land as separate
+        // snapshot emissions; require the idle condition to persist briefly
+        // before concluding nothing was produced.
+        idleStrikes += 1
+        if (idleStrikes >= 2) fail(new Error('对话未产生概要内容，请检查对话状态后重试。'))
+        else idleTimer = setTimeout(() => { check() }, 400)
+      } else {
+        idleStrikes = 0
+        if (idleTimer !== undefined) { clearTimeout(idleTimer); idleTimer = undefined }
       }
     }
     unsubscribe = face.subscribe(check)
