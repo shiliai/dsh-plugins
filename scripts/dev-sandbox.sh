@@ -27,14 +27,20 @@ PROFILE=web
 BUILD=1
 PLUGINS=()
 
+usage() { sed -n '2,22p' "$0"; }
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --plugin) PLUGINS+=("$2"); shift 2 ;;
-    --port) PORT="$2"; shift 2 ;;
-    --home) SANDBOX_HOME="$2"; shift 2 ;;
-    --profile) PROFILE="$2"; shift 2 ;;
+    --plugin) [ $# -ge 2 ] || { echo "dev-sandbox.sh: --plugin needs a value" >&2; exit 2; }
+      PLUGINS+=("$2"); shift 2 ;;
+    --port) [ $# -ge 2 ] || { echo "dev-sandbox.sh: --port needs a value" >&2; exit 2; }
+      PORT="$2"; shift 2 ;;
+    --home) [ $# -ge 2 ] || { echo "dev-sandbox.sh: --home needs a value" >&2; exit 2; }
+      SANDBOX_HOME="$2"; shift 2 ;;
+    --profile) [ $# -ge 2 ] || { echo "dev-sandbox.sh: --profile needs a value" >&2; exit 2; }
+      PROFILE="$2"; shift 2 ;;
     --no-build) BUILD=0; shift ;;
-    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    -h|--help) usage; exit 0 ;;
     *) echo "dev-sandbox.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -42,6 +48,12 @@ done
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROD_HOME="${DSH_HOME:-$HOME/.local/dsh_home}"
 PROD_PROFILE="$PROD_HOME/profiles/$PROFILE"
+
+# Normalize the sandbox home before it ever feeds rm -rf: spellings like
+# ~/.local/dsh_home/ or a symlinked alias must not bypass the guard below.
+[ -n "$SANDBOX_HOME" ] || { echo "dev-sandbox.sh: sandbox home must not be empty." >&2; exit 2; }
+SANDBOX_HOME="$(python3 -c 'import os,sys; print(os.path.realpath(os.path.expanduser(sys.argv[1])))' "$SANDBOX_HOME")"
+PROD_HOME_NORM="$(python3 -c 'import os,sys; print(os.path.realpath(os.path.expanduser(sys.argv[1])))' "$PROD_HOME")"
 SB_PROFILE="$SANDBOX_HOME/profiles/$PROFILE"
 PID_FILE="$SANDBOX_HOME/sandbox.pid"
 LOG_FILE="$SANDBOX_HOME/sandbox.log"
@@ -56,13 +68,23 @@ for p in "${PLUGINS[@]}"; do
     exit 2
   fi
 done
-if [ "$PORT" = "3280" ]; then
-  echo "dev-sandbox.sh: refusing to serve the sandbox on the production port 3280." >&2
+PROD_PORT="${DSH_WEB_PORT:-3280}"
+if [ "$PORT" = "$PROD_PORT" ]; then
+  echo "dev-sandbox.sh: refusing to serve the sandbox on the production port $PROD_PORT." >&2
   exit 2
 fi
-if [ "$SANDBOX_HOME" = "$PROD_HOME" ]; then
+if [ "$SANDBOX_HOME" = "$PROD_HOME_NORM" ] || [ "$SANDBOX_HOME" = "$PROD_HOME" ]; then
   echo "dev-sandbox.sh: refusing to use the production DSH_HOME as the sandbox home." >&2
   exit 2
+fi
+case "$SANDBOX_HOME" in
+  /|"$HOME")
+    echo "dev-sandbox.sh: refusing dangerous sandbox home: $SANDBOX_HOME" >&2
+    exit 2 ;;
+esac
+if [ ! -d "$PROD_PROFILE" ]; then
+  echo "dev-sandbox.sh: production profile not found: $PROD_PROFILE" >&2
+  exit 1
 fi
 
 # --- dsh binary -------------------------------------------------------------
@@ -70,14 +92,17 @@ fi
 # of the RUNNING production host (dev/prod version parity), then an explicit
 # override, then the newest dsh-cli release, then a global install.
 DSH_BIN="${DSH_BIN:-}"
+BIN_SOURCE="explicit DSH_BIN"
 if [ -z "$DSH_BIN" ]; then
-  PROD_PID="$(lsof -tiTCP:"${DSH_WEB_PORT:-3280}" -sTCP:LISTEN 2>/dev/null | head -1 || true)"
+  PROD_PID="$(lsof -tiTCP:"$PROD_PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true)"
   if [ -n "$PROD_PID" ]; then
     DSH_BIN="$(ps -p "$PROD_PID" -o command= 2>/dev/null | grep -o '[^ ]*dsh/lib/bin\.js' | head -1 || true)"
+    [ -n "$DSH_BIN" ] && BIN_SOURCE="running production host (pid $PROD_PID)"
   fi
 fi
 if [ -z "$DSH_BIN" ]; then
   DSH_BIN="$(ls -d "$HOME"/.local/share/dsh-cli/releases/*/node_modules/.pnpm/@deepseek-ai+dsh@*/node_modules/@deepseek-ai/dsh/lib/bin.js 2>/dev/null | sort -V | tail -1 || true)"
+  [ -n "$DSH_BIN" ] && BIN_SOURCE="newest dsh-cli release (production host not reachable — version may differ from production)"
 fi
 if [ -z "$DSH_BIN" ] && [ -f /opt/homebrew/lib/node_modules/@deepseek-ai/dsh/lib/bin.js ]; then
   DSH_BIN=/opt/homebrew/lib/node_modules/@deepseek-ai/dsh/lib/bin.js
@@ -103,10 +128,15 @@ done
 if [ -f "$PID_FILE" ]; then
   OLD_PID="$(cat "$PID_FILE" || true)"
   if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
-    echo "dev-sandbox.sh: stopping previous sandbox (pid $OLD_PID)..."
-    kill "$OLD_PID" 2>/dev/null || true
-    for _ in $(seq 1 20); do kill -0 "$OLD_PID" 2>/dev/null || break; sleep 0.5; done
-    kill -9 "$OLD_PID" 2>/dev/null || true
+    # Pids get recycled; only kill a process that really is a dsh host.
+    if ps -p "$OLD_PID" -o command= 2>/dev/null | grep -q 'dsh/lib/bin\.js'; then
+      echo "dev-sandbox.sh: stopping previous sandbox (pid $OLD_PID)..."
+      kill "$OLD_PID" 2>/dev/null || true
+      for _ in $(seq 1 20); do kill -0 "$OLD_PID" 2>/dev/null || break; sleep 0.5; done
+      kill -9 "$OLD_PID" 2>/dev/null || true
+    else
+      echo "dev-sandbox.sh: pid $OLD_PID from $PID_FILE is not a dsh host; leaving it alone."
+    fi
   fi
 fi
 if lsof -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
@@ -163,7 +193,8 @@ node -e "
 } >> "$SB_PROFILE/cordis.patch.yml"
 
 # --- boot -------------------------------------------------------------------
-echo "dev-sandbox.sh: booting dsh web on 127.0.0.1:$PORT (log: $LOG_FILE)..."
+echo "dev-sandbox.sh: booting dsh web on 127.0.0.1:$PORT (log: $LOG_FILE)"
+echo "dev-sandbox.sh: dsh bin: $DSH_BIN (source: $BIN_SOURCE)"
 DSH_HOME="$SANDBOX_HOME" node "$DSH_BIN" web --host 127.0.0.1 --port "$PORT" --no-open \
   >"$LOG_FILE" 2>&1 &
 SB_PID=$!
@@ -190,5 +221,9 @@ echo "  UI:        ${TOKEN_URL:-http://127.0.0.1:$PORT/ (token printed in $LOG_F
 echo "  e2e probe: scripts/e2e-probe.sh --base http://127.0.0.1:$PORT"
 echo ""
 echo "Inner loop: edit src -> DSH_DEV_HOT_LOOP=1 pnpm build (in plugins/<name>) ->"
-echo "the sandbox hot-reloads in ~1–2s; refresh the browser. Overlay changes"
+echo "the sandbox hot-reloads in ~1-2s; refresh the browser. Overlay changes"
 echo "(adding a plugin, config) require re-running this script."
+echo ""
+echo "Note: the sandbox home is rebuilt from scratch on every run; only the"
+echo "profile is cloned. Credentials (.credentials.yaml) and root .env are NOT"
+echo "copied - plugins that need them will run with missing config."

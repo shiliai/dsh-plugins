@@ -20,7 +20,7 @@ done
 
 API="$BASE/dsh-file-attachment/api"
 TMP="$(mktemp -d /tmp/dsh-e2e-probe.XXXXXX)"
-trap 'rm -rf "$TMP"' EXIT
+trap 'rm -rf "$TMP"' EXIT INT TERM
 FAIL=0
 
 node - "$TMP" <<'EOF'
@@ -44,9 +44,12 @@ EOF
 check() { # <name> <expected-status> <file> [expected-json-substring]
   local name="$1" want="$2" file="$3" sub="${4:-}"
   local got body
+  # '|| true': a transport failure must be reported as a FAIL line below,
+  # not kill the whole probe run via 'set -e'.
+  rm -f "$TMP/resp.json"
   got="$(curl -s -m 30 -o "$TMP/resp.json" -w '%{http_code}' -X POST "$API/upload" \
-    -H 'Content-Type: application/json' -H "Origin: $BASE" --data-binary "@$file")"
-  body="$(cat "$TMP/resp.json")"
+    -H 'Content-Type: application/json' -H "Origin: $BASE" --data-binary "@$file" || true)"
+  body="$(cat "$TMP/resp.json" 2>/dev/null || true)"
   if [ "$got" = "$want" ] && { [ -z "$sub" ] || case "$body" in *"$sub"*) true;; *) false;; esac; }; then
     echo "PASS  $name (status=$got)"
   else
@@ -64,7 +67,7 @@ check() { # <name> <expected-status> <file> [expected-json-substring]
 
 echo "e2e-probe.sh: probing $API"
 # Liveness: the limits endpoint carries no auth fence.
-got="$(curl -s -m 10 -o "$TMP/limits.json" -w '%{http_code}' "$API/limits")"
+got="$(curl -s -m 10 -o "$TMP/limits.json" -w '%{http_code}' "$API/limits" || true)"
 if [ "$got" = "200" ]; then echo "PASS  GET /limits (status=200)"; else echo "FAIL  GET /limits (got $got)"; FAIL=1; fi
 
 check "small upload"                 201 "$TMP/small.json"    '"bytes":8'
@@ -75,7 +78,7 @@ check "small malformed base64"       400 "$TMP/malformed.json" 'INVALID_BASE64'
 
 if [ -f "$TMP/fileId" ]; then
   got="$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X DELETE "$API/file" \
-    -H 'Content-Type: application/json' -H "Origin: $BASE" -d "{\"fileId\":\"$(cat "$TMP/fileId")\"}")"
+    -H 'Content-Type: application/json' -H "Origin: $BASE" -d "{\"fileId\":\"$(cat "$TMP/fileId")\"}" || true)"
   if [ "$got" = "204" ]; then echo "PASS  delete uploaded probe file (status=204)"; else echo "FAIL  delete (got $got)"; FAIL=1; fi
 fi
 

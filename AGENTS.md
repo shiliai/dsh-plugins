@@ -50,26 +50,39 @@ the sandbox absorbs every cold boot.
   `DSH_HOME`), trims the bundle list to base + web + the target plugins, and
   injects the dev overlay (hmr root -> worktree `lib`, installed copy disabled,
   worktree build inserted with `config: {}`). It resolves the dsh binary from
-  the *running production host* so dev/prod run the same dsh version.
+  the *running production host* so dev/prod run the same dsh version (if the
+  production host is unreachable it falls back to the newest dsh-cli release
+  and says so — version parity is then not guaranteed). The home/port guards
+  are normalized-path strict: attempts to point the sandbox at the production
+  home (trailing-slash or `/.` spellings included), an empty home, `/`, or the
+  production port are refused before anything is deleted.
 - Inner loop: edit src -> `DSH_DEV_HOT_LOOP=1 pnpm build` -> the sandbox
   hot-reloads in ~1–2s (same PID); refresh the browser. Re-run `dev-sandbox.sh`
   only when the overlay ingredients change (adding a plugin, changing config).
+  Note the sandbox home is rebuilt from scratch each run; credentials and the
+  root `.env` are NOT copied.
 - Validate with `scripts/e2e-probe.sh --base http://127.0.0.1:5280` plus the
   plugin's own `release:check`. Both must be green before shipping.
 - Ship: merge -> updater install
   (`dsh plugin --profile web --config.dlx-cache-max-age=0 dlx 'github:shiliai/dsh-plugins#path:/scripts/dsh-plugin-updater' update <pkg>`)
   -> restart production from a session that is NOT hosted by the production
   host (a sandbox session or an external terminal):
-  `DSH_WEB_SERVICE_LABEL=<label> scripts/prod-restart.sh`. The script runs
-  `launchctl kickstart -k` (launchd stops the old process and releases :3280
-  before starting the replacement — the single-writer guarantee manual
-  restarts have failed to provide), health-checks the port, and optionally
-  posts a WeCom notice with the new token URL. Install the service once from
-  `scripts/dsh-web.plist.template` (preflight hint prints the exact commands).
+  `DSH_WEB_SERVICE_LABEL=<label> scripts/prod-restart.sh`. The label must be
+  the service that already owns :3280 (`launchctl list | grep -i dsh`; on the
+  reference machine it is `io.shiliai.dsh-remote-mac`). The script verifies
+  before the restart that the port listener IS the service pid (and refuses
+  otherwise), runs `launchctl kickstart -k` (launchd stops the old process and
+  releases :3280 before starting the replacement — the single-writer guarantee
+  manual restarts have failed to provide), health-checks the port, re-verifies
+  the listener is the new service pid, and optionally posts a WeCom notice with
+  the new token URL. Install/migrate the service with
+  `scripts/dsh-web.plist.template` (header documents the migration from an
+  existing label; never bootstrap a second service onto the same port).
 - After a clean restart, production sessions resume from the disk journal; any
   turn that was in flight on the old host is interrupted and must be re-issued.
-  Never run two hosts against one `DSH_HOME` — check with
-  `lsof -iTCP:3280 -sTCP:LISTEN` before and after any restart.
+  Never run two hosts against one `DSH_HOME`. The prod-restart preflight and
+  post-check enforce port ownership; for any manual intervention,
+  `lsof -iTCP:3280 -sTCP:LISTEN` before and after is the ground truth.
 
 ## Local plugin hot-iteration workflow (no host restart)
 

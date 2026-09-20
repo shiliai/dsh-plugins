@@ -9,14 +9,25 @@
   kickstart -k always stops the old process fully — and releases its port —
   before starting the replacement.
 
-  Install once (see the preflight hint printed by scripts/prod-restart.sh):
+  IMPORTANT — this machine ALREADY has a launchd service managing :3280
+  (label io.shiliai.dsh-remote-mac, with DSH_REMOTE_* environment for the
+  remote-agent link, a full PATH, and Umask 077). Do NOT bootstrap this
+  template as a second service: two services on one port means the new one
+  crash-loops under KeepAlive while the old one keeps serving. This template
+  is for MIGRATING that service, or for a fresh machine:
 
-    LABEL=com.shiliai.dsh-web
+    LABEL=io.shiliai.dsh-remote-mac   # reuse the existing label
+    BIN="$(lsof -tiTCP:3280 -sTCP:LISTEN | head -1 | xargs -I{} ps -p {} -o command= | grep -o '[^ ]*dsh/lib/bin\.js' | head -1)"
+    # ^ pin the bin of the RUNNING host, not the newest release: dev/prod and
+    #   prod/service must run the same dsh build.
     sed -e "s|__HOME__|$HOME|g" \
-        -e "s|__BIN__|$(ls -d "$HOME"/.local/share/dsh-cli/releases/*/node_modules/.pnpm/@deepseek-ai+dsh@*/node_modules/@deepseek-ai/dsh/lib/bin.js | sort -V | tail -1)|g" \
+        -e "s|__BIN__|$BIN|g" \
         -e "s|__PORT__|3280|g" \
         -e "s|__LABEL__|$LABEL|g" \
         scripts/dsh-web.plist.template > "$HOME/Library/LaunchAgents/$LABEL.plist"
+    mkdir -p "$HOME/.local/state/dsh-remote-agent/runtime"
+    plutil -lint "$HOME/Library/LaunchAgents/$LABEL.plist"
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true   # only when migrating
     launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/$LABEL.plist"
 
   Then restart production only via scripts/prod-restart.sh, from a session
@@ -45,10 +56,21 @@
   <dict>
     <key>DSH_HOME</key>
     <string>__HOME__/.local/dsh_home</string>
+    <!-- Inherited from the previous service: child sessions resolve tools
+         through this PATH; without it host-spawned subprocesses break. -->
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <!-- DSH_REMOTE_* variables from the previous io.shiliai.dsh-remote-mac
+         service go here verbatim if the remote-agent link must keep working
+         under this service (check `launchctl print gui/$UID/<old-label>`).
+         They are deployment secrets: never commit their values. -->
   </dict>
 
   <key>WorkingDirectory</key>
   <string>__HOME__</string>
+
+  <key>Umask</key>
+  <integer>63</integer>
 
   <key>StandardOutPath</key>
   <string>__HOME__/.local/state/dsh-remote-agent/runtime/dsh.stdout.log</string>
