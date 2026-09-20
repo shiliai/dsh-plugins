@@ -94,7 +94,12 @@ case "$PROD_HOME_NORM" in
     exit 2 ;;
 esac
 case "$SANDBOX_HOME" in
-  /|"$HOME_NORM"|"$HOME_NORM"/*)
+  # Only "/" and $HOME itself are dangerous here. The production-home
+  # containment guards above already reject anything that could swallow the
+  # prod home; a plain path under $HOME (the default ~/.local/dsh-home-dev)
+  # is the INTENDED location — rejecting "$HOME"/* makes the default
+  # invocation fail (regression shipped in #113, caught on first re-run).
+  /|"$HOME_NORM")
     echo "dev-sandbox.sh: refusing dangerous sandbox home: $SANDBOX_HOME" >&2
     exit 2 ;;
 esac
@@ -141,6 +146,38 @@ for p in "${PLUGINS[@]}"; do
 done
 
 # --- stop a previous sandbox (never the production host) --------------------
+# If the resident dev service (scripts/dev-service.sh) manages this port, it —
+# not this script — owns the sandbox process. Boot it out BEFORE touching the
+# home: rm -rf under a KeepAlive service is a crash-loop against a
+# half-assembled home, and the service would resurrect the OLD code after we
+# boot our own process. The service is re-bootstrapped after assembly.
+DEV_LABEL="io.shiliai.dsh-dev-$PORT"
+DEV_SERVICE_WAS_LOADED=0
+if launchctl print "gui/$(id -u)/$DEV_LABEL" >/dev/null 2>&1; then
+  # Validate the install-time wrapper BEFORE booting anything out: if it is
+  # stale (pinned home/bin no longer valid) we refuse here and leave the
+  # resident test env untouched, instead of discovering it after bootout +
+  # rm -rf with nothing left serving 5280.
+  WRAPPER="$HOME/.local/dsh-dev-service/run-$PORT.sh"
+  WRAPPER_HOME="$(grep -m1 '^SANDBOX_HOME=' "$WRAPPER" 2>/dev/null | cut -d'"' -f2 || true)"
+  WRAPPER_BIN="$(grep -m1 '^exec ' "$WRAPPER" 2>/dev/null | awk -F'"' '{print $4}' || true)"
+  if [ -z "$WRAPPER_HOME" ] || [ "$WRAPPER_HOME" != "$SANDBOX_HOME" ] || [ -z "$WRAPPER_BIN" ] || [ ! -f "$WRAPPER_BIN" ]; then
+    echo "dev-sandbox.sh: dev service wrapper is stale or missing:" >&2
+    echo "  wrapper home: ${WRAPPER_HOME:-<none>} (this run: $SANDBOX_HOME)" >&2
+    echo "  wrapper bin:  ${WRAPPER_BIN:-<none>}" >&2
+    echo "  Re-create it with: scripts/dev-service.sh uninstall && scripts/dev-service.sh install" >&2
+    echo "  The running dev service was left untouched." >&2
+    exit 1
+  fi
+  echo "dev-sandbox.sh: dev service $DEV_LABEL owns port $PORT; booting it out during reassembly..."
+  launchctl bootout "gui/$(id -u)/$DEV_LABEL"
+  DEV_SERVICE_WAS_LOADED=1
+  # bootout is asynchronous; wait for the service process to release the port.
+  for _ in $(seq 1 30); do
+    lsof -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 || break
+    sleep 0.5
+  done
+fi
 if [ -f "$PID_FILE" ]; then
   OLD_PID="$(cat "$PID_FILE" || true)"
   if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
@@ -161,6 +198,14 @@ if lsof -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
 fi
 
 # --- assemble the sandbox home ----------------------------------------------
+# Last-moment assertion (the bootout above relied on a single launchd probe;
+# a transient IPC failure would have fallen through to the pid-file path and
+# left a KeepAlive service alive): the dev service must NOT be loaded while
+# we rm -rf the home it serves.
+if launchctl print "gui/$(id -u)/$DEV_LABEL" >/dev/null 2>&1; then
+  echo "dev-sandbox.sh: dev service $DEV_LABEL is still loaded after bootout; refusing to rm -rf the home." >&2
+  exit 1
+fi
 echo "dev-sandbox.sh: assembling sandbox home at $SANDBOX_HOME..."
 rm -rf "$SANDBOX_HOME"
 mkdir -p "$SANDBOX_HOME/profiles"
@@ -209,12 +254,36 @@ node -e "
 } >> "$SB_PROFILE/cordis.patch.yml"
 
 # --- boot -------------------------------------------------------------------
-echo "dev-sandbox.sh: booting dsh web on 127.0.0.1:$PORT (log: $LOG_FILE)"
-echo "dev-sandbox.sh: dsh bin: $DSH_BIN (source: $BIN_SOURCE)"
-DSH_HOME="$SANDBOX_HOME" node "$DSH_BIN" web --host 127.0.0.1 --port "$PORT" --no-open \
-  >"$LOG_FILE" 2>&1 &
-SB_PID=$!
-echo "$SB_PID" > "$PID_FILE"
+if [ "$DEV_SERVICE_WAS_LOADED" = 1 ]; then
+  # Hand the freshly assembled home back to launchd: it boots the wrapper
+  # (~/.local/dsh-dev-service/) which runs dsh against this home. Single
+  # owner, KeepAlive resurrection, kickstart-restartable from production.
+  # (The wrapper's pinned home/bin were already validated before the bootout.)
+  DEV_PLIST="$HOME/Library/LaunchAgents/$DEV_LABEL.plist"
+  echo "dev-sandbox.sh: re-bootstrapping dev service $DEV_LABEL..."
+  launchctl bootstrap "gui/$(id -u)" "$DEV_PLIST"
+  SB_PID=""
+  for _ in $(seq 1 20); do
+    SB_PID="$(launchctl print "gui/$(id -u)/$DEV_LABEL" 2>/dev/null | awk '$1 == "pid" && $2 == "=" {print $3; exit}' || true)"
+    [ -n "$SB_PID" ] && break
+    sleep 0.5
+  done
+  [ -n "$SB_PID" ] || { echo "dev-sandbox.sh: dev service did not get a pid; check launchctl print gui/$(id -u)/$DEV_LABEL" >&2; exit 1; }
+  echo "$SB_PID" > "$PID_FILE"
+  echo "dev-sandbox.sh: dev service owns the sandbox (pid $SB_PID)."
+  # In service mode launchd owns stdout/stderr, not $LOG_FILE (the home was
+  # just rebuilt; the ad-hoc log path no longer exists).
+  LOG_FILE="$HOME/.local/state/dsh-dev/dsh-dev-$PORT.stdout.log"
+else
+  echo "dev-sandbox.sh: booting dsh web on 127.0.0.1:$PORT (log: $LOG_FILE)"
+  echo "dev-sandbox.sh: dsh bin: $DSH_BIN (source: $BIN_SOURCE)"
+  echo "dev-sandbox.sh: tip - scripts/dev-service.sh install makes this sandbox resident"
+  echo "  (launchd KeepAlive + restartable from production via kickstart)."
+  DSH_HOME="$SANDBOX_HOME" node "$DSH_BIN" web --host 127.0.0.1 --port "$PORT" --no-open \
+    >"$LOG_FILE" 2>&1 &
+  SB_PID=$!
+  echo "$SB_PID" > "$PID_FILE"
+fi
 
 READY=0
 for _ in $(seq 1 60); do
