@@ -28,8 +28,13 @@ CLAIMED="$DIR/prod-restart.in-progress.json"
 mkdir -p "$DIR"
 if [ -f "$REQUEST" ] || [ -f "$CLAIMED" ]; then
   echo "prod-restart-request.sh: a restart request is already pending or running." >&2
-  echo "  Wait for the watcher to finish (see $DIR/last-result.json), or remove" >&2
-  echo "  $REQUEST to cancel before it is claimed." >&2
+  if [ -f "$REQUEST" ]; then
+    echo "  Pending (not yet claimed): remove $REQUEST to cancel." >&2
+  else
+    echo "  In progress (claimed by the watcher): it cannot be cancelled." >&2
+    echo "  If the watcher died mid-run, the stale claim is reclaimed as" >&2
+    echo "  'abandoned' after ~6 minutes — see $DIR/last-result.json." >&2
+  fi
   exit 1
 fi
 
@@ -38,7 +43,7 @@ TMP="$REQUEST.tmp.$$"
 node -e '
   const [requestedBy, reason] = process.argv.slice(1)
   process.stdout.write(JSON.stringify({
-    nonce: crypto.randomUUID(),
+    nonce: require("node:crypto").randomUUID(),
     requestedAt: Date.now(),
     requestedBy,
     reason,
