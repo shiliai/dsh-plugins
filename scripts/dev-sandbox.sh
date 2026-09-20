@@ -46,14 +46,19 @@ while [ $# -gt 0 ]; do
 done
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PROD_HOME="${DSH_HOME:-$HOME/.local/dsh_home}"
+# The production home is where we CLONE from. DSH_PROD_HOME overrides; the
+# ambient DSH_HOME is honored only when explicitly set — inside a sandbox
+# session it points at the sandbox itself, which the guards below reject.
+PROD_HOME="${DSH_PROD_HOME:-${DSH_HOME:-$HOME/.local/dsh_home}}"
 PROD_PROFILE="$PROD_HOME/profiles/$PROFILE"
 
 # Normalize the sandbox home before it ever feeds rm -rf: spellings like
 # ~/.local/dsh_home/ or a symlinked alias must not bypass the guard below.
 [ -n "$SANDBOX_HOME" ] || { echo "dev-sandbox.sh: sandbox home must not be empty." >&2; exit 2; }
-SANDBOX_HOME="$(python3 -c 'import os,sys; print(os.path.realpath(os.path.expanduser(sys.argv[1])))' "$SANDBOX_HOME")"
-PROD_HOME_NORM="$(python3 -c 'import os,sys; print(os.path.realpath(os.path.expanduser(sys.argv[1])))' "$PROD_HOME")"
+realpath_norm() { python3 -c 'import os,sys; print(os.path.realpath(os.path.expanduser(sys.argv[1])))' "$1"; }
+SANDBOX_HOME="$(realpath_norm "$SANDBOX_HOME")"
+PROD_HOME_NORM="$(realpath_norm "$PROD_HOME")"
+HOME_NORM="$(realpath_norm "$HOME")"
 SB_PROFILE="$SANDBOX_HOME/profiles/$PROFILE"
 PID_FILE="$SANDBOX_HOME/sandbox.pid"
 LOG_FILE="$SANDBOX_HOME/sandbox.log"
@@ -73,12 +78,23 @@ if [ "$PORT" = "$PROD_PORT" ]; then
   echo "dev-sandbox.sh: refusing to serve the sandbox on the production port $PROD_PORT." >&2
   exit 2
 fi
-if [ "$SANDBOX_HOME" = "$PROD_HOME_NORM" ] || [ "$SANDBOX_HOME" = "$PROD_HOME" ]; then
-  echo "dev-sandbox.sh: refusing to use the production DSH_HOME as the sandbox home." >&2
-  exit 2
-fi
+# Containment guards, both directions: the sandbox home must not BE the
+# production home, live INSIDE it (e.g. <prod>/profiles), or be an ANCESTOR of
+# it (e.g. ~/.local) — rm -rf would otherwise take the production journal
+# (possibly with the production host still writing) down with it.
 case "$SANDBOX_HOME" in
-  /|"$HOME")
+  "$PROD_HOME_NORM"|"$PROD_HOME_NORM"/*)
+    echo "dev-sandbox.sh: refusing sandbox home inside the production DSH_HOME: $SANDBOX_HOME" >&2
+    echo "  (production home: $PROD_HOME_NORM — set DSH_PROD_HOME if this detection is wrong)" >&2
+    exit 2 ;;
+esac
+case "$PROD_HOME_NORM" in
+  "$SANDBOX_HOME"/*)
+    echo "dev-sandbox.sh: refusing sandbox home that contains the production DSH_HOME: $SANDBOX_HOME" >&2
+    exit 2 ;;
+esac
+case "$SANDBOX_HOME" in
+  /|"$HOME_NORM"|"$HOME_NORM"/*)
     echo "dev-sandbox.sh: refusing dangerous sandbox home: $SANDBOX_HOME" >&2
     exit 2 ;;
 esac

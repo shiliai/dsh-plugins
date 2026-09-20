@@ -12,7 +12,8 @@ set -euo pipefail
 BASE="http://127.0.0.1:5280"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --base) BASE="$2"; shift 2 ;;
+    --base) [ $# -ge 2 ] || { echo "e2e-probe.sh: --base needs a value" >&2; exit 2; }
+      BASE="$2"; shift 2 ;;
     -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
     *) echo "e2e-probe.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -20,7 +21,8 @@ done
 
 API="$BASE/dsh-file-attachment/api"
 TMP="$(mktemp -d /tmp/dsh-e2e-probe.XXXXXX)"
-trap 'rm -rf "$TMP"' EXIT INT TERM
+trap 'rm -rf "$TMP"; exit 130' INT TERM
+trap 'rm -rf "$TMP"' EXIT
 FAIL=0
 
 node - "$TMP" <<'EOF'

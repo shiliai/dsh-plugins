@@ -60,10 +60,15 @@
          through this PATH; without it host-spawned subprocesses break. -->
     <key>PATH</key>
     <string>__HOME__/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-    <!-- DSH_REMOTE_* variables from the previous io.shiliai.dsh-remote-mac
-         service go here verbatim if the remote-agent link must keep working
-         under this service (check `launchctl print gui/$UID/<old-label>`).
-         They are deployment secrets: never commit their values. -->
+    <!-- Environment the previous service injected goes here VERBATIM. Check how
+         the old service really provided it: `launchctl print gui/$UID/<old-label>`
+         may show a wrapper command (e.g. `/bin/zsh -lc 'source .../.env; exec
+         dsh web ...'`) that sources a .env — in that case copy the RESULTING
+         variable values (DSH_REMOTE_*, WECOM_*, ...) into this dict, not just
+         DSH_REMOTE_*. They are deployment secrets: never commit their values.
+         The bootout/bootstrap pair below kills the production host: run it
+         from an external terminal or a non-production session, never from a
+         session hosted by the host being replaced. -->
   </dict>
 
   <key>WorkingDirectory</key>
