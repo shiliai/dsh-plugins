@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  dsh-web.plist.template — launchd template for the production dsh web host.
+
+  Why launchd: it is the single-writer enforcement for restarts. A manual
+  "restart" that starts the new process before the old one exits puts two live
+  writers on the same session journal (the 2026-09-20 incident); launchctl
+  kickstart -k always stops the old process fully — and releases its port —
+  before starting the replacement.
+
+  IMPORTANT — this machine ALREADY has a launchd service managing :3280
+  (label io.shiliai.dsh-remote-mac, with DSH_REMOTE_* environment for the
+  remote-agent link, a full PATH, and Umask 077). Do NOT bootstrap this
+  template as a second service: two services on one port means the new one
+  crash-loops under KeepAlive while the old one keeps serving. This template
+  is for MIGRATING that service, or for a fresh machine:
+
+    LABEL=io.shiliai.dsh-remote-mac   # reuse the existing label
+    BIN="$(lsof -tiTCP:3280 -sTCP:LISTEN | head -1 | xargs -I{} ps -p {} -o command= | grep -o '[^ ]*dsh/lib/bin\.js' | head -1)"
+    # ^ pin the bin of the RUNNING host, not the newest release: dev/prod and
+    #   prod/service must run the same dsh build.
+    sed -e "s|__HOME__|$HOME|g" \
+        -e "s|__BIN__|$BIN|g" \
+        -e "s|__PORT__|3280|g" \
+        -e "s|__LABEL__|$LABEL|g" \
+        scripts/dsh-web.plist.template > "$HOME/Library/LaunchAgents/$LABEL.plist"
+    mkdir -p "$HOME/.local/state/dsh-remote-agent/runtime"
+    plutil -lint "$HOME/Library/LaunchAgents/$LABEL.plist"
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true   # only when migrating
+    launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/$LABEL.plist"
+
+  Then restart production only via scripts/prod-restart.sh, from a session
+  that is not hosted by the production host.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>__LABEL__</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>__BIN__</string>
+    <string>web</string>
+    <string>--host</string>
+    <string>127.0.0.1</string>
+    <string>--port</string>
+    <string>__PORT__</string>
+    <string>--no-open</string>
+    <string>--trusted-host</string>
+    <string>remote-shili-mac.dsh.onlyservice.io</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>DSH_HOME</key>
+    <string>__HOME__/.local/dsh_home</string>
+    <!-- Inherited from the previous service: child sessions resolve tools
+         through this PATH; without it host-spawned subprocesses break. -->
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <!-- Environment the previous service injected goes here VERBATIM. Check how
+         the old service really provided it: `launchctl print gui/$UID/<old-label>`
+         may show a wrapper command (e.g. `/bin/zsh -lc 'source .../.env; exec
+         dsh web ...'`) that sources a .env — in that case copy the RESULTING
+         variable values (DSH_REMOTE_*, WECOM_*, ...) into this dict, not just
+         DSH_REMOTE_*. They are deployment secrets: never commit their values.
+         The bootout/bootstrap pair below kills the production host: run it
+         from an external terminal or a non-production session, never from a
+         session hosted by the host being replaced. -->
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>__HOME__</string>
+
+  <key>Umask</key>
+  <integer>63</integer>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/.local/state/dsh-remote-agent/runtime/dsh.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.local/state/dsh-remote-agent/runtime/dsh.stderr.log</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+</dict>
+</plist>
