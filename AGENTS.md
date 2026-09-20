@@ -35,6 +35,53 @@
   content into a fresh session, and preserve the original.
 - Preserve the late socket-error protections introduced by commit `d9022d1`
   in every `dsh-remote` release.
+- Sep 20 incident: the same committed-region corruption recurred (sessions
+  `96660b98`, `d072a228`) with nobody performing a "restart". This machine
+  was running TWO web hosts (a `:3080` GUI host and the `:3280` service) on
+  ONE `$DSH_HOME` — a topology a session had explicitly cleared as "normal,
+  no double-write risk" hours earlier. It is not: ports differ, the journal
+  directory is shared, so both hosts are live writers; when the user
+  re-submitted one message, both hosts ran the same turn and interleaved
+  `seq`s. A concurrent dsh-cron crash loop (`RangeError: Invalid time value`
+  from a `-Infinity` cron cursor; fixed in `aa96568`) plus the launchd
+  `KeepAlive` respawn widened the overlap. Lessons: **two DSH hosts on one
+  `$DSH_HOME` are two writers no matter how many ports they listen on** —
+  the only safe multi-host setup is one `$DSH_HOME` per host; a plugin must
+  never be able to take the host down from a scheduler tick (dsh-cron now
+  contains per-job errors); after such a fix lands on disk, the running
+  host still executes the old module until restarted — verify fatals have
+  stopped in the host's stderr log.
+
+## Local environments
+
+- Both the production environment and the test environment live on this
+  machine: all DSH hosts are reached at `127.0.0.1`, distinguished only by
+  port and `$DSH_HOME`. Never treat a port/host pair on this machine as a
+  remote target, and never run a second web host against an in-use
+  `$DSH_HOME` (see the Sep 20 incident above).
+- Production: port `3280`, `$DSH_HOME=~/.local/dsh_home`, launchd service
+  `io.shiliai.dsh-remote-mac` (KeepAlive). Restarted only via
+  `scripts/prod-restart.sh` (from the test side or an external terminal) or
+  the request channel below.
+- Test: port `5280`, `$DSH_HOME=~/.local/dsh-home-dev`, launchd service
+  `io.shiliai.dsh-dev-5280` (installed by `scripts/dev-service.sh install`).
+  The test environment stays resident at all times; it must be available to
+  accept dispatch from production at any moment. If it is down, bring it
+  back immediately (`scripts/dev-service.sh status` / `restart`).
+- Mutual cover — each environment may restart the other, never itself:
+  - test → prod, interactive: from a 5280 session or an external terminal,
+    `DSH_WEB_SERVICE_LABEL=io.shiliai.dsh-remote-mac scripts/prod-restart.sh`.
+  - test → prod, unattended (the only restart a PRODUCTION session may
+    initiate): `scripts/prod-restart-request.sh "reason"` files a durable
+    request and returns; the test-side watcher
+    (`io.shiliai.dsh-dev-restart-watch`, 60s poll) executes prod-restart.sh
+    with full guards. After production is back, read
+    `~/.local/state/dsh-dev-workflow/last-result.json`. Requests older than
+    10 minutes are dropped, never replayed.
+  - prod → test: from a production session, `scripts/dev-service.sh restart`
+    (kickstart of `io.shiliai.dsh-dev-5280`; the tool result persists on the
+    surviving production host). The test env is disposable; its sessions and
+    cron jobs do not survive a `dev-sandbox.sh` reassembly.
 
 ## Local development workflow: dev sandbox (5280) + launchd production (3280)
 
@@ -54,8 +101,17 @@ the sandbox absorbs every cold boot.
   production host is unreachable it falls back to the newest dsh-cli release
   and says so — version parity is then not guaranteed). The home/port guards
   are normalized-path strict: attempts to point the sandbox at the production
-  home (trailing-slash or `/.` spellings included), an empty home, `/`, or the
-  production port are refused before anything is deleted.
+  home (trailing-slash or `/.` spellings included), an empty home, `/`, `$HOME`
+  itself, or the production port are refused before anything is deleted — while
+  an ordinary path under `$HOME` (the default) is accepted (over-broad
+  `$HOME/*` rejection was a shipped regression, fixed in #114).
+- Make the sandbox resident with `scripts/dev-service.sh install` (launchd
+  `io.shiliai.dsh-dev-5280`, KeepAlive): it takes the port over from the ad-hoc
+  boot and also installs the restart watcher
+  (`io.shiliai.dsh-dev-restart-watch`, see "Local environments"). While the
+  service exists, re-running `dev-sandbox.sh` bootouts the service before
+  reassembling the home and re-bootstraps it afterwards — the home is never
+  deleted out from under a live KeepAlive process.
 - Inner loop: edit src -> `DSH_DEV_HOT_LOOP=1 pnpm build` -> the sandbox
   hot-reloads in ~1–2s (same PID); refresh the browser. Re-run `dev-sandbox.sh`
   only when the overlay ingredients change (adding a plugin, changing config).
