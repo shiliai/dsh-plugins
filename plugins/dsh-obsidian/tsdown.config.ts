@@ -6,6 +6,11 @@ import { defineConfig } from 'tsdown'
 const PACKAGE_ID = '@dsh-plugins/dsh-obsidian'
 const CSS_PREFIX = '\0dsh-obsidian-css:'
 const CSS_SUFFIX = '.mjs'
+// With DSH_DEV_HOT_LOOP=1 (the local hot-iteration overlay, issue #110), a
+// rebuild must keep the lib directory inode — `clean: true` deletes the whole
+// directory, which silently kills the host's file watcher. Release builds
+// keep the default clean behavior.
+const DEV_HOT_LOOP = process.env.DSH_DEV_HOT_LOOP === '1'
 // The shared core is bundled from workspace source instead of being declared
 // as a dependency: a git-hosted subdependency trips pnpm 11 blockExoticSubdeps
 // on every GitHub-source install of this plugin.
@@ -64,7 +69,7 @@ export default defineConfig([
     format: ['esm'],
     platform: 'node',
     dts: true,
-    clean: true,
+    clean: !DEV_HOT_LOOP,
     alias: { '@dsh-plugins/dsh-reading-core': READING_CORE_SOURCE },
     external: [/^@deepseek-ai\//],
   },
