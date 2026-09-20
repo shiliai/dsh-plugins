@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  dsh-web.plist.template — launchd template for the production dsh web host.
+
+  Why launchd: it is the single-writer enforcement for restarts. A manual
+  "restart" that starts the new process before the old one exits puts two live
+  writers on the same session journal (the 2026-09-20 incident); launchctl
+  kickstart -k always stops the old process fully — and releases its port —
+  before starting the replacement.
+
+  Install once (see the preflight hint printed by scripts/prod-restart.sh):
+
+    LABEL=com.shiliai.dsh-web
+    sed -e "s|__HOME__|$HOME|g" \
+        -e "s|__BIN__|$(ls -d "$HOME"/.local/share/dsh-cli/releases/*/node_modules/.pnpm/@deepseek-ai+dsh@*/node_modules/@deepseek-ai/dsh/lib/bin.js | sort -V | tail -1)|g" \
+        -e "s|__PORT__|3280|g" \
+        -e "s|__LABEL__|$LABEL|g" \
+        scripts/dsh-web.plist.template > "$HOME/Library/LaunchAgents/$LABEL.plist"
+    launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/$LABEL.plist"
+
+  Then restart production only via scripts/prod-restart.sh, from a session
+  that is not hosted by the production host.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>__LABEL__</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>__BIN__</string>
+    <string>web</string>
+    <string>--host</string>
+    <string>127.0.0.1</string>
+    <string>--port</string>
+    <string>__PORT__</string>
+    <string>--no-open</string>
+    <string>--trusted-host</string>
+    <string>remote-shili-mac.dsh.onlyservice.io</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>DSH_HOME</key>
+    <string>__HOME__/.local/dsh_home</string>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>__HOME__</string>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/.local/state/dsh-remote-agent/runtime/dsh.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.local/state/dsh-remote-agent/runtime/dsh.stderr.log</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+</dict>
+</plist>
