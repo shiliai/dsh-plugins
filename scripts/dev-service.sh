@@ -21,6 +21,7 @@
 # Subcommands:
 #   install   [--port 5280] [--home ~/.local/dsh-home-dev] [--profile web]
 #   restart   [--port 5280]
+#   refresh   (update the watcher's stable script copies; dev host untouched)
 #   status    [--port 5280]
 #   uninstall [--port 5280]   (keeps the sandbox home; only removes the service)
 #
@@ -78,6 +79,24 @@ usage() { sed -n '2,31p' "$0"; }
 
 listener_pid() { lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true; }
 service_pid() { launchctl print "gui/$UID_N/$LABEL" 2>/dev/null | awk '$1 == "pid" && $2 == "=" {print $3; exit}'; }
+
+# The launchd wrapper pins SANDBOX_HOME and the dsh bin at install time; both
+# can go stale (different --home, pruned dsh-cli release). kickstarting a
+# service with a stale wrapper means a KeepAlive crash-loop, so restart and
+# the dev-sandbox handoff check this BEFORE touching anything.
+check_wrapper() {
+  [ -f "$RUN_WRAPPER" ] || return 1
+  local w_home w_bin
+  w_home="$(grep -m1 '^SANDBOX_HOME=' "$RUN_WRAPPER" 2>/dev/null | cut -d'"' -f2 || true)"
+  w_bin="$(grep -m1 '^exec ' "$RUN_WRAPPER" 2>/dev/null | awk -F'"' '{print $4}' || true)"
+  [ "$w_home" = "$SANDBOX_HOME" ] && [ -n "$w_bin" ] && [ -f "$w_bin" ]
+}
+refuse_stale_wrapper() {
+  echo "dev-service.sh: the launchd wrapper $RUN_WRAPPER is missing or stale" >&2
+  echo "  (pinned home/bin no longer match). Refusing; re-create it with:" >&2
+  echo "  scripts/dev-service.sh uninstall && scripts/dev-service.sh install" >&2
+  exit 1
+}
 
 resolve_dsh_bin() {
   # Same policy as dev-sandbox.sh: pin the bin of the RUNNING production host
@@ -281,6 +300,7 @@ cmd_restart() {
   # process owns the port, kickstart -k would not stop it, and the KeepAlive
   # relaunch would briefly open the same sandbox home while the squatter
   # still serves — two writers on one DSH_HOME. Refuse instead.
+  check_wrapper || refuse_stale_wrapper
   local old_pid spid_before
   old_pid="$(listener_pid)"
   spid_before="$(service_pid || true)"
@@ -316,6 +336,21 @@ cmd_restart() {
   fi
 }
 
+# Refresh the stable script copies the watcher runs, without touching the dev
+# host itself. Use after pulling repo changes to prod-restart-watch.sh /
+# prod-restart.sh — the watcher runs the COPIES in $SERVICE_DIR, so repo fixes
+# never reach the unattended channel until refreshed.
+cmd_refresh() {
+  launchctl print "gui/$UID_N/$WATCH_LABEL" >/dev/null 2>&1 || {
+    echo "dev-service.sh: watcher $WATCH_LABEL is not installed; run 'install' first." >&2
+    exit 1
+  }
+  cp "$REPO_ROOT/scripts/prod-restart-watch.sh" "$REPO_ROOT/scripts/prod-restart.sh" "$SERVICE_DIR/"
+  chmod 755 "$SERVICE_DIR/prod-restart-watch.sh" "$SERVICE_DIR/prod-restart.sh"
+  launchctl kickstart "gui/$UID_N/$WATCH_LABEL"
+  echo "dev-service.sh: watcher scripts refreshed from $REPO_ROOT/scripts/ (dev host untouched)."
+}
+
 cmd_status() {
   local spid lpid
   spid="$(service_pid || true)"
@@ -341,6 +376,7 @@ cmd_uninstall() {
 case "$CMD" in
   install) cmd_install ;;
   restart) cmd_restart ;;
+  refresh) cmd_refresh ;;
   status) cmd_status ;;
   uninstall) cmd_uninstall ;;
   -h|--help|"") usage; [ -n "$CMD" ] && exit 0 || exit 2 ;;

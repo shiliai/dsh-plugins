@@ -49,7 +49,14 @@ node -e '
     reason,
   }, null, 2) + "\n")
 ' "${DSH_SESSION_ID:-external}" "$REASON" > "$TMP"
-mv "$TMP" "$REQUEST"
+# Atomic create: a concurrent request loses the race instead of silently
+# overwriting the pending one (mv would clobber).
+if ! ln "$TMP" "$REQUEST" 2>/dev/null; then
+  rm -f "$TMP"
+  echo "prod-restart-request.sh: another request was filed concurrently; refusing." >&2
+  exit 1
+fi
+rm -f "$TMP"
 
 echo "prod-restart-request.sh: restart request filed ($REQUEST)."
 echo "  The test-side watcher executes it within ~60s; this host may restart any"

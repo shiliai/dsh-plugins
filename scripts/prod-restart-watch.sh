@@ -71,8 +71,11 @@ if [ -n "${DSH_HOME:-}" ] && [ "$(python3 -c 'import os,sys; print(os.path.realp
   exit 1
 fi
 
-# Claim atomically; a second watcher tick sees no request and exits.
+# Claim atomically; a second watcher tick sees no request and exits. Reset the
+# mtime so staleness is measured from the CLAIM, not from when the request was
+# filed (rename preserves mtime; pending time must not eat the stale window).
 mv "$REQUEST" "$CLAIMED"
+touch "$CLAIMED"
 
 finish() {  # status message
   local status="$1" message="$2"

@@ -154,6 +154,21 @@ done
 DEV_LABEL="io.shiliai.dsh-dev-$PORT"
 DEV_SERVICE_WAS_LOADED=0
 if launchctl print "gui/$(id -u)/$DEV_LABEL" >/dev/null 2>&1; then
+  # Validate the install-time wrapper BEFORE booting anything out: if it is
+  # stale (pinned home/bin no longer valid) we refuse here and leave the
+  # resident test env untouched, instead of discovering it after bootout +
+  # rm -rf with nothing left serving 5280.
+  WRAPPER="$HOME/.local/dsh-dev-service/run-$PORT.sh"
+  WRAPPER_HOME="$(grep -m1 '^SANDBOX_HOME=' "$WRAPPER" 2>/dev/null | cut -d'"' -f2 || true)"
+  WRAPPER_BIN="$(grep -m1 '^exec ' "$WRAPPER" 2>/dev/null | awk -F'"' '{print $4}' || true)"
+  if [ -z "$WRAPPER_HOME" ] || [ "$WRAPPER_HOME" != "$SANDBOX_HOME" ] || [ -z "$WRAPPER_BIN" ] || [ ! -f "$WRAPPER_BIN" ]; then
+    echo "dev-sandbox.sh: dev service wrapper is stale or missing:" >&2
+    echo "  wrapper home: ${WRAPPER_HOME:-<none>} (this run: $SANDBOX_HOME)" >&2
+    echo "  wrapper bin:  ${WRAPPER_BIN:-<none>}" >&2
+    echo "  Re-create it with: scripts/dev-service.sh uninstall && scripts/dev-service.sh install" >&2
+    echo "  The running dev service was left untouched." >&2
+    exit 1
+  fi
   echo "dev-sandbox.sh: dev service $DEV_LABEL owns port $PORT; booting it out during reassembly..."
   launchctl bootout "gui/$(id -u)/$DEV_LABEL"
   DEV_SERVICE_WAS_LOADED=1
@@ -243,21 +258,8 @@ if [ "$DEV_SERVICE_WAS_LOADED" = 1 ]; then
   # Hand the freshly assembled home back to launchd: it boots the wrapper
   # (~/.local/dsh-dev-service/) which runs dsh against this home. Single
   # owner, KeepAlive resurrection, kickstart-restartable from production.
-  # The wrapper pins SANDBOX_HOME and the dsh bin at install time; both can
-  # go stale (different --home, pruned dsh-cli release), so verify before
-  # re-bootstrapping instead of silently serving the wrong home.
+  # (The wrapper's pinned home/bin were already validated before the bootout.)
   DEV_PLIST="$HOME/Library/LaunchAgents/$DEV_LABEL.plist"
-  WRAPPER="$HOME/.local/dsh-dev-service/run-$PORT.sh"
-  WRAPPER_HOME="$(grep -m1 '^SANDBOX_HOME=' "$WRAPPER" 2>/dev/null | cut -d'"' -f2 || true)"
-  WRAPPER_BIN="$(grep -m1 '^exec ' "$WRAPPER" 2>/dev/null | awk -F'"' '{print $4}' || true)"
-  if [ -z "$WRAPPER_HOME" ] || [ "$WRAPPER_HOME" != "$SANDBOX_HOME" ] || [ -z "$WRAPPER_BIN" ] || [ ! -f "$WRAPPER_BIN" ]; then
-    echo "dev-sandbox.sh: dev service wrapper is stale or missing:" >&2
-    echo "  wrapper home: ${WRAPPER_HOME:-<none>} (this run: $SANDBOX_HOME)" >&2
-    echo "  wrapper bin:  ${WRAPPER_BIN:-<none>} ($([ -n "$WRAPPER_BIN" ] && [ ! -f "$WRAPPER_BIN" ] && echo missing || echo ok))" >&2
-    echo "  Re-create it with: scripts/dev-service.sh uninstall && scripts/dev-service.sh install" >&2
-    echo "  The freshly assembled home is at $SANDBOX_HOME; nothing is serving it yet." >&2
-    exit 1
-  fi
   echo "dev-sandbox.sh: re-bootstrapping dev service $DEV_LABEL..."
   launchctl bootstrap "gui/$(id -u)" "$DEV_PLIST"
   SB_PID=""
