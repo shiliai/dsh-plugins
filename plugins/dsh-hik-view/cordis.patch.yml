@@ -1,0 +1,30 @@
+# dsh-hik-view bundle patch: mounts the plugin when the package is listed in
+# dsh.profile.bundles. The NVR password is deliberately NOT committed here —
+# set it on the target host with a profile-level patch entry targeting the
+# `hik-view` insert (or a credentials ref), e.g. in the web profile's
+# cordis.patch.yml:
+#
+#   - id: hik-view
+#     config:
+#       nvr:
+#         password: <secret>
+#
+- insert:
+    - id: hik-view
+      name: 'dsh-hik-view'
+      config:
+        nvr:
+          host: 10.18.7.191
+          port: 554
+          user: admin
+          password: ''
+        channels:
+          - { id: cam1, label: '通道 1', main: 101, sub: 102 }
+          - { id: cam2, label: '通道 2', main: 201, sub: 202 }
+          - { id: cam3, label: '通道 3', main: 301, sub: 302 }
+          - { id: cam4, label: '通道 4', main: 401, sub: 402 }
+        stream:
+          fps: 8
+          quality: 12
+          maxWidth: 640
+          maxStreams: 4

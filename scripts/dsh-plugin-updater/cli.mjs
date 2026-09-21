@@ -8,6 +8,7 @@ const plugins = [
   { name: '@dsh-plugins/dsh-agent-team', directory: 'plugins/dsh-agent-team' },
   { name: '@dsh-plugins/dsh-cron', directory: 'plugins/dsh-cron' },
   { name: '@dsh-plugins/dsh-file-attachment', directory: 'plugins/dsh-file-attachment' },
+  { name: 'dsh-hik-view', directory: 'plugins/dsh-hik-view' },
   { name: '@dsh-plugins/dsh-obsidian', directory: 'plugins/dsh-obsidian' },
   { name: '@dsh-plugins/dsh-remote', directory: 'plugins/dsh-remote' },
   { name: '@dsh-plugins/dsh-wecom', directory: 'plugins/dsh-wecom' },
