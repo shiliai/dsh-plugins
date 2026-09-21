@@ -12,6 +12,10 @@ const plugins = [
     packageName: '@dsh-plugins/dsh-file-attachment',
   },
   {
+    directory: 'plugins/dsh-hik-view',
+    packageName: 'dsh-hik-view',
+  },
+  {
     directory: 'plugins/dsh-obsidian',
     packageName: '@dsh-plugins/dsh-obsidian',
   },
