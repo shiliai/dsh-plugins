@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dsh-obsidian · 新建 Note 原地创建 UX 原型</title>
+<style>
+/* ============================================================
+   dsh-obsidian — 新建 Note 原地创建(in-place creation)高保真原型
+   纯 HTML/CSS/JS,无外部资源。浅色主题,对齐生产截图。
+   ============================================================ */
+:root {
+  --font: -apple-system, "PingFang SC", "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --bg-app: #f2f3f5;
+  --bg-panel: #ffffff;
+  --bg-hover: #f0f1f4;
+  --bg-selected: #eceef1;
+  --bg-input: #ffffff;
+
+  --border: #e3e5e9;
+  --border-strong: #d4d7dc;
+
+  --text-1: #1f2329;
+  --text-2: #646a75;
+  --text-3: #9aa0ab;
+
+  --accent: #2f9e63;         /* 生产截图里 Notes 标签的绿色 */
+  --accent-soft: rgba(47, 158, 99, .10);
+  --accent-flash: rgba(47, 158, 99, .22);
+  --error: #d64545;
+  --error-soft: rgba(214, 69, 69, .08);
+
+  --radius: 8px;
+  --shadow-pop: 0 8px 28px rgba(0,0,0,.14);
+  --row-h: 28px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font);
+  background: var(--bg-app);
+  color: var(--text-1);
+  display: flex; flex-direction: column; align-items: center;
+  padding: 24px 16px 64px;
+  font-size: 13px;
+}
+
+/* ---------- 顶部说明与场景切换 ---------- */
+.demo-bar {
+  width: 1080px; max-width: 100%;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: 12px; padding: 14px 18px; margin-bottom: 16px;
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+}
+.demo-bar h1 { font-size: 15px; margin-right: 8px; }
+.demo-bar .spacer { flex: 1; }
+.demo-btn {
+  font: inherit; font-size: 12px; padding: 6px 12px;
+  border: 1px solid var(--border-strong); border-radius: 999px;
+  background: var(--bg-panel); color: var(--text-2); cursor: pointer;
+}
+.demo-btn:hover { background: var(--bg-hover); color: var(--text-1); }
+.demo-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.demo-btn.primary:hover { filter: brightness(1.08); }
+.mode-switch { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 999px; overflow: hidden; }
+.mode-switch button {
+  font: inherit; font-size: 12px; padding: 6px 14px; border: 0;
+  background: var(--bg-panel); color: var(--text-2); cursor: pointer;
+}
+.mode-switch button.on { background: var(--text-1); color: #fff; }
+.demo-note { width: 1080px; max-width: 100%; color: var(--text-2); font-size: 12px; margin: 0 2px 14px; line-height: 1.7; }
+.demo-note code { font-family: var(--mono); background: var(--bg-selected); padding: 1px 5px; border-radius: 4px; }
+
+/* ---------- 应用框 ---------- */
+.app {
+  width: 1080px; max-width: 100%; height: 620px;
+  display: flex; background: var(--bg-panel);
+  border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  box-shadow: 0 2px 12px rgba(0,0,0,.05);
+}
+
+/* ---------- 侧栏 ---------- */
+.sidebar {
+  width: 320px; min-width: 320px; height: 100%;
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; background: var(--bg-panel);
+}
+.side-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 12px; border-bottom: 1px solid var(--border);
+}
+.side-head .vault-name { font-weight: 650; font-size: 14px; flex: 1; letter-spacing: .02em; }
+.icon-btn {
+  width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 6px; background: transparent; color: var(--text-2); cursor: pointer;
+  font-size: 15px; line-height: 1;
+}
+.icon-btn:hover { background: var(--bg-hover); color: var(--text-1); }
+.icon-btn.active { background: var(--bg-selected); color: var(--text-1); }
+
+/* 旧版(现状)输入框:位于侧栏最顶部 */
+.legacy-newnote {
+  display: flex; align-items: center; gap: 4px;
+  margin: 10px 10px 0; padding: 6px 8px;
+  border: 1.5px solid var(--accent); border-radius: var(--radius);
+  background: var(--bg-input);
+}
+.legacy-newnote input {
+  flex: 1; border: 0; outline: 0; font: inherit; background: transparent; color: var(--text-1);
+}
+
+.tabs { display: flex; gap: 6px; padding: 10px 10px 0; }
+.tab {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+  font: inherit; padding: 7px 0; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-panel); color: var(--text-2); cursor: pointer;
+}
+.tab.on { background: var(--bg-selected); color: var(--accent); border-color: transparent; font-weight: 600; }
+
+.search {
+  display: flex; align-items: center; gap: 7px;
+  margin: 10px; padding: 7px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text-3);
+}
+.search input { flex: 1; border: 0; outline: 0; font: inherit; background: transparent; color: var(--text-1); }
+
+/* ---------- 树 ---------- */
+.tree { flex: 1; overflow-y: auto; padding: 2px 6px 24px; position: relative; }
+.tree-row {
+  display: flex; align-items: center; gap: 6px;
+  height: var(--row-h); padding-right: 8px;
+  border-radius: 6px; cursor: pointer; color: var(--text-1);
+  position: relative; white-space: nowrap; user-select: none;
+  border-left: 2px solid transparent;
+}
+.tree-row:hover { background: var(--bg-hover); }
+.tree-row .caret { width: 14px; text-align: center; color: var(--text-3); font-size: 10px; transition: transform .12s; flex: none; }
+.tree-row.open .caret { transform: rotate(90deg); }
+.tree-row .f-icon { flex: none; font-size: 13px; color: var(--text-2); }
+.tree-row .name { overflow: hidden; text-overflow: ellipsis; }
+.tree-row .count { margin-left: auto; color: var(--text-3); font-size: 12px; }
+
+/* 创建目标文件夹高亮(新设计) */
+.tree-row.create-target {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+.tree-row.create-target:hover { background: var(--accent-soft); }
+
+/* 新 note 创建成功后的闪烁高亮 */
+@keyframes flash {
+  0% { background: var(--accent-flash); }
+  100% { background: transparent; }
+}
+.tree-row.flash { animation: flash 1.2s ease-out 1; }
+@media (prefers-reduced-motion: reduce) {
+  .tree-row.flash { animation: none; background: var(--accent-soft); }
+}
+
+/* ---------- 原地输入行(新设计核心) ---------- */
+.newnote-row-wrap { position: relative; }
+.newnote-row {
+  display: flex; align-items: center; gap: 6px;
+  height: var(--row-h); padding-right: 4px;
+}
+.newnote-inputbox {
+  flex: 1; display: flex; align-items: center; gap: 4px;
+  height: 26px; padding: 0 4px 0 8px;
+  border: 1.5px solid var(--accent); border-radius: 6px;
+  background: var(--bg-input);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.newnote-inputbox.err { border-color: var(--error); box-shadow: 0 0 0 3px var(--error-soft); }
+.newnote-inputbox input {
+  flex: 1; min-width: 0; border: 0; outline: 0; font: inherit; background: transparent; color: var(--text-1);
+}
+.md-badge {
+  font-family: var(--mono); font-size: 11px; color: var(--text-3);
+  padding: 1px 5px; background: var(--bg-selected); border-radius: 4px;
+  user-select: none; flex: none;
+}
+.row-btn {
+  width: 20px; height: 20px; flex: none; border: 0; border-radius: 4px;
+  background: transparent; color: var(--text-2); cursor: pointer; font-size: 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.row-btn:hover { background: var(--bg-hover); color: var(--text-1); }
+.row-btn:disabled { color: var(--text-3); cursor: not-allowed; background: transparent; }
+.newnote-error {
+  font-size: 12px; color: var(--error); padding: 3px 8px 5px 0;
+  line-height: 1.4;
+}
+
+/* ---------- 右键菜单 ---------- */
+.ctx-menu {
+  position: fixed; z-index: 50; min-width: 168px;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: var(--shadow-pop); padding: 5px;
+}
+.ctx-menu button {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  font: inherit; text-align: left; padding: 7px 10px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--text-1); cursor: pointer;
+}
+.ctx-menu button:hover { background: var(--bg-hover); }
+
+/* ---------- 编辑器(右侧,仅示意) ---------- */
+.editor { flex: 1; display: flex; flex-direction: column; background: #fbfbfc; }
+.editor-head {
+  display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+  border-bottom: 1px solid var(--border); color: var(--text-2); font-size: 12px;
+}
+.editor-head .crumb { font-weight: 600; color: var(--text-1); font-size: 13px; }
+.editor-body { flex: 1; padding: 26px 34px; overflow-y: auto; }
+.editor-body h1 { font-size: 22px; margin-bottom: 12px; }
+.editor-body p { color: var(--text-3); }
+.editor-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-3); }
+
+/* 反馈条 */
+.feedback {
+  margin: 8px 10px 0; padding: 7px 10px; border-radius: 6px; font-size: 12px;
+  background: var(--accent-soft); color: var(--accent);
+}
+.feedback button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; text-decoration: underline; padding: 0; }
+</style>
+</head>
+<body>
+
+<div class="demo-bar">
+  <h1>新建 Note · 原地创建 UX 原型</h1>
+  <div class="mode-switch" role="group" aria-label="对比模式">
+    <button id="mode-old" type="button">现状(输入框跳到顶部)</button>
+    <button id="mode-new" type="button" class="on">新设计(原地创建)</button>
+  </div>
+  <div class="spacer"></div>
+  <button class="demo-btn" data-demo="folder" type="button">① 右键文件夹新建</button>
+  <button class="demo-btn" data-demo="invalid" type="button">② 校验错误(重名/非法字符)</button>
+  <button class="demo-btn" data-demo="success" type="button">③ 成功:滚动 + 闪烁高亮</button>
+  <button class="demo-btn" data-demo="root" type="button">④ 顶栏 + 在根部新建</button>
+  <button class="demo-btn primary" id="reset" type="button">重置</button>
+</div>
+<p class="demo-note">
+  交互说明:在左侧树上<strong>右键文件夹 → New note here</strong>,或点顶栏 <code>+</code>。
+  输入框只填 note 名(自动补 <code>.md</code>,目录由上下文决定);<code>Enter</code>/✓ 提交,
+  <code>Esc</code>/✕ 取消;失焦时内容合法则提交、为空或非法则取消(对齐 Obsidian)。
+  切到「现状」可对比旧行为:输入框出现在侧栏最顶部、需手填完整路径 <code>Folder/Note.md</code>。
+  试试在 TODO 下创建 <code>Inbox</code>(重名)或 <code>a\b</code>(非法字符)。
+</p>
+
+<div class="app">
+  <!-- 侧栏 -->
+  <aside class="sidebar" aria-label="Obsidian vault">
+    <div class="side-head">
+      <button class="icon-btn" title="Back to sessions" type="button">←</button>
+      <span class="vault-name" title="/Users/chris/Obsidian/20210314/">20210314</span>
+      <button class="icon-btn" title="Select vault directory" type="button">🗂</button>
+      <button class="icon-btn" title="Folders start collapsed" type="button">⤡</button>
+      <button class="icon-btn" id="btn-new-root" title="New note" type="button">📝⁺</button>
+    </div>
+
+    <!-- 旧版输入框:侧栏最顶部(仅「现状」模式显示) -->
+    <form class="legacy-newnote" id="legacy-form" hidden>
+      <input id="legacy-input" placeholder="Folder/Note.md" aria-label="New note path">
+      <button class="row-btn" title="Create note" type="submit">✓</button>
+      <button class="row-btn" title="Cancel" type="button" id="legacy-cancel">✕</button>
+    </form>
+
+    <div class="tabs">
+      <button class="tab on" type="button">🗒 Notes</button>
+      <button class="tab" type="button">🏷 Tags</button>
+    </div>
+    <div class="search">🔍<input placeholder="Search notes" aria-label="Search notes"></div>
+    <div class="feedback" id="feedback" hidden></div>
+
+    <div class="tree" id="tree" role="tree" aria-label="Notes"></div>
+  </aside>
+
+  <!-- 编辑器(示意) -->
+  <main class="editor" id="editor">
+    <div class="editor-empty">右键文件夹选择「New note here」,或点侧栏顶部的 + 开始演示</div>
+  </main>
+</div>
+
+<script>
+'use strict';
+/* ================= 数据 ================= */
+const VAULT = [
+  { name: 'Templates', count: 2, children: [
+    { name: 'Daily.md' }, { name: 'Meeting.md' },
+  ]},
+  { name: 'ToBeSorted', count: 34, children: [
+    { name: 'clip-001.md' }, { name: 'clip-002.md' }, { name: 'clip-003.md' },
+  ]},
+  { name: 'TODO', count: 8, children: [
+    { name: 'Inbox.md' }, { name: '本周.md' }, { name: 'Sprint-38.md' },
+  ]},
+  { name: 'Transcript', count: 25, children: [
+    { name: '2026-09-18-周会.md' }, { name: '2026-09-15-评审.md' },
+  ]},
+  { name: 'Wallabag', count: 316, children: [
+    { name: 'reading-queue.md' },
+  ]},
+  { name: 'Web3', count: 2, children: [
+    { name: 'notes.md' },
+  ]},
+  { name: '产品', count: 12, children: [
+    { name: '路线图.md' }, { name: '竞品.md' },
+  ]},
+  { name: '随想', count: 5, children: [
+    { name: '2026-09.md' },
+  ]},
+];
+// 让树足够长,演示滚动:ToBeSorted 补 34 行
+const ts = VAULT[1];
+for (let i = 4; i <= 34; i++) ts.children.push({ name: 'clip-' + String(i).padStart(3, '0') + '.md' });
+
+/* ================= 状态 ================= */
+let mode = 'new';               // 'old' | 'new'
+let creation = null;            // { parent: folderObj|null(根), error }
+let flashPath = null;           // 创建成功后闪烁的路径
+const open = new Set();         // 展开的文件夹名
+const treeEl = document.getElementById('tree');
+const editorEl = document.getElementById('editor');
+const feedbackEl = document.getElementById('feedback');
+
+/* ================= 渲染 ================= */
+function render() {
+  treeEl.innerHTML = '';
+  if (creation && creation.parent === null && mode === 'new') {
+    treeEl.appendChild(newNoteRow(null, 0));
+  }
+  for (const folder of VAULT) treeEl.appendChild(folderRow(folder, 0));
+  // 创建/闪烁目标滚动进视口
+  const target = treeEl.querySelector('[data-scroll-target]');
+  if (target) target.scrollIntoView({ block: 'nearest' });
+}
+
+function folderRow(folder, depth) {
+  const frag = document.createElement('div');
+  const row = document.createElement('div');
+  row.className = 'tree-row' + (open.has(folder.name) ? ' open' : '');
+  row.style.paddingLeft = (8 + depth * 16) + 'px';
+  row.dataset.folder = folder.name;
+  if (creation && creation.parent === folder) {
+    row.classList.add('create-target');
+    row.dataset.scrollTarget = '1';
+  }
+  row.innerHTML = '<span class="caret">▶</span><span class="f-icon">📁</span>' +
+    '<span class="name"></span><span class="count">' + folder.count + '</span>';
+  row.querySelector('.name').textContent = folder.name;
+  row.addEventListener('click', () => { toggle(folder); });
+  row.addEventListener('contextmenu', (e) => { e.preventDefault(); showMenu(e.clientX, e.clientY, folder); });
+  frag.appendChild(row);
+
+  if (open.has(folder.name)) {
+    const kids = document.createElement('div');
+    kids.setAttribute('role', 'group');
+    if (creation && creation.parent === folder && mode === 'new') {
+      kids.appendChild(newNoteRow(folder, depth + 1));
+    }
+    for (const child of folder.children) kids.appendChild(noteRow(child, folder, depth + 1));
+    frag.appendChild(kids);
+  }
+  return frag;
+}
+
+function noteRow(note, folder, depth) {
+  const path = (folder ? folder.name + '/' : '') + note.name;
+  const row = document.createElement('div');
+  row.className = 'tree-row';
+  row.style.paddingLeft = (8 + depth * 16 + 14) + 'px';
+  if (flashPath === path) { row.classList.add('flash'); row.dataset.scrollTarget = '1'; }
+  row.innerHTML = '<span class="f-icon">📄</span><span class="name"></span>';
+  row.querySelector('.name').textContent = note.name.replace(/\.md$/, '');
+  row.addEventListener('click', () => openInEditor(path));
+  return row;
+}
+
+/* 原地输入行 —— 新设计核心 */
+function newNoteRow(folder, depth) {
+  const wrap = document.createElement('div');
+  wrap.className = 'newnote-row-wrap';
+  const row = document.createElement('div');
+  row.className = 'newnote-row';
+  row.style.paddingLeft = (8 + depth * 16 + 14) + 'px';
+
+  const box = document.createElement('div');
+  box.className = 'newnote-inputbox' + (creation.error ? ' err' : '');
+  const input = document.createElement('input');
+  input.placeholder = 'Note name';
+  input.setAttribute('aria-label', 'New note name (extension .md added automatically)');
+  input.value = creation.draft || '';
+  const badge = document.createElement('span');
+  badge.className = 'md-badge';
+  badge.textContent = '.md';
+  badge.title = '后缀自动补齐';
+  const ok = document.createElement('button');
+  ok.className = 'row-btn'; ok.type = 'button'; ok.title = 'Create note (Enter)'; ok.textContent = '✓';
+  const cancel = document.createElement('button');
+  cancel.className = 'row-btn'; cancel.type = 'button'; cancel.title = 'Cancel (Esc)'; cancel.textContent = '✕';
+  box.append(input, badge, ok, cancel);
+  row.appendChild(box);
+  wrap.appendChild(row);
+
+  if (creation.error) {
+    const err = document.createElement('div');
+    err.className = 'newnote-error';
+    err.style.paddingLeft = (8 + depth * 16 + 22) + 'px';
+    err.textContent = creation.error;
+    wrap.appendChild(err);
+  }
+
+  function validate(name) {
+    if (name.trim() === '') return '';               // 空名:仅禁用 ✓,不报错
+    if (/[\\:*?"<>|]/.test(name)) return '名称含非法字符 \\ : * ? " < > |';
+    const exists = (folder ? folder.children : []).some(c =>
+      c.name.toLowerCase() === (name.trim().replace(/\.md$/i, '') + '.md').toLowerCase());
+    if (exists) return '同名笔记已存在:' + name.trim() + '.md';
+    return null;                                      // 合法
+  }
+  function refresh() {
+    const name = input.value;
+    const verdict = validate(name);
+    creation.draft = name;
+    ok.disabled = verdict !== null;
+    // 即时错误提示(空名不提示)
+    const errEl = wrap.querySelector('.newnote-error');
+    box.classList.toggle('err', Boolean(verdict));
+    if (verdict && !errEl) {
+      const err = document.createElement('div');
+      err.className = 'newnote-error';
+      err.style.paddingLeft = (8 + depth * 16 + 22) + 'px';
+      err.textContent = verdict;
+      wrap.appendChild(err);
+    } else if (verdict && errEl) {
+      errEl.textContent = verdict;
+    } else if (!verdict && errEl) {
+      errEl.remove();
+    }
+  }
+  function commit() {
+    const name = input.value.trim();
+    if (validate(name) !== null) return;
+    finishCreation(folder, name);
+  }
+  function cancelCreation() { creation = null; render(); }
+
+  input.addEventListener('input', refresh);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancelCreation(); }
+  });
+  input.addEventListener('blur', () => {
+    // 对齐 Obsidian:合法非空 → 提交;空/非法 → 取消
+    setTimeout(() => {
+      if (!creation) return;
+      const name = input.value.trim();
+      if (name !== '' && validate(name) === null) commit();
+      else cancelCreation();
+    }, 120);
+  });
+  ok.addEventListener('mousedown', (e) => e.preventDefault()); // 保住 blur 逻辑顺序
+  ok.addEventListener('click', commit);
+  cancel.addEventListener('mousedown', (e) => e.preventDefault());
+  cancel.addEventListener('click', cancelCreation);
+
+  requestAnimationFrame(() => input.focus());
+  refresh();
+  return wrap;
+}
+
+/* ================= 行为 ================= */
+function toggle(folder) {
+  open.has(folder.name) ? open.delete(folder.name) : open.add(folder.name);
+  render();
+}
+
+function startCreation(folder) {
+  creation = { parent: folder, draft: '', error: null };
+  if (folder) open.add(folder.name);
+  hideFeedback();
+  render();
+}
+
+function finishCreation(folder, name) {
+  const noteName = name.replace(/\.md$/i, '') + '.md';
+  const note = { name: noteName };
+  const parent = folder || { name: '', children: ROOT_NOTES };
+  parent.children.unshift(note);
+  if (folder) folder.count += 1;
+  const path = (folder ? folder.name + '/' : '') + noteName;
+  flashPath = path;
+  creation = null;
+  render();
+  openInEditor(path);
+  showFeedback('Created ' + path, path);
+  setTimeout(() => { if (flashPath === path) { flashPath = null; render(); } }, 1300);
+}
+const ROOT_NOTES = [];
+
+function openInEditor(path) {
+  const title = path.split('/').pop().replace(/\.md$/, '');
+  editorEl.innerHTML =
+    '<div class="editor-head"><span>Note editor</span><span class="crumb"></span>' +
+    '<span style="margin-left:auto">edit 模式</span></div>' +
+    '<div class="editor-body"><h1></h1><p># ' + escapeHtml(title) + '<br><br>(新笔记骨架,由 createNote 自动写入标题)</p></div>';
+  editorEl.querySelector('.crumb').textContent = path;
+  editorEl.querySelector('h1').textContent = title;
+}
+function escapeHtml(s) { return s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+function showFeedback(text, path) {
+  feedbackEl.hidden = false;
+  feedbackEl.innerHTML = '';
+  const btn = document.createElement('button');
+  btn.type = 'button'; btn.textContent = text;
+  btn.addEventListener('click', () => openInEditor(path));
+  feedbackEl.appendChild(btn);
+}
+function hideFeedback() { feedbackEl.hidden = true; }
+
+/* ---------- 右键菜单 ---------- */
+let menuEl = null;
+function showMenu(x, y, folder) {
+  hideMenu();
+  menuEl = document.createElement('div');
+  menuEl.className = 'ctx-menu';
+  menuEl.style.left = Math.min(x, window.innerWidth - 190) + 'px';
+  menuEl.style.top = Math.min(y, window.innerHeight - 140) + 'px';
+  const item = document.createElement('button');
+  item.type = 'button';
+  item.innerHTML = '📝⁺ New note here';
+  item.addEventListener('click', () => {
+    hideMenu();
+    if (mode === 'old') legacyStart(folder.name + '/');
+    else startCreation(folder);
+  });
+  const item2 = document.createElement('button');
+  item2.type = 'button';
+  item2.innerHTML = '💬 Add folder to chat';
+  item2.addEventListener('click', hideMenu);
+  menuEl.append(item, item2);
+  document.body.appendChild(menuEl);
+}
+function hideMenu() { if (menuEl) { menuEl.remove(); menuEl = null; } }
+document.addEventListener('click', (e) => { if (menuEl && !menuEl.contains(e.target)) hideMenu(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideMenu(); });
+
+/* ---------- 旧版(现状)行为 ---------- */
+const legacyForm = document.getElementById('legacy-form');
+const legacyInput = document.getElementById('legacy-input');
+function legacyStart(prefill) {
+  legacyForm.hidden = false;
+  legacyInput.value = prefill || '';
+  legacyInput.focus();
+}
+legacyForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const raw = legacyInput.value.trim();
+  if (!raw) return;
+  legacyForm.hidden = true;
+  // 旧行为:只在顶部给一行文本反馈,树不动
+  showFeedback('Created ' + (raw.endsWith('.md') ? raw : raw + '.md'), raw);
+});
+document.getElementById('legacy-cancel').addEventListener('click', () => { legacyForm.hidden = true; });
+
+/* ---------- 顶栏 + ---------- */
+document.getElementById('btn-new-root').addEventListener('click', () => {
+  if (mode === 'old') legacyStart('');
+  else startCreation(null);
+});
+
+/* ---------- 模式切换 ---------- */
+const modeOld = document.getElementById('mode-old');
+const modeNew = document.getElementById('mode-new');
+function setMode(m) {
+  mode = m;
+  modeOld.classList.toggle('on', m === 'old');
+  modeNew.classList.toggle('on', m === 'new');
+  legacyForm.hidden = true;
+  creation = null;
+  render();
+}
+modeOld.addEventListener('click', () => setMode('old'));
+modeNew.addEventListener('click', () => setMode('new'));
+
+/* ---------- 场景脚本 ---------- */
+function demo(kind) {
+  setMode('new');
+  hideFeedback();
+  flashPath = null;
+  const todo = VAULT.find(f => f.name === 'TODO');
+  if (kind === 'folder') {
+    startCreation(todo);
+  } else if (kind === 'invalid') {
+    startCreation(todo);
+    const input = treeEl.querySelector('.newnote-inputbox input');
+    input.value = 'Inbox';
+    input.dispatchEvent(new Event('input'));
+  } else if (kind === 'success') {
+    open.add('ToBeSorted');
+    startCreation(todo);
+    const input = treeEl.querySelector('.newnote-inputbox input');
+    input.value = '周报-2026-W38';
+    input.dispatchEvent(new Event('input'));
+    setTimeout(() => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    }, 500);
+  } else if (kind === 'root') {
+    startCreation(null);
+  }
+}
+document.querySelectorAll('[data-demo]').forEach(btn =>
+  btn.addEventListener('click', () => demo(btn.dataset.demo)));
+document.getElementById('reset').addEventListener('click', () => location.reload());
+
+/* ================= 启动 ================= */
+render();
+</script>
+</body>
+</html>

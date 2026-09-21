@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import ArrowLeft from 'lucide-react/dist/esm/icons/arrow-left'
 import ArrowUp from 'lucide-react/dist/esm/icons/arrow-up'
@@ -49,10 +49,14 @@ const TREE_PREFERENCES_KEY = 'dsh-obsidian.vault.tree-preferences'
 export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addContextToChat }: Props) {
   const state = store.useSnapshot()
   const directoryListing = state.directoryListing
-  const [newPath, setNewPath] = useState<string | null>(null)
+  // In-place note creation: parentDir '' means the vault root.
+  const [creation, setCreation] = useState<{ parentDir: string } | null>(null)
+  // Path of a just-created note: scrolled into view with a flash highlight.
+  const [flashPath, setFlashPath] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
-  const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
+  const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; text: string; path?: string } | null>(null)
   const [treePreferences, setTreePreferences] = useState<TreePreferences>(() => loadTreePreferences())
+  const treeRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     void store.initialize()
@@ -90,6 +94,20 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
     try { localStorage.setItem(TREE_PREFERENCES_KEY, JSON.stringify(treePreferences)) } catch { /* storage is optional */ }
   }, [treePreferences])
 
+  // Keep the creation target folder visible while the inline row is open.
+  useEffect(() => {
+    if (creation === null) return
+    treeRef.current?.querySelector('[data-create-target]')?.scrollIntoView({ block: 'nearest' })
+  }, [creation])
+
+  // After a successful create, reveal the new note row (flash highlight).
+  useEffect(() => {
+    if (flashPath === null) return
+    treeRef.current?.querySelector(`[data-note-path="${CSS.escape(flashPath)}"]`)?.scrollIntoView({ block: 'nearest' })
+    const timer = window.setTimeout(() => { setFlashPath(current => current === flashPath ? null : current) }, 1300)
+    return () => { window.clearTimeout(timer) }
+  }, [flashPath])
+
   const filteredTags = useMemo(() => {
     const query = state.query.trim().toLocaleLowerCase().replace(/^#/u, '')
     return query === '' ? state.tags : state.tags.filter(tag => tag.name.toLocaleLowerCase().includes(query))
@@ -115,10 +133,30 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
       setFeedback({ kind: 'error', text: error instanceof Error ? error.message : 'Could not add Vault context to chat.' })
     }
   }
-  const createInFolder = (target: ContextTarget): void => {
+  const startCreation = (parentDir: string): void => {
     setContextMenu(null)
     setFeedback(null)
-    setNewPath(target.value ? `${target.value}/` : '')
+    // Creation happens inside the notes tree; leave tags/search views first.
+    if (state.view !== 'notes') store.setView('notes')
+    if (state.query.trim() !== '') void store.search('')
+    if (parentDir !== '') {
+      // Expand the target folder and all its ancestors.
+      const segments = parentDir.split('/')
+      setTreePreferences(value => {
+        const expandedPaths = { ...value.expandedPaths }
+        segments.forEach((_, index) => { expandedPaths[segments.slice(0, index + 1).join('/')] = true })
+        return { ...value, expandedPaths }
+      })
+    }
+    setCreation({ parentDir })
+  }
+  const createInFolder = (target: ContextTarget): void => {
+    startCreation(target.value)
+  }
+  const handleCreated = (path: string): void => {
+    setCreation(null)
+    setFlashPath(path)
+    setFeedback({ kind: 'success', text: `Created ${path}`, path })
   }
 
   if (!wide) {
@@ -159,7 +197,7 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
         >
           <ChevronsDownUp size={16} />
         </button>
-        <button className={css.iconButton} type="button" title="New note" aria-label="New note" onClick={() => { setNewPath('') }}>
+        <button className={css.iconButton} type="button" title="New note" aria-label="New note" onClick={() => { startCreation('') }}>
           <FilePlus2 size={16} />
         </button>
       </header>
@@ -194,18 +232,6 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
       )}
 
       {directoryListing !== null ? null : <>
-        {newPath !== null && (
-          <form className={css.newNote} onSubmit={(event) => {
-            event.preventDefault()
-            if (newPath.trim() !== '') void store.createNote(newPath).then(path => { if (path !== null) setFeedback({ kind: 'success', text: `Created ${path}` }) })
-            setNewPath(null)
-          }}>
-            <input autoFocus value={newPath} placeholder="Folder/Note.md" aria-label="New note path" onChange={event => { setNewPath(event.target.value) }} />
-            <button className={css.iconButton} type="submit" title="Create note" aria-label="Create note" disabled={newPath.trim() === ''}><Check size={14} /></button>
-            <button className={css.iconButton} type="button" title="Cancel" aria-label="Cancel" onClick={() => { setNewPath(null) }}><X size={14} /></button>
-          </form>
-        )}
-
         <div className={css.browserTabs} role="tablist" aria-label="Vault view">
           <button role="tab" aria-selected={state.view === 'notes'} className={state.view === 'notes' ? css.selected : ''} type="button" onClick={() => { store.setView('notes') }}><FileText size={14} />Notes</button>
           <button role="tab" aria-selected={state.view === 'tags'} className={state.view === 'tags' ? css.selected : ''} type="button" onClick={() => { store.setView('tags') }}><Tag size={14} />Tags</button>
@@ -233,10 +259,11 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
           </div>
         )}
 
-        {feedback !== null && <div className={feedback.kind === 'success' ? css.inlineSuccess : css.inlineError} role={feedback.kind === 'success' ? 'status' : 'alert'}>{feedback.kind === 'success' ? <button className={css.noteLink} type="button" onClick={() => { const path = feedback.text.replace(/^Created /u, ''); void store.openNote(path) }}>{feedback.text}</button> : feedback.text}</div>}
+        {feedback !== null && <div className={feedback.kind === 'success' ? css.inlineSuccess : css.inlineError} role={feedback.kind === 'success' ? 'status' : 'alert'}>{feedback.kind === 'success' && feedback.path !== undefined ? <button className={css.noteLink} type="button" onClick={() => { if (feedback.path !== undefined) void store.openNote(feedback.path) }}>{feedback.text}</button> : feedback.text}</div>}
         {state.error !== null && <div className={css.inlineError} role="alert">{state.error}</div>}
 
         <div
+          ref={treeRef}
           className={css.tree}
           role={state.view === 'notes' && state.query.trim() === '' ? 'tree' : undefined}
           aria-label={state.view === 'notes' ? 'Notes' : 'Tags'}
@@ -245,6 +272,15 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
             else if (tagTarget !== null && state.tagPaths.length > 0) openContextMenu(event, tagTarget)
           }}
         >
+          {state.view === 'notes' && state.query.trim() === '' && creation !== null && creation.parentDir === '' && (
+            <NewNoteRow
+              store={store}
+              parentDir=""
+              siblings={rootNoteNames(state.tree)}
+              onCancel={() => { setCreation(null) }}
+              onCreated={handleCreated}
+            />
+          )}
           {state.view === 'notes' && state.query.trim() === '' && state.tree.map(node => (
             <TreeNode
               key={node.path}
@@ -257,6 +293,11 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
               add={target => { void addContext(target) }}
               setExpanded={(path, expanded) => { setTreePreferences(value => ({ ...value, expandedPaths: { ...value.expandedPaths, [path]: expanded } })) }}
               create={createInFolder}
+              store={store}
+              creation={creation}
+              flashPath={flashPath}
+              onCancelCreation={() => { setCreation(null) }}
+              onCreated={handleCreated}
             />
           ))}
 
@@ -321,7 +362,7 @@ function ContextRow({ target, openMenu, add, children }: {
   )
 }
 
-function TreeNode({ node, activePath, defaultExpanded, expandedPaths, open, openMenu, add, setExpanded, create }: {
+function TreeNode({ node, activePath, defaultExpanded, expandedPaths, open, openMenu, add, setExpanded, create, store, creation, flashPath, onCancelCreation, onCreated }: {
   node: VaultTreeNode
   activePath: string | undefined
   defaultExpanded: boolean
@@ -331,13 +372,18 @@ function TreeNode({ node, activePath, defaultExpanded, expandedPaths, open, open
   add(target: ContextTarget): void
   setExpanded(path: string, expanded: boolean): void
   create(target: ContextTarget): void
+  store: VaultStore
+  creation: { parentDir: string } | null
+  flashPath: string | null
+  onCancelCreation(): void
+  onCreated(path: string): void
 }) {
   const childCount = useMemo(() => node.children?.length ?? 0, [node.children])
   const expanded = expandedPaths[node.path] ?? defaultExpanded
   const target = { kind: node.type === 'note' ? 'note' as const : 'directory' as const, value: node.path, label: node.path }
   if (node.type === 'note') {
     return (
-      <div role="treeitem" aria-selected={activePath === node.path}>
+      <div role="treeitem" aria-selected={activePath === node.path} data-note-path={node.path} className={flashPath === node.path ? css.flashCreated : undefined}>
         <ContextRow target={target} openMenu={openMenu} add={add}>
           <button className={`${css.treeRow} ${activePath === node.path ? css.active : ''}`} type="button" onClick={() => { open(node.path) }}>
             <FileText size={14} /><span>{node.name.replace(/\.md$/iu, '')}</span>
@@ -346,17 +392,125 @@ function TreeNode({ node, activePath, defaultExpanded, expandedPaths, open, open
       </div>
     )
   }
+  const isCreateTarget = creation !== null && creation.parentDir === node.path
   return (
-    <div role="treeitem" aria-expanded={expanded}>
+    <div role="treeitem" aria-expanded={expanded} {...(isCreateTarget ? { 'data-create-target': node.path } : {})}>
       <ContextRow target={target} openMenu={openMenu} add={add}>
-        <button className={css.treeRow} type="button" onClick={() => { setExpanded(node.path, !expanded) }}>
+        <button className={`${css.treeRow} ${isCreateTarget ? css.createTarget : ''}`} type="button" onClick={() => { setExpanded(node.path, !expanded) }}>
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           {expanded ? <FolderOpen size={14} /> : <Folder size={14} />}
           <span>{node.name}</span><small>{childCount}</small>
         </button>
       </ContextRow>
-      {expanded && <div className={css.treeChildren} role="group">{node.children?.map(child => <TreeNode key={child.path} node={child} activePath={activePath} defaultExpanded={defaultExpanded} expandedPaths={expandedPaths} open={open} openMenu={openMenu} add={add} setExpanded={setExpanded} create={create} />)}</div>}
-  </div>
+      {expanded && (
+        <div className={css.treeChildren} role="group">
+          {isCreateTarget && (
+            <NewNoteRow
+              store={store}
+              parentDir={node.path}
+              siblings={noteSiblingNames(node)}
+              onCancel={onCancelCreation}
+              onCreated={onCreated}
+            />
+          )}
+          {node.children?.map(child => <TreeNode key={child.path} node={child} activePath={activePath} defaultExpanded={defaultExpanded} expandedPaths={expandedPaths} open={open} openMenu={openMenu} add={add} setExpanded={setExpanded} create={create} store={store} creation={creation} flashPath={flashPath} onCancelCreation={onCancelCreation} onCreated={onCreated} />)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Names of existing note children of a folder node (folders excluded). */
+function noteSiblingNames(node: VaultTreeNode): string[] {
+  return (node.children ?? []).filter(child => child.type === 'note').map(child => child.name)
+}
+
+/** Names of existing notes at the vault root (folders excluded). */
+function rootNoteNames(nodes: VaultTreeNode[]): string[] {
+  return nodes.filter(node => node.type === 'note').map(node => node.name)
+}
+
+/** Returns an error message, or null when the name is empty (just disabled) or valid. */
+function validateNoteName(name: string, siblings: string[]): string | null {
+  const trimmed = name.trim()
+  if (trimmed === '') return null
+  if (/[\\:*?"<>|]/u.test(trimmed)) return 'Name contains illegal characters: \\ : * ? " < > |'
+  const segments = trimmed.split('/')
+  const file = `${(segments.at(-1) ?? trimmed).replace(/\.md$/iu, '')}.md`
+  if (segments.length === 1 && siblings.some(sibling => sibling.toLocaleLowerCase() === file.toLocaleLowerCase())) {
+    return `A note named ${file} already exists here.`
+  }
+  return null
+}
+
+function NewNoteRow({ store, parentDir, siblings, onCancel, onCreated }: {
+  store: VaultStore
+  parentDir: string
+  siblings: string[]
+  onCancel(): void
+  onCreated(path: string): void
+}) {
+  const [name, setName] = useState('')
+  const [serverError, setServerError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const validation = validateNoteName(name, siblings)
+  const error = serverError ?? validation
+  const commit = async (): Promise<void> => {
+    if (busy || validation !== null || name.trim() === '') return
+    setBusy(true)
+    setServerError(null)
+    try {
+      onCreated(await store.createNote(parentDir, name))
+    } catch (cause) {
+      // Keep the row open with the draft intact so the user can fix and retry.
+      setServerError(cause instanceof Error ? cause.message : 'Could not create note.')
+      setBusy(false)
+    }
+  }
+  return (
+    <div className={css.newNoteRow}>
+      <div className={`${css.newNoteBox} ${error !== null ? css.newNoteBoxError : ''}`}>
+        <FilePlus2 size={13} />
+        <input
+          autoFocus
+          value={name}
+          placeholder="Note name"
+          aria-label="New note name (extension .md is added automatically)"
+          aria-invalid={error !== null}
+          disabled={busy}
+          onChange={event => { setName(event.target.value); setServerError(null) }}
+          onKeyDown={event => {
+            if (event.key === 'Enter') { event.preventDefault(); void commit() }
+            if (event.key === 'Escape') { event.preventDefault(); onCancel() }
+          }}
+          onBlur={() => {
+            // Match Obsidian: commit a valid non-empty name, otherwise cancel.
+            if (busy) return
+            if (name.trim() !== '' && validation === null) void commit()
+            else onCancel()
+          }}
+        />
+        <span className={css.mdBadge} title="Extension is added automatically">.md</span>
+        <button
+          className={css.iconButton}
+          type="button"
+          title="Create note (Enter)"
+          aria-label="Create note"
+          disabled={busy || validation !== null || name.trim() === ''}
+          onMouseDown={event => { event.preventDefault() }}
+          onClick={() => { void commit() }}
+        >{busy ? <LoaderCircle className={css.spin} size={13} /> : <Check size={13} />}</button>
+        <button
+          className={css.iconButton}
+          type="button"
+          title="Cancel (Esc)"
+          aria-label="Cancel"
+          onMouseDown={event => { event.preventDefault() }}
+          onClick={onCancel}
+        ><X size={13} /></button>
+      </div>
+      {error !== null && <div className={css.newNoteError} role="alert">{error}</div>}
+    </div>
   )
 }
 

@@ -295,9 +295,17 @@ export class VaultStore {
     }
   }
 
-  async createNote(path: string): Promise<string | null> {
-    const normalized = path.trim().endsWith('.md') ? path.trim() : `${path.trim()}.md`
-    if (normalized === '.md') return null
+  /**
+   * Create a note under `parentDir` ('' = vault root) from a bare note `name`
+   * (extension optional, `.md` appended). `name` may contain further `/`
+   * segments; the server creates intermediate directories. Throws on failure
+   * so the inline creation row can keep the draft and show the message.
+   */
+  async createNote(parentDir: string, name: string): Promise<string> {
+    const trimmed = name.trim()
+    if (trimmed === '') throw new Error('Note name is required.')
+    const joined = parentDir === '' ? trimmed : `${parentDir.replace(/\/+$/u, '')}/${trimmed}`
+    const normalized = joined.endsWith('.md') ? joined : `${joined}.md`
     try {
       this.noteGeneration++
       this.invalidateSave()
@@ -309,8 +317,7 @@ export class VaultStore {
       this.setMode('edit')
       return normalized
     } catch (error) {
-      this.update({ error: message(error) })
-      return null
+      throw error instanceof Error ? error : new Error(message(error))
     }
   }
 

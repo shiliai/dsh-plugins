@@ -4,6 +4,9 @@
       inject: [webServer, tools, skills]
       config:
         vaultRoot: !!js process.cwd()
-        mutationOrigin: !!js process.env.DSH_OBSIDIAN_ORIGIN ?? 'http://127.0.0.1:3080'
+        # Optional explicit origin allowlist for mutations. When unset, any
+        # Origin matching the request's own Host header is accepted, so GUI
+        # port/host changes need no configuration.
+        mutationOrigin: !!js process.env.DSH_OBSIDIAN_ORIGIN
         maxNoteBytes: 2097152
         searchResultLimit: 100

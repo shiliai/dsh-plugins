@@ -78,7 +78,6 @@ $DSH_HOME/profiles/web/cordis.patch.yml
 - id: dsh-obsidian
   config:
     vaultRoot: '/Users/alice/Documents/Obsidian/My Vault'
-    mutationOrigin: 'http://127.0.0.1:3080'
     maxNoteBytes: 2097152
     searchResultLimit: 100
 ```
@@ -95,7 +94,7 @@ Windows example:
     vaultRoot: 'C:\Users\Alice\Documents\Obsidian\My Vault'
 ```
 
-Important: a DSH row override replaces the row's entire `config`; it does not merge individual keys. Always repeat `vaultRoot`, `mutationOrigin`, `maxNoteBytes` and `searchResultLimit` in this override.
+Important: a DSH row override replaces the row's entire `config`; it does not merge individual keys. Always repeat `vaultRoot`, `maxNoteBytes` and `searchResultLimit` in this override. `mutationOrigin` is optional — see the configuration reference below.
 
 Restart DSH after editing the profile patch, then verify the effective value:
 
@@ -111,7 +110,7 @@ The profile patch may use a user-defined environment variable:
 - id: dsh-obsidian
   config:
     vaultRoot: !!js process.env.DSH_OBSIDIAN_VAULT ?? process.cwd()
-    mutationOrigin: !!js process.env.DSH_OBSIDIAN_ORIGIN ?? 'http://127.0.0.1:3080'
+    mutationOrigin: !!js process.env.DSH_OBSIDIAN_ORIGIN
     maxNoteBytes: 2097152
     searchResultLimit: 100
 ```
@@ -157,7 +156,7 @@ Use the folder settings button beside the Vault name to browse directories on th
 | Key | Default | Description |
 |---|---:|---|
 | `vaultRoot` | `process.cwd()` | Initial Vault directory. |
-| `mutationOrigin` | `DSH_OBSIDIAN_ORIGIN` or `http://127.0.0.1:3080` | Exact browser origin allowed to create, edit, move, delete or select a Vault. Include scheme and port, with no path. |
+| `mutationOrigin` | unset (same-origin check) | Optional explicit origin (or array of origins) allowed to create, edit, move, delete or select a Vault. When unset, any Origin whose host matches the request's own `Host` header is accepted, so GUI port/host changes need no configuration. Set it only when the GUI is served from a different origin than this API (for example behind a reverse proxy). Include scheme and port, with no path. |
 | `maxNoteBytes` | `2097152` | Maximum UTF-8 size of one note. Must be a positive safe integer. |
 | `searchResultLimit` | `100` | Maximum results returned by one search. Must be a positive safe integer. |
 | `skillRoot` | `<vaultRoot>/.agents/skills` | Vault-scoped skills directory, resolved relative to `vaultRoot`. |
@@ -187,20 +186,20 @@ These skills are registered to the model through an `obsidian-vault` skill
 provider, so the active provider can load them automatically or the user can
 invoke them by name.
 
-If DSH is opened at another origin, set `mutationOrigin` to that exact origin. For example:
+By default a mutation request is accepted when its `Origin` header matches the request's own `Host` header (a same-origin check), so opening DSH at any local port works without configuration. If the GUI is served from a different origin than this API, set `mutationOrigin` to that exact origin (or an array of origins). For example:
 
 ```yaml
     mutationOrigin: 'https://dsh.example.com'
 ```
 
-Do not add a trailing path. A mismatched origin allows read requests but rejects mutation and Vault-selection requests with `ORIGIN_DENIED`.
+Do not add a trailing path. A mismatched origin allows read requests but rejects mutation and Vault-selection requests with `ORIGIN_DENIED`; the error message names both the received and the expected origin.
 
 ## Note workflow
 
 - Browse nested `.md` files and search note paths or contents.
 - Switch to **Tags** to browse inline and YAML-frontmatter tags. Tag names are
   case-insensitive; selecting a parent tag includes nested descendants.
-- Create a note by entering a Vault-relative path such as `Projects/Plan.md`.
+- Create a note in place: right-click a directory and choose **New note here** (or use the header **+** button for the Vault root), then type just a note name — the `.md` extension is added automatically and `sub/dir/name` nesting is allowed. The new note is revealed in the tree and opened immediately.
 - Edit and save with stale-write conflict detection.
 - Preview Markdown, GFM tables, task lists, Wiki links, frontmatter and local images.
 - Rename, move or permanently delete the active note from its action menu.
@@ -271,7 +270,7 @@ The UI selection is not persistent. Set `vaultRoot` in `~/.dsh/profiles/web/cord
 
 ### Saving or selecting a Vault returns `ORIGIN_DENIED`
 
-Set `mutationOrigin` to the exact URL shown in the browser address bar's origin: scheme, hostname and optional port, without a path. Restart DSH after changing it.
+The error message names the received `Origin` and the expected one. In the default configuration the expected origin is the request's own host, so this usually means a proxy rewrote the `Host` header. Either fix the proxy to preserve `Host`, or set `mutationOrigin` to the exact URL shown in the browser address bar's origin: scheme, hostname and optional port, without a path. Restart DSH after changing it.
 
 ### A directory is absent from the chooser
 
