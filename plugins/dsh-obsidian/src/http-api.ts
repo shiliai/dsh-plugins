@@ -23,14 +23,14 @@ interface MoveBody {
   to: string
 }
 
-export function registerVaultApi(webServer: WebServer, vault: VaultManager, mutationOrigin: string, skills?: SkillCoordinator, thoughts?: ThoughtService): () => void {
-  const authority = normalizeOrigin(mutationOrigin)
+export function registerVaultApi(webServer: WebServer, vault: VaultManager, mutationOrigin: string | string[] | undefined, skills?: SkillCoordinator, thoughts?: ThoughtService): () => void {
+  const allowlist = normalizeOriginAllowlist(mutationOrigin)
   return webServer.register({
     kind: 'prefix',
     path: API_PREFIX,
     handler: async (request, response) => {
       try {
-        await route(request, response, vault, authority, skills, thoughts)
+        await route(request, response, vault, allowlist, skills, thoughts)
       } catch (error) {
         sendError(response, error)
       }
@@ -38,12 +38,12 @@ export function registerVaultApi(webServer: WebServer, vault: VaultManager, muta
   })
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, vault: VaultManager, authority: string, skills?: SkillCoordinator, thoughts?: ThoughtService): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, vault: VaultManager, allowlist: string[] | undefined, skills?: SkillCoordinator, thoughts?: ThoughtService): Promise<void> {
   const url = new URL(request.url ?? '/', 'http://dsh.local')
   const endpoint = url.pathname.slice(API_PREFIX.length) || '/'
   if (endpoint === '/thoughts' && thoughts !== undefined) {
     if (request.method === 'GET') { const q = optionalQuery(url, 'q'); const status = optionalQuery(url, 'status'); sendJson(response, 200, { thoughts: await thoughts.list({ ...(q === undefined ? {} : { q }), ...(status === undefined ? {} : { status: status as never }) }) }); return }
-    assertConfiguredOrigin(request, authority); const body = await readJson(request, 256 * 1024); if (!isRecord(body)) throw new VaultError('Invalid thought body.', 'INVALID_BODY', 400)
+    assertConfiguredOrigin(request, allowlist); const body = await readJson(request, 256 * 1024); if (!isRecord(body)) throw new VaultError('Invalid thought body.', 'INVALID_BODY', 400)
     const id = typeof body.id === 'string' ? body.id : undefined
     if (request.method === 'POST') { sendJson(response, 200, { thought: await thoughts.create(typeof body.text === 'string' ? body.text : '') }); return }
     if (id === undefined) throw new VaultError('Thought id is required.', 'INVALID_BODY', 400)
@@ -59,7 +59,7 @@ async function route(request: IncomingMessage, response: ServerResponse, vault: 
     return
   }
   if (request.method === 'PUT' && endpoint === '/skill' && skills !== undefined) {
-    assertConfiguredOrigin(request, authority)
+    assertConfiguredOrigin(request, allowlist)
     const body = await readJson(request, 2 * 1024 * 1024)
     if (!isRecord(body) || !isRecord(body.skill)) {
       throw new VaultError('Invalid skill write body.', 'INVALID_BODY', 400)
@@ -78,7 +78,7 @@ async function route(request: IncomingMessage, response: ServerResponse, vault: 
     return
   }
   if (request.method === 'DELETE' && endpoint === '/skill' && skills !== undefined) {
-    assertConfiguredOrigin(request, authority)
+    assertConfiguredOrigin(request, allowlist)
     const name = requiredQuery(url, 'name')
     const expectedRevision = requiredQuery(url, 'expectedRevision')
     sendJson(response, 200, { result: await skills.delete(name, expectedRevision) })
@@ -135,7 +135,7 @@ async function route(request: IncomingMessage, response: ServerResponse, vault: 
     return
   }
   if (request.method === 'PUT' && endpoint === '/note') {
-    assertConfiguredOrigin(request, authority)
+    assertConfiguredOrigin(request, allowlist)
     const body = await readJson(request, vault.maxNoteBytes + 4096)
     if (!isRecord(body) || typeof body.path !== 'string' || typeof body.content !== 'string'
       || (body.expectedModifiedMs !== undefined && (typeof body.expectedModifiedMs !== 'number' || !Number.isFinite(body.expectedModifiedMs)))) {
@@ -145,7 +145,7 @@ async function route(request: IncomingMessage, response: ServerResponse, vault: 
     return
   }
   if (request.method === 'POST' && endpoint === '/vault') {
-    assertConfiguredOrigin(request, authority)
+    assertConfiguredOrigin(request, allowlist)
     const body = await readJson(request, 8192)
     if (!isRecord(body) || typeof body.root !== 'string') {
       throw new VaultError('Invalid vault selection body.', 'INVALID_BODY', 400)
@@ -155,7 +155,7 @@ async function route(request: IncomingMessage, response: ServerResponse, vault: 
     return
   }
   if (request.method === 'POST' && endpoint === '/move') {
-    assertConfiguredOrigin(request, authority)
+    assertConfiguredOrigin(request, allowlist)
     const body = await readJson(request, 8192)
     if (!isRecord(body) || typeof body.from !== 'string' || typeof body.to !== 'string') {
       throw new VaultError('Invalid move body.', 'INVALID_BODY', 400)
@@ -164,7 +164,7 @@ async function route(request: IncomingMessage, response: ServerResponse, vault: 
     return
   }
   if (request.method === 'DELETE' && endpoint === '/note') {
-    assertConfiguredOrigin(request, authority)
+    assertConfiguredOrigin(request, allowlist)
     await vault.deleteNote(requiredQuery(url, 'path'))
     response.writeHead(204)
     response.end()
@@ -195,17 +195,44 @@ function isContextKind(value: string): value is VaultContextKind {
   return value === 'note' || value === 'directory' || value === 'tag' || value === 'search'
 }
 
-function assertConfiguredOrigin(request: IncomingMessage, authority: string): void {
+function assertConfiguredOrigin(request: IncomingMessage, allowlist: string[] | undefined): void {
   const origin = request.headers.origin
-  if (origin === undefined) {
-    throw new VaultError('Note mutations require a same-origin browser request.', 'ORIGIN_DENIED', 403)
+  if (origin !== undefined) {
+    try {
+      const normalized = normalizeOrigin(origin)
+      // Explicit allowlist: exact origin match. Default: same-origin check
+      // against the request's own Host header, so GUI port/host changes need
+      // no configuration.
+      const allowed = allowlist !== undefined ? allowlist.includes(normalized) : matchesRequestHost(normalized, request)
+      if (allowed) return
+    } catch {
+      // A malformed Origin is not a valid same-origin browser request.
+    }
   }
+  throw new VaultError(`Note mutations require a same-origin browser request. Received Origin ${origin === undefined ? '(none)' : JSON.stringify(origin)}, expected ${expectedOriginDescription(request, allowlist)}.`, 'ORIGIN_DENIED', 403)
+}
+
+function expectedOriginDescription(request: IncomingMessage, allowlist: string[] | undefined): string {
+  if (allowlist !== undefined) return allowlist.map(value => JSON.stringify(value)).join(' or ')
+  const host = request.headers.host
+  return typeof host === 'string' && host !== '' ? `the request host ${JSON.stringify(host)}` : 'a request with a Host header'
+}
+
+function matchesRequestHost(normalizedOrigin: string, request: IncomingMessage): boolean {
+  const host = request.headers.host
+  if (typeof host !== 'string' || host === '') return false
   try {
-    if (normalizeOrigin(origin) === authority) return
+    return new URL(normalizedOrigin).host === host
   } catch {
-    // A malformed Origin is not a valid same-origin browser request.
+    return false
   }
-  throw new VaultError('Note mutations require a same-origin browser request.', 'ORIGIN_DENIED', 403)
+}
+
+function normalizeOriginAllowlist(value: string | string[] | undefined): string[] | undefined {
+  if (value === undefined) return undefined
+  const list = Array.isArray(value) ? value : [value]
+  if (list.length === 0) return undefined
+  return list.map(normalizeOrigin)
 }
 
 function normalizeOrigin(value: string): string {

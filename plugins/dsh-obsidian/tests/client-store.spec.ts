@@ -131,3 +131,34 @@ describe('VaultStore request generations', () => {
     expect(store.getSnapshot().selectedTag).toBeNull()
   })
 })
+
+describe('VaultStore.createNote', () => {
+  it('joins parentDir and name, appends .md, opens the new note, and throws on failure', async () => {
+    const writes: string[] = []
+    const api = apiWithNotes([])
+    api.write = async (...args: unknown[]) => {
+      const path = String(args[0])
+      writes.push(path)
+      return { ...home, path, absolutePath: `/vault/${path}` }
+    }
+    api.note = async (...args: unknown[]) => {
+      const path = String(args[0])
+      return { ...home, path, absolutePath: `/vault/${path}` }
+    }
+    const store = new VaultStore({ open() {}, close() {} }, api)
+
+    expect(await store.createNote('TODO', '周报')).toBe('TODO/周报.md')
+    expect(writes).toEqual(['TODO/周报.md'])
+    expect(store.getSnapshot().active?.path).toBe('TODO/周报.md')
+
+    // An explicit .md suffix and the vault root ('' parent) are both preserved.
+    expect(await store.createNote('', 'Root.md')).toBe('Root.md')
+    expect(writes).toEqual(['TODO/周报.md', 'Root.md'])
+
+    await expect(store.createNote('TODO', '   ')).rejects.toThrow('Note name is required.')
+
+    api.write = async () => { throw new Error('Note mutations require a same-origin browser request.') }
+    await expect(store.createNote('TODO', 'Nope')).rejects.toThrow('same-origin')
+    expect(store.getSnapshot().error).toBeNull()
+  })
+})

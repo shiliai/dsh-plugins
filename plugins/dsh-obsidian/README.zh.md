@@ -78,7 +78,6 @@ $DSH_HOME/profiles/web/cordis.patch.yml
 - id: dsh-obsidian
   config:
     vaultRoot: '/Users/alice/Documents/Obsidian/My Vault'
-    mutationOrigin: 'http://127.0.0.1:3080'
     maxNoteBytes: 2097152
     searchResultLimit: 100
 ```
@@ -95,7 +94,7 @@ Windows 示例：
     vaultRoot: 'C:\Users\Alice\Documents\Obsidian\My Vault'
 ```
 
-重要：DSH 对配置行的覆盖会替换整块 `config`，不会逐字段合并。因此覆盖时必须同时写出 `vaultRoot`、`mutationOrigin`、`maxNoteBytes` 和 `searchResultLimit` 四项。
+重要：DSH 对配置行的覆盖会替换整块 `config`，不会逐字段合并。因此覆盖时必须同时写出 `vaultRoot`、`maxNoteBytes` 和 `searchResultLimit`。`mutationOrigin` 为可选项，见下方配置参考。
 
 编辑 profile patch 后重启 DSH，再检查最终生效的值：
 
@@ -111,7 +110,7 @@ dsh --profile web --dump-config
 - id: dsh-obsidian
   config:
     vaultRoot: !!js process.env.DSH_OBSIDIAN_VAULT ?? process.cwd()
-    mutationOrigin: !!js process.env.DSH_OBSIDIAN_ORIGIN ?? 'http://127.0.0.1:3080'
+    mutationOrigin: !!js process.env.DSH_OBSIDIAN_ORIGIN
     maxNoteBytes: 2097152
     searchResultLimit: 100
 ```
@@ -157,23 +156,23 @@ dsh --profile web --patch ./obsidian-vault.patch.yml
 | 配置项 | 默认值 | 说明 |
 |---|---:|---|
 | `vaultRoot` | `process.cwd()` | 初始 Vault 目录。 |
-| `mutationOrigin` | `DSH_OBSIDIAN_ORIGIN` 或 `http://127.0.0.1:3080` | 允许创建、编辑、移动、删除笔记或选择 Vault 的准确浏览器 Origin。必须包含协议和端口，不能包含路径。 |
+| `mutationOrigin` | 不设置（同源校验） | 可选的显式 Origin（或 Origin 数组），用于创建、编辑、移动、删除笔记或选择 Vault。不设置时，只要 Origin 的 host 与请求自身的 `Host` 头一致即放行，GUI 端口/主机变化无需改配置。仅当 GUI 与本 API 确实不同源（例如反向代理拆分）时才需要设置。必须包含协议和端口，不能包含路径。 |
 | `maxNoteBytes` | `2097152` | 单篇笔记允许的最大 UTF-8 字节数，必须是正安全整数。 |
 | `searchResultLimit` | `100` | 单次搜索返回的最大结果数，必须是正安全整数。 |
 
-如果通过其他 Origin 打开 DSH，请将 `mutationOrigin` 设为该准确 Origin。例如：
+默认情况下，修改请求只要 `Origin` 头与请求自身的 `Host` 头一致（同源判断）即被接受，因此在任意本地端口打开 DSH 都无需配置。如果 GUI 与本 API 确实不同源，请将 `mutationOrigin` 设为该准确 Origin（或 Origin 数组）。例如：
 
 ```yaml
     mutationOrigin: 'https://dsh.example.com'
 ```
 
-不要添加末尾路径。Origin 不匹配时，读取请求仍可执行，但修改和 Vault 选择请求会以 `ORIGIN_DENIED` 拒绝。
+不要添加末尾路径。Origin 不匹配时，读取请求仍可执行，但修改和 Vault 选择请求会以 `ORIGIN_DENIED` 拒绝，错误信息会同时给出收到的和期望的 Origin。
 
 ## 笔记工作流
 
 - 浏览嵌套的 `.md` 文件，并搜索笔记路径或内容。
 - 切换到 **Tags** 浏览正文和 YAML Frontmatter 中的 Tag。Tag 名称不区分大小写；选择父 Tag 时会包含嵌套子 Tag。
-- 输入 `Projects/Plan.md` 这样的 Vault 相对路径来创建笔记。
+- 原地创建笔记：右键目录选择 **New note here**（或用顶栏 **+** 在 Vault 根部创建），只需输入笔记名——`.md` 后缀自动补齐，也支持 `子目录/名称` 嵌套。新笔记会在目录树中定位高亮并立即打开。
 - 编辑并保存笔记，保存时会检测文件是否已被外部修改。
 - 预览 Markdown、GFM 表格、任务列表、Wiki 链接、frontmatter 和本地图片。
 - 从当前笔记的操作菜单中重命名、移动或永久删除笔记。
@@ -231,7 +230,7 @@ dsh --profile web --dump-config
 
 ### 保存或选择 Vault 时返回 `ORIGIN_DENIED`
 
-将 `mutationOrigin` 设置为浏览器地址栏所示的准确 Origin：协议、主机名和可选端口，不包含路径。修改后重启 DSH。
+错误信息会给出收到的 `Origin` 和期望的来源。默认配置下期望来源就是请求自身的 host，因此这通常意味着代理改写了 `Host` 头。请修复代理以保留 `Host`，或将 `mutationOrigin` 设置为浏览器地址栏所示的准确 Origin：协议、主机名和可选端口，不包含路径。修改后重启 DSH。
 
 ### 目录没有出现在选择器中
 

@@ -23,7 +23,7 @@ interface ApiFixture {
   unregister: ReturnType<typeof vi.fn>
 }
 
-async function fixture(): Promise<ApiFixture> {
+async function fixture(mutationOrigin?: string | string[] | null): Promise<ApiFixture> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-obsidian-api-'))
   roots.push(root)
   await mkdir(join(root, 'Projects'), { recursive: true })
@@ -37,7 +37,9 @@ async function fixture(): Promise<ApiFixture> {
     return unregister
   })
   const vault = await VaultManager.create(root, 4096, 20)
-  const dispose = registerVaultApi({ register } as unknown as WebServer, vault, 'http://dsh.test')
+  // `undefined` (default) keeps the historical explicit origin; `null` means
+  // "not configured" and exercises the same-origin Host check.
+  const dispose = registerVaultApi({ register } as unknown as WebServer, vault, mutationOrigin === undefined ? 'http://dsh.test' : (mutationOrigin ?? undefined))
   expect(dispose).toBe(unregister)
 
   if (route === undefined) throw new Error('Vault API route was not registered.')
@@ -205,5 +207,47 @@ describe('registerVaultApi', () => {
     })
     expect(escapedPath.status).toBe(400)
     expect(await escapedPath.json()).toMatchObject({ code: 'INVALID_PATH' })
+  })
+
+  it('defaults to a same-origin Host check with diagnostics when mutationOrigin is not configured', async () => {
+    const { baseUrl } = await fixture(null)
+
+    // Origin matching the request's own Host header is accepted without configuration.
+    const written = await request(baseUrl, '/dsh-obsidian/api/note', {
+      method: 'PUT', headers: { origin: baseUrl, 'content-type': 'application/json' }, body: JSON.stringify({ path: 'SameHost.md', content: '# ok' }),
+    })
+    expect(written.status).toBe(200)
+    expect(await written.json()).toMatchObject({ path: 'SameHost.md', content: '# ok' })
+
+    // A cross-origin Origin is rejected, and the 403 names both sides.
+    const crossOrigin = await request(baseUrl, '/dsh-obsidian/api/note', {
+      method: 'PUT', headers: { origin: 'http://attacker.invalid', 'content-type': 'application/json' }, body: JSON.stringify({ path: 'No.md', content: 'no' }),
+    })
+    expect(crossOrigin.status).toBe(403)
+    const denied = await crossOrigin.json() as { error: string; code: string }
+    expect(denied.code).toBe('ORIGIN_DENIED')
+    expect(denied.error).toContain('"http://attacker.invalid"')
+    expect(denied.error).toContain(new URL(baseUrl).host)
+
+    // A request without an Origin header is rejected as well.
+    const noOrigin = await request(baseUrl, '/dsh-obsidian/api/note?path=SameHost.md', { method: 'DELETE' })
+    expect(noOrigin.status).toBe(403)
+    expect((await noOrigin.json() as { error: string }).error).toContain('(none)')
+  })
+
+  it('accepts an array of explicit mutation origins and prefers it over the Host check', async () => {
+    const { baseUrl } = await fixture(['http://a.test', 'http://b.test'])
+
+    const allowed = await request(baseUrl, '/dsh-obsidian/api/note', {
+      method: 'PUT', headers: { origin: 'http://b.test', 'content-type': 'application/json' }, body: JSON.stringify({ path: 'B.md', content: 'b' }),
+    })
+    expect(allowed.status).toBe(200)
+
+    // With an explicit allowlist, even a Host-matching Origin is rejected.
+    const sameHost = await request(baseUrl, '/dsh-obsidian/api/note', {
+      method: 'PUT', headers: { origin: baseUrl, 'content-type': 'application/json' }, body: JSON.stringify({ path: 'No.md', content: 'no' }),
+    })
+    expect(sameHost.status).toBe(403)
+    expect((await sameHost.json() as { error: string }).error).toContain('"http://a.test"')
   })
 })

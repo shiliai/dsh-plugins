@@ -14,15 +14,20 @@ export const inject = ['webServer', 'tools', 'skills']
 
 export interface Config {
   vaultRoot: string
-  mutationOrigin: string
+  /**
+   * Explicit origin allowlist for vault mutations. When omitted, mutations
+   * accept any Origin whose host matches the request's own Host header (true
+   * same-origin check), so GUI port/host changes need no configuration.
+   */
+  mutationOrigin?: string | string[]
   maxNoteBytes?: number
   searchResultLimit?: number
   skillRoot?: string
 }
 
 export async function apply(ctx: Context, config: Config): Promise<void> {
-  if (typeof config.vaultRoot !== 'string' || config.vaultRoot.trim() === '' || typeof config.mutationOrigin !== 'string') {
-    throw new Error('dsh-obsidian: vaultRoot and mutationOrigin are required')
+  if (typeof config.vaultRoot !== 'string' || config.vaultRoot.trim() === '') {
+    throw new Error('dsh-obsidian: vaultRoot is required')
   }
   const relativeSkillsDir = config.skillRoot ?? '.agents/skills'
   const thoughts = new ThoughtService(config.vaultRoot)
