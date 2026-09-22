@@ -40,6 +40,11 @@ export class OpdsAdapter {
     return { name: this.#config.name, url: this.#config.url, timeoutMs: this.#config.timeoutMs ?? 20_000, cacheTtlMs: 300_000 }
   }
 
+  /** Full config including credentials — server-side only (config export), never sent to browsers via `settings`. */
+  get rawConfig(): OpdsConfig {
+    return { ...this.#config }
+  }
+
   constructor(config: OpdsConfig, private readonly fetchImpl: typeof fetch = fetch) {
     let parsed: URL
     try { parsed = new URL(config.url) } catch { throw new ReadingError('OPDS URL is invalid.', 'OPDS_CONFIG', 500) }
