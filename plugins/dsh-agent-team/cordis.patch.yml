@@ -1,0 +1,6 @@
+- insert:
+    - id: dsh-agent-team
+      name: '@dsh-plugins/dsh-agent-team'
+      inject: [tools, subagents]
+      config:
+        apiKey: !!js process.env.JEV_API_KEY ?? null
