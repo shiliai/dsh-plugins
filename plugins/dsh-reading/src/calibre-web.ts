@@ -63,6 +63,11 @@ export class CalibreWebClient {
 
   get origin(): string { return this.#config.url }
 
+  /** Full config including credentials — server-side only (config export), never sent to browsers. */
+  get rawConfig(): CalibreWebConfig {
+    return { ...this.#config }
+  }
+
   static fromEnv(env: NodeJS.ProcessEnv = process.env): CalibreWebClient | undefined {
     const refs = readCredentialRefs(env)
     let url = (env.READING_CALIBRE_WEB_URL ?? '').trim()

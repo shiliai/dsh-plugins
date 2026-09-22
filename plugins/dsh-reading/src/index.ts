@@ -2,12 +2,13 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
+import { readReadingConfigFile, readingConfigFile, resolveReadingSources, ReadingSourcesHolder } from './config-portability.ts'
 import { registerReadingApi } from './http-api.ts'
 import { LocalLibrary, ReadingError } from './library.ts'
 import { ReadingStateStore } from './state-store.ts'
-import { WallabagAdapter, type WallabagConfig } from './wallabag-adapter.ts'
-import { OpdsAdapter, type OpdsConfig } from './opds-adapter.ts'
-import { CalibreWebClient } from './calibre-web.ts'
+import type { WallabagConfig } from './wallabag-adapter.ts'
+import type { OpdsConfig } from './opds-adapter.ts'
+import type { CalibreWebConfig } from './calibre-web.ts'
 import { defaultProjectConfig, readProjectConfig, saveProjectConfig, type ReadingProjectConfig } from './project-cache.ts'
 import { ScopedSkillProvider, SkillStore } from '@dsh-plugins/dsh-reading-core'
 
@@ -19,6 +20,7 @@ export interface Config {
   dataDir?: string | null
   wallabag?: WallabagConfig | null
   opds?: OpdsConfig | null
+  calibre?: CalibreWebConfig | null
   projectRoot?: string | null
   createSessionOnOpen?: boolean
 }
@@ -27,16 +29,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const dataDir = resolveDataDir(config)
   const library = new LocalLibrary(dataDir)
   const store = await ReadingStateStore.create(dataDir)
-  const wallabag = config.wallabag === null ? undefined : config.wallabag === undefined ? WallabagAdapter.fromEnv() : new WallabagAdapter(config.wallabag)
-  const opds = config.opds === null ? undefined : config.opds === undefined ? OpdsAdapter.fromEnv() : new OpdsAdapter(config.opds)
-  // A malformed READING_CALIBRE_WEB_URL must not take down the whole plugin:
-  // degrade to "calibre upload unavailable" (503 on /calibre/upload) instead.
-  let calibre: CalibreWebClient | undefined
-  try {
-    calibre = CalibreWebClient.fromEnv()
-  } catch (error) {
-    console.error('dsh-reading: calibre-web client disabled:', error instanceof Error ? error.message : String(error))
-  }
+  // Source adapters: cordis explicit config > imported reading-config.json > env.
+  // cordis `null` still force-disables a source regardless of the override file.
+  const overrideFile = readingConfigFile(dataDir)
+  const override = await readReadingConfigFile(overrideFile)
+  const sources = new ReadingSourcesHolder(resolveReadingSources(config, override), { file: overrideFile, override })
   const configFile = join(dataDir, 'reading-settings.json')
   const fallback = { ...defaultProjectConfig(dataDir), ...(typeof config.projectRoot === 'string' && config.projectRoot.trim() !== '' ? { rootDir: expandHome(config.projectRoot) } : {}), ...(typeof config.createSessionOnOpen === 'boolean' ? { createSessionOnOpen: config.createSessionOnOpen } : {}) }
   let projectConfig: ReadingProjectConfig = await readProjectConfig(configFile, fallback)
@@ -48,11 +45,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     return readingProvider
   }), 'dsh-reading: workspace skill provider')
   ctx.effect(
-    () => registerReadingApi(ctx.webServer, library, store, wallabag, opds, {
+    () => registerReadingApi(ctx.webServer, library, store, sources, {
       get: () => projectConfig,
       update: async (next: ReadingProjectConfig) => { projectConfig = next; readingSkills = new SkillStore(next.rootDir); readingProvider?.setStore(readingSkills); await saveProjectConfig(configFile, next) },
       skills: () => readingSkills,
-    }, calibre),
+    }),
     'dsh-reading: reading HTTP API',
   )
 }
@@ -81,6 +78,10 @@ export { OpdsAdapter } from './opds-adapter.ts'
 export type { OpdsConfig, OpdsBook } from './opds-adapter.ts'
 export { CalibreWebClient } from './calibre-web.ts'
 export type { CalibreWebConfig, CalibreUploadMetadata, CalibreUploadResult } from './calibre-web.ts'
+export {
+  createReadingPortabilityProvider, readReadingConfigFile, readingConfigFile, ReadingSourcesHolder, resolveReadingSources, READING_CONFIG_FILE,
+} from './config-portability.ts'
+export type { ReadingSettingsSection, ReadingSourceOverride, ReadingSources } from './config-portability.ts'
 export type {
   Annotation, Book, BookFormat, BookMetadata, BookWithProgress, Locator, PublicBook, PublicBookWithProgress, ReadingProgress, ReadingStateSnapshot,
   Article,

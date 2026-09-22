@@ -95,4 +95,12 @@ export const readingApi = {
     body: JSON.stringify({ skill: payload.input, ...(payload.previousName === undefined ? {} : { previousName: payload.previousName }), ...(payload.expectedRevision === undefined ? {} : { expectedRevision: payload.expectedRevision }) }),
   }),
   skillDelete: (name: string, expectedRevision: string) => request<{ result: { value: null } }>(`/skill?name=${encodeURIComponent(name)}&expectedRevision=${encodeURIComponent(expectedRevision)}`, { method: 'DELETE' }),
+  /** Config-portability contract: export this plugin's section (`redact` blanks credentials). */
+  configExport: (redact = false) => request<unknown>(`/config/export${redact ? '?redact=1' : ''}`),
+  /** Config-portability contract: apply (or preview with `dryRun`) a config export envelope. */
+  configImport: (envelope: unknown, dryRun = false) => request<{ ok: boolean; dryRun: boolean; report: { pluginId: string; displayName: string; applied: string[]; skipped: string[]; warnings: string[] } }>(`/config/import${dryRun ? '?dryRun=1' : ''}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(envelope),
+  }),
 }

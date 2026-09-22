@@ -12,6 +12,15 @@ const RAW_PREFIX = '\0dsh-reading-raw:'
 // as a dependency: a git-hosted subdependency trips pnpm 11 blockExoticSubdeps
 // on every GitHub-source install of this plugin.
 const READING_CORE_SOURCE = fileURLToPath(new URL('../../packages/dsh-reading-core/src/index.ts', import.meta.url))
+// Same source-inline pattern for the config-portability contract. The
+// `/client` mapping must come first — alias entries match by longest prefix
+// and the bare specifier would otherwise swallow the subpath.
+const PORTABILITY_SOURCE = fileURLToPath(new URL('../../packages/dsh-config-portability/src/index.ts', import.meta.url))
+const PORTABILITY_CLIENT_SOURCE = fileURLToPath(new URL('../../packages/dsh-config-portability/src/client.tsx', import.meta.url))
+const PORTABILITY_ALIAS = {
+  '@dsh-plugins/dsh-config-portability/client': PORTABILITY_CLIENT_SOURCE,
+  '@dsh-plugins/dsh-config-portability': PORTABILITY_SOURCE,
+}
 const require = createRequire(import.meta.url)
 
 // Dev hot-iteration loop (live DSH + cordis-plugin-hmr watching lib/): the
@@ -104,7 +113,7 @@ export default defineConfig([
     platform: 'node',
     dts: true,
     clean: !DEV_HOT_LOOP,
-    alias: { '@dsh-plugins/dsh-reading-core': READING_CORE_SOURCE },
+    alias: { '@dsh-plugins/dsh-reading-core': READING_CORE_SOURCE, ...PORTABILITY_ALIAS },
     external: [/^@deepseek-ai\//],
   },
   {
@@ -116,7 +125,7 @@ export default defineConfig([
     minify: true,
     dts: false,
     clean: false,
-    alias: { '@dsh-plugins/dsh-reading-core': READING_CORE_SOURCE },
+    alias: { '@dsh-plugins/dsh-reading-core': READING_CORE_SOURCE, ...PORTABILITY_ALIAS },
     external: [
       'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client',
       '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-runtime/client',

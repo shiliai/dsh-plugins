@@ -25,6 +25,11 @@ export class WallabagAdapter {
     return { origin: this.#config.origin, timeoutMs: this.#config.timeoutMs ?? 20_000, cacheTtlMs: 60_000 }
   }
 
+  /** Full config including credentials — server-side only (config export), never sent to browsers via `settings`. */
+  get rawConfig(): WallabagConfig {
+    return { ...this.#config }
+  }
+
   constructor(config: WallabagConfig, private readonly fetchImpl: typeof fetch = fetch) {
     let origin: URL
     try { origin = new URL(config.origin) } catch { throw new ReadingError('Wallabag URL is invalid.', 'WALLABAG_CONFIG', 500) }
