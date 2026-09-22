@@ -23,6 +23,10 @@ export class LocalLibrary {
     return this.#booksDir
   }
 
+  get dataDir(): string {
+    return this.#dataDir
+  }
+
   async listBooks(progress: Record<string, ReadingProgress>): Promise<BookWithProgress[]> {
     let entries: string[] = []
     try {

@@ -5,13 +5,13 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createHash } from 'node:crypto'
 import type { WebServer } from '@deepseek-ai/dsh-host-webserver'
+import { handleConfigPortabilityRoute } from '@dsh-plugins/dsh-config-portability'
 import type { Annotation, Article, BookMetadata, Locator, ReadingProgress } from './contracts.ts'
+import { createReadingPortabilityProvider, type ReadingSourcesHolder } from './config-portability.ts'
 import { LocalLibrary, ReadingError } from './library.ts'
 import { ReadingStateStore } from './state-store.ts'
 import { WallabagAdapter, isUnextractedContent, sanitizeHtml } from './wallabag-adapter.ts'
 import { extractArticle, type ExtractedArticle } from './extract/index.ts'
-import { OpdsAdapter } from './opds-adapter.ts'
-import { CalibreWebClient } from './calibre-web.ts'
 import { articleMetadata, bookMetadata, projectDirectory, relativeProjectPath, type ReadingProjectConfig, writeProjectMetadata } from './project-cache.ts'
 import type { AgentSkillInput, SkillStore } from '@dsh-plugins/dsh-reading-core'
 
@@ -29,13 +29,14 @@ const MIME_BY_FORMAT: Record<string, string> = {
   azw: 'application/vnd.amazon.ebook',
 }
 
-export function registerReadingApi(webServer: WebServer, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter, project?: ProjectAccess, calibre?: CalibreWebClient): () => void {
+export function registerReadingApi(webServer: WebServer, library: LocalLibrary, store: ReadingStateStore, sources: ReadingSourcesHolder, project?: ProjectAccess): () => void {
+  const portability = createReadingPortabilityProvider({ sources, dataDir: library.dataDir, project })
   return webServer.register({
     kind: 'prefix',
     path: API_PREFIX,
     handler: async (request, response) => {
       try {
-        await route(request, response, library, store, wallabag, opds, project, calibre)
+        await route(request, response, library, store, sources, project, portability)
       } catch (error) {
         sendError(response, error)
       }
@@ -43,7 +44,7 @@ export function registerReadingApi(webServer: WebServer, library: LocalLibrary, 
   })
 }
 
-async function route(request: IncomingMessage, response: ServerResponse, library: LocalLibrary, store: ReadingStateStore, wallabag?: WallabagAdapter, opds?: OpdsAdapter, project?: ProjectAccess, calibre?: CalibreWebClient): Promise<void> {
+async function route(request: IncomingMessage, response: ServerResponse, library: LocalLibrary, store: ReadingStateStore, sources: ReadingSourcesHolder, project?: ProjectAccess, portability = createReadingPortabilityProvider({ sources, dataDir: library.dataDir, project })): Promise<void> {
   const url = new URL(request.url ?? '/', 'http://dsh.local')
   const endpoint = url.pathname.slice(API_PREFIX.length) || '/'
 
@@ -55,6 +56,15 @@ async function route(request: IncomingMessage, response: ServerResponse, library
       throw new ReadingError('Cross-origin state-changing request is not allowed.', 'FORBIDDEN_ORIGIN', 403)
     }
   }
+
+  // Shared config-portability contract (GET /config/export, POST /config/import).
+  if (endpoint === '/config/export' || endpoint === '/config/import') {
+    const handled = await handleConfigPortabilityRoute(request, response, endpoint, portability, { query: url.searchParams })
+    if (handled) return
+  }
+
+  // Snapshots are re-read per request so imports take effect immediately.
+  const { wallabag, opds, calibre } = sources.get()
 
   if (request.method === 'GET' && endpoint === '/library') {
     sendJson(response, 200, { books: (await library.listBooks(store.snapshot.progress)).map(toPublicBook) })
@@ -681,6 +691,11 @@ function sendError(response: ServerResponse, error: unknown): void {
   }
   if (error instanceof ReadingError) {
     sendJson(response, error.status, { error: error.message, code: error.code })
+    return
+  }
+  // ConfigPortabilityError and similar structured errors carry status/code.
+  if (error instanceof Error && typeof (error as { status?: unknown }).status === 'number' && typeof (error as { code?: unknown }).code === 'string') {
+    sendJson(response, (error as { status?: unknown }).status as number, { error: error.message, code: (error as { code?: unknown }).code as string })
     return
   }
   if (error instanceof Error) {

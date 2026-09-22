@@ -1,0 +1,28 @@
+{
+  "name": "@dsh-plugins/dsh-config-portability",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared config export/import contract for DSH plugins (envelope, provider, route handler, settings tab)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shiliai/dsh-plugins.git",
+    "directory": "packages/dsh-config-portability"
+  },
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "pnpm run typecheck && pnpm run test && pnpm run build",
+    "prepare": "pnpm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "~18.3.1",
+    "react": "^18.3.1",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

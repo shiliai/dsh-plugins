@@ -13,6 +13,7 @@ import { pluginVersion } from './version.ts'
 import { Workbench } from './Workbench.tsx'
 import { articleContext, bookContext } from './context.ts'
 import { WorkspaceRegistry } from '@dsh-plugins/dsh-reading-core'
+import { mountConfigPortabilityTab, registerPortabilityProvider } from '@dsh-plugins/dsh-config-portability/client'
 import css from './styles.module.css?dsh-inline'
 
 export const inject = ['slots', 'layout', 'sessions', 'conversation', 'workspaces']
@@ -112,6 +113,11 @@ function waitForAssistantReply(face: SessionFace, afterSeq: number, timeoutMs: n
 }
 
 export function apply(ctx: ClientContext): void {
+  // Config-portability contract (issue #105): expose Reading's config to the
+  // shared「配置迁移」tab and mount that tab once for all joining plugins.
+  registerPortabilityProvider({ id: 'dsh-reading', displayName: 'Reading', apiPrefix: '/dsh-reading/api' })
+  mountConfigPortabilityTab(ctx)
+
   const store = new ReadingStore()
   const workspaces = new WorkspaceRegistry(ctx.workspaces)
   let vaultRootPromise: Promise<string | undefined> | undefined
