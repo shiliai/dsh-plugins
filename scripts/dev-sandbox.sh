@@ -226,6 +226,17 @@ node -e "
   fs.writeFileSync(file, JSON.stringify(m, null, 2) + '\n')
 " "$SB_PROFILE/package.json"
 
+# A target plugin not yet installed in the production profile is unresolvable
+# in the clone — boot then fails with "cannot resolve profile bundle". Add it
+# from the workspace purely so the bundle name resolves; the overlay below
+# still serves the worktree build (installed copy disabled, hmr root -> lib).
+for p in "${PLUGINS[@]}"; do
+  if [ ! -e "$SB_PROFILE/node_modules/@dsh-plugins/$p" ]; then
+    echo "dev-sandbox.sh: @dsh-plugins/$p not in production profile; adding workspace copy for bundle resolution..."
+    (cd "$SB_PROFILE" && pnpm add "@dsh-plugins/$p@file:$REPO_ROOT/plugins/$p")
+  fi
+done
+
 # --- inject the dev overlay -------------------------------------------------
 # Same recipe as issue #110, verified end-to-end: enable the bundle's hmr
 # entry with root -> worktree lib, disable the installed copy, insert the
