@@ -82,6 +82,26 @@
     (kickstart of `io.shiliai.dsh-dev-5280`; the tool result persists on the
     surviving production host). The test env is disposable; its sessions and
     cron jobs do not survive a `dev-sandbox.sh` reassembly.
+- Waking a session after a restart (test → prod, verified 2026-09-22): a
+  restart interrupts the in-flight turn and the GUI session waits for someone
+  to re-issue it. The resident test host can resume it unattended:
+  1. BEFORE the restart, mint a browser-session cookie on the target host:
+     `curl -s -c <jar> -o /dev/null "http://127.0.0.1:3280/?token=<launch-token>"`
+     (the launch token is in the host's stdout log). The signed cookie stays
+     valid across restarts — its HMAC secret is durable in
+     `.credentials.yaml`, and only the per-process launch token rotates.
+  2. On the test host, arm a dsh-cron oneshot command job that runs
+     `scripts/wake-session.sh --base http://127.0.0.1:3280 --cookie-jar <jar>
+     --session-id session-… --message "…"` — it polls until the port is back,
+     then POSTs `/api/session/prompt` with `{args: {request: {…, mode:
+     'queue'}}}`; the RPC itself resumes the session and queues the message
+     as the next turn. Wire format notes: the endpoint lives in the URL path
+     (`/api/session/prompt`), the envelope is `{type:'client-request',
+     rpcId, method, payload}`, and typert wants the payload wrapped as
+     `{args: {<method-args>}}` with the call's single parameter named
+     (`request` for session/prompt).
+  The interrupted turn is never replayed — put the continuation context in
+  the wake message.
 
 ## Local development workflow: dev sandbox (5280) + launchd production (3280)
 
