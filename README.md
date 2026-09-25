@@ -64,11 +64,13 @@ the JSON instead of replacing them.
 
 ```sh
 dsh plugin --profile web config set --location=project --json allowBuilds \
-  '{"@dsh-plugins/dsh-cron@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-cron@git+ssh://git@github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-file-attachment@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-file-attachment@git+ssh://git@github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-obsidian@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-obsidian@git+ssh://git@github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-reading@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-reading@git+ssh://git@github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-remote@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-remote@git+ssh://git@github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-wecom@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-wecom@git+ssh://git@github.com/shiliai/dsh-plugins.git":true}'
+  '{"@dsh-plugins/dsh-cron@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-cron@git+ssh://git@github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-file-attachment@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-file-attachment@git+ssh://git@github.com/shiliai/dsh-plugins.git":true,"dsh-hik-view@git+https://github.com/shiliai/dsh-plugins.git":true,"dsh-hik-view@git+ssh://git@github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-obsidian@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-obsidian@git+ssh://git@github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-reading@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-reading@git+ssh://git@github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-remote@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-remote@git+ssh://git@github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-wecom@git+https://github.com/shiliai/dsh-plugins.git":true,"@dsh-plugins/dsh-wecom@git+ssh://git@github.com/shiliai/dsh-plugins.git":true}'
 dsh plugin --profile web add \
   'github:shiliai/dsh-plugins#path:/plugins/dsh-cron'
 dsh plugin --profile web add \
   'github:shiliai/dsh-plugins#path:/plugins/dsh-file-attachment'
+dsh plugin --profile web add \
+  'github:shiliai/dsh-plugins#path:/plugins/dsh-hik-view'
 dsh plugin --profile web add \
   'github:shiliai/dsh-plugins#path:/plugins/dsh-obsidian'
 dsh plugin --profile web add \
