@@ -1,0 +1,31 @@
+{
+  "name": "@dsh-plugins/dsh-mac-net-ops",
+  "version": "0.1.0",
+  "description": "MAC 系统网络运维 agent preset: read-only-first macOS network/routing/VPN/proxy triage distilled from real ops audit logs (stale routes, lost global default route, nested TUN tunnels, PAC hijack, VPN fake-connect)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shiliai/dsh-plugins.git",
+    "directory": "plugins/dsh-mac-net-ops"
+  },
+  "homepage": "https://github.com/shiliai/dsh-plugins/tree/main/plugins/dsh-mac-net-ops#readme",
+  "bugs": "https://github.com/shiliai/dsh-plugins/issues",
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
+  "type": "module",
+  "exports": {
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "cordis.patch.yml",
+    "persona.md",
+    "docs/",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
