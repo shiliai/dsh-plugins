@@ -7,6 +7,7 @@ Monorepo for independently versioned DeepSeek Harness plugins.
 ```text
 plugins/
   dsh-file-attachment/
+  dsh-mac-net-ops/
   dsh-obsidian/
   dsh-reading/
   dsh-remote/
@@ -69,6 +70,8 @@ dsh plugin --profile web add \
   'github:shiliai/dsh-plugins#path:/plugins/dsh-cron'
 dsh plugin --profile web add \
   'github:shiliai/dsh-plugins#path:/plugins/dsh-file-attachment'
+dsh plugin --profile web add \
+  'github:shiliai/dsh-plugins#path:/plugins/dsh-mac-net-ops'
 dsh plugin --profile web add \
   'github:shiliai/dsh-plugins#path:/plugins/dsh-obsidian'
 dsh plugin --profile web add \
