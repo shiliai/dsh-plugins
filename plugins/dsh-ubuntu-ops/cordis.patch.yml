@@ -92,8 +92,9 @@
                 # 可疑/关键服务深挖（周期性 Failed with result 'exit-code' = 重启循环）
                 systemctl status <svc> --no-pager; journalctl -u <svc> --since "-24h" --no-pager -o short-iso | grep -E "\[W\]|\[E\]|error|EOF|reset|timeout" | tail -40
                 # 容器体检：重启次数 / OOM / 退出码 / 健康态 / 错误日志（带降噪白名单）
-                docker ps -a --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
-                docker inspect <ctr> --format "status={{.State.Status}} health={{.State.Health.Status}} restarts={{.RestartCount}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} memlimit={{.HostConfig.Memory}}"
+                # docker --format 是 Go 模板；本手册统一把模板字段写作 [[.Field]]——本仓库系统提示词会把双花括号当模板变量校验，执行时请将 [[ ]] 还原为标准 Go 模板写法（两个左大括号夹字段、两个右大括号收尾）
+                docker ps -a --format "table [[.Names]]\t[[.Image]]\t[[.Status]]\t[[.Ports]]"
+                docker inspect <ctr> --format "status=[[.State.Status]] health=[[.State.Health.Status]] restarts=[[.RestartCount]] exit=[[.State.ExitCode]] oom=[[.State.OOMKilled]] memlimit=[[.HostConfig.Memory]]"
                 docker logs <ctr> --since 3h 2>&1 | grep -iE "error|panic|fatal|oom|out of memory" | grep -viE "cleanup|succeeded|stopping|stopped" | tail -40
                 docker stats --no-stream; docker exec <ctr> curl -sf -o /dev/null -w "http_code=%{http_code}\n" http://localhost:<port>/health   # 401 也算活着
                 # 内存压力：OOM 螺旋排查（历史案例：1G 小机 OOM→重启→再 OOM，SSH 都进不去）
@@ -132,10 +133,10 @@
                 sudo -n du -x -d1 -h / 2>/dev/null | sort -rh | head -15                # 根目录一层（-x 不跨 fs），逐层下钻
                 sudo -n find /var/log -type f -size +100M -exec ls -lh {} \;
                 timeout 30 find / -xdev -type f -size +100M -print 2>/dev/null | grep -vE "^/(proc|sys|run|snap)" | while read -r f; do echo "$(du -h "$f" | cut -f1) $f"; done | sort -rh | head -20
-                docker system df; docker images -f dangling=true --format "{{.ID}} {{.Repository}}:{{.Tag}} {{.Size}}"
-                docker images --format "{{.ID}} {{.Repository}}:{{.Tag}} {{.Size}}" | while read id repo size; do
+                docker system df; docker images -f dangling=true --format "[[.ID]] [[.Repository]]:[[.Tag]] [[.Size]]"
+                docker images --format "[[.ID]] [[.Repository]]:[[.Tag]] [[.Size]]" | while read id repo size; do
                   [ -z "$(docker ps -a --filter ancestor=$id -q)" ] && echo "UNUSED $repo $size"; done
-                docker volume ls -f dangling=true --format "{{.Name}}|{{.Labels}}" | head -20   # 清理前必查 compose 标签
+                docker volume ls -f dangling=true --format "[[.Name]]|[[.Labels]]" | head -20   # 清理前必查 compose 标签
                 journalctl --disk-usage; grep -E "^#?SystemMaxUse" /etc/systemd/journald.conf
                 du -sh /var/cache/apt /var/lib/apt/lists 2>/dev/null
                 snap list --all | grep disabled; dpkg -l | grep -cE "^ii  linux-(image|headers|modules)"; uname -r
