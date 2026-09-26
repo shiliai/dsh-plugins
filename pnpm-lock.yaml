@@ -413,6 +413,8 @@ importers:
         specifier: ^8.18.3
         version: 8.21.3
 
+  plugins/dsh-ubuntu-ops: {}
+
   plugins/dsh-wecom:
     dependencies:
       '@deepseek-ai/cordis':
