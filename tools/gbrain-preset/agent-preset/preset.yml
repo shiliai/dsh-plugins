@@ -1,0 +1,3 @@
+name: GBrain 模式
+description: 标准模式的全部能力，额外挂载 GBrain 知识库（MCP）：语义检索、页面读写、多跳推理与记忆，优先查本地资料。
+order: 5
