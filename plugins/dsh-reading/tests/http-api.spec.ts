@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseRange, registerReadingApi } from '../src/http-api.ts'
 import { LocalLibrary, ReadingError } from '../src/library.ts'
 import { ReadingStateStore } from '../src/state-store.ts'
+import { ReadingSourcesHolder } from '../src/config-portability.ts'
 import { SkillStore } from '@dsh-plugins/dsh-reading-core'
 import { WallabagAdapter } from '../src/wallabag-adapter.ts'
 
@@ -29,7 +30,7 @@ beforeEach(async () => {
       return () => server.off('request', listener)
     },
   }
-  registerReadingApi(fakeWebServer as never, library, store, undefined, undefined, {
+  registerReadingApi(fakeWebServer as never, library, store, new ReadingSourcesHolder({}), {
     get: () => ({ rootDir: dir, createSessionOnOpen: false }),
     update: async () => undefined,
     skills: () => new SkillStore(dir),
@@ -277,7 +278,7 @@ describe('reading HTTP API with wallabag (open-first flow)', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const wallabag = new WallabagAdapter({ origin: 'http://wallabag.test', clientId: 'id-stub', clientSecret: 'cs-stub-value', username: 'account-stub', password: 'pw-stub-value' })
+    const wallabag = new WallabagAdapter({ origin: 'http://wallabag.test', clientId: 'id-stub', clientSecret: 'cs', username: 'account-stub', password: 'pw' })
     const fakeWebServer = {
       register(route: { handler: (req: IncomingMessageLike, res: ServerResponseLike) => Promise<void> }) {
         const listener = (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse): void => {
@@ -287,7 +288,7 @@ describe('reading HTTP API with wallabag (open-first flow)', () => {
         return () => server.off('request', listener)
       },
     }
-    registerReadingApi(fakeWebServer as never, new LocalLibrary(dir), await ReadingStateStore.create(dir), wallabag, undefined, {
+    registerReadingApi(fakeWebServer as never, new LocalLibrary(dir), await ReadingStateStore.create(dir), new ReadingSourcesHolder({ wallabag }), {
       get: () => ({ rootDir: dir, createSessionOnOpen: false }),
       update: async () => undefined,
       skills: () => new SkillStore(dir),
@@ -447,7 +448,7 @@ describe('reading HTTP API /calibre/upload', () => {
           return () => calibreServer.off('request', listener)
         },
       }
-      registerReadingApi(fakeWebServer as never, calibreLibrary, calibreStore, undefined, undefined, undefined, fakeCalibre as never)
+      registerReadingApi(fakeWebServer as never, calibreLibrary, calibreStore, new ReadingSourcesHolder({ calibre: fakeCalibre as never }))
       await new Promise<void>(resolve => calibreServer.listen(0, '127.0.0.1', resolve))
       const calibreBase = `http://127.0.0.1:${(calibreServer.address() as AddressInfo).port}/dsh-reading/api`
 
@@ -494,7 +495,7 @@ describe('reading HTTP API /calibre/upload', () => {
           return () => calibreServer.off('request', listener)
         },
       }
-      registerReadingApi(fakeWebServer as never, calibreLibrary, calibreStore, undefined, undefined, undefined, fakeCalibre as never)
+      registerReadingApi(fakeWebServer as never, calibreLibrary, calibreStore, new ReadingSourcesHolder({ calibre: fakeCalibre as never }))
       await new Promise<void>(resolve => calibreServer.listen(0, '127.0.0.1', resolve))
       const calibreBase = `http://127.0.0.1:${(calibreServer.address() as AddressInfo).port}/dsh-reading/api`
 

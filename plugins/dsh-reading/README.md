@@ -43,6 +43,17 @@ Deployment-level config lives in `$DSH_HOME/.env` (non-secrets) and the `refs:` 
 
 > EPUB rendering note: foliate-js requires CSP to block scripts in book content. DSH does not send CSP headers; only open books you trust.
 
+## Config export / import
+
+Reading joins the shared DSH「配置迁移」(config portability) contract — a Settings → Plugins →「配置迁移」tab that moves plugin configuration between machines as a single JSON envelope (no books, progress, or annotations).
+
+- **Endpoints** (under the plugin API prefix): `GET /dsh-reading/api/config/export[?redact=1]` and `POST /dsh-reading/api/config/import[?dryRun=1]`.
+- **Exported content**: wallabag / OPDS / calibre-web data-source config, user settings (`rootDir`, `createSessionOnOpen`), and `library.dataDir` as reference only.
+- **Credentials are exported in plaintext by default** (required for one-click migration); uncheck「包含敏感凭据」or pass `?redact=1` to blank `clientSecret`/`password`. Treat the export file as a secret.
+- **Import behavior**: on import, adapters rebuild in place — changes apply to the running host immediately, no restart. Sections with blank credentials are skipped with a warning (partial credentials are never written); sections with invalid URLs reject the whole import and leave no residue.
+- **Config priority** (per source): explicit cordis config > `<dataDir>/reading-config.json` (written by imports; corrupt files are ignored) > env / credentials refs. cordis `null` still force-disables a source. The override file never touches `.env`, `.credentials.yaml`, or the profile manifest.
+- Other plugins join with two steps via the shared `@dsh-plugins/dsh-config-portability` package (see its README); the tab appears once no matter how many plugins register.
+
 ## Development
 
 ```sh

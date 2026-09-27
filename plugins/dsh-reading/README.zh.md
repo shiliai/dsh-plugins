@@ -40,6 +40,17 @@ DeepSeek Harness 沉浸式阅读工作台：在 GUI 内阅读 EPUB / PDF（AZW3/
 
 > 安全提示：foliate-js 要求通过 CSP 屏蔽书内脚本，DSH 目前不发送 CSP 头，请只打开可信来源的电子书。
 
+## 配置导出/导入
+
+Reading 接入了 DSH 统一的「配置迁移」契约（设置 → 插件 →「配置迁移」页签）：把插件配置打包成一个 JSON 信封文件，在另一台电脑的 DSH 上一键导入即可开始使用（不含书籍文件、阅读进度与批注）。
+
+- **端点**（挂在插件 API 前缀下）：`GET /dsh-reading/api/config/export[?redact=1]` 与 `POST /dsh-reading/api/config/import[?dryRun=1]`。
+- **导出内容**：wallabag / OPDS / calibre-web 数据源配置、用户设置（`rootDir`、`createSessionOnOpen`），`library.dataDir` 仅作参考信息。
+- **凭据默认明文导出**（一键迁移的前提）；取消勾选「包含敏感凭据」或使用 `?redact=1` 可将 `clientSecret`/`password` 置空。导出文件请按机密妥善保管。
+- **导入生效方式**：导入后运行中重建适配器，立即生效、无需重启。凭据为空的 section 跳过并告警（不写入残缺配置）；URL 非法时整体拒绝导入、不留残留。
+- **配置优先级**（每个数据源独立）：cordis 显式配置 > `<dataDir>/reading-config.json`（导入写入；文件损坏则忽略）> env / credentials refs。cordis `null` 仍强制禁用。覆盖文件不触碰 `.env`、`.credentials.yaml` 与 profile manifest。
+- 其他插件通过共享包 `@dsh-plugins/dsh-config-portability` 两步接入（见其 README）；页签全局只挂载一次，接入插件零 UI 工作。
+
 ## 开发
 
 ```sh

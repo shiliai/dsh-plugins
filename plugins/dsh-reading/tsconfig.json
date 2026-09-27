@@ -14,7 +14,9 @@
     "types": ["node", "react", "react-dom"],
     "baseUrl": ".",
     "paths": {
-      "@dsh-plugins/dsh-reading-core": ["../../packages/dsh-reading-core/src/index.ts"]
+      "@dsh-plugins/dsh-reading-core": ["../../packages/dsh-reading-core/src/index.ts"],
+      "@dsh-plugins/dsh-config-portability": ["../../packages/dsh-config-portability/src/index.ts"],
+      "@dsh-plugins/dsh-config-portability/client": ["../../packages/dsh-config-portability/src/client.tsx"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", "tsdown.config.ts", "vitest.config.ts"]
