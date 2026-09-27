@@ -238,7 +238,14 @@ describe('source resolution priority', () => {
   })
 
   it('degrades invalid override sections to env instead of failing startup', () => {
+    // Stub the full credential set: fromEnv requires all five fields and also
+    // falls back to $DSH_HOME/.credentials.yaml refs, which exist on dev
+    // machines but not on CI — stubbing only the URL made this machine-dependent.
     vi.stubEnv('READING_WALLABAG_URL', 'http://from-env.test')
+    vi.stubEnv('READING_WALLABAG_CLIENT_ID', 'cid')
+    vi.stubEnv('READING_WALLABAG_CLIENT_SECRET', 'cs')
+    vi.stubEnv('READING_WALLABAG_USERNAME', 'u')
+    vi.stubEnv('READING_WALLABAG_PASSWORD', 'p')
     try {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       const sources = resolveReadingSources({}, { wallabag: { origin: 'not a url', clientId: 'c', clientSecret: 's', username: 'u', password: 'p' } })
@@ -256,7 +263,13 @@ describe('reading-config.json file handling', () => {
     const file = join(dir, 'reading-config.json')
     await writeFile(file, '{ not json', 'utf8')
     await expect(readReadingConfigFile(file)).resolves.toEqual({})
+    // Full credential stub so the env fallback does not depend on the dev
+    // machine's $DSH_HOME/.credentials.yaml refs (absent on CI).
     vi.stubEnv('READING_WALLABAG_URL', 'http://from-env.test')
+    vi.stubEnv('READING_WALLABAG_CLIENT_ID', 'cid')
+    vi.stubEnv('READING_WALLABAG_CLIENT_SECRET', 'cs')
+    vi.stubEnv('READING_WALLABAG_USERNAME', 'u')
+    vi.stubEnv('READING_WALLABAG_PASSWORD', 'p')
     try {
       const override: ReadingSourceOverride = await readReadingConfigFile(file)
       const sources = resolveReadingSources({}, override)
