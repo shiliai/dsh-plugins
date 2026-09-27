@@ -11,24 +11,6 @@ importers:
 
   .: {}
 
-  packages/dsh-config-portability:
-    devDependencies:
-      '@types/node':
-        specifier: ^24.0.0
-        version: 24.13.3
-      '@types/react':
-        specifier: ~18.3.1
-        version: 18.3.1
-      react:
-        specifier: ^18.3.1
-        version: 18.3.1
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.4
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jiti@2.7.0)(yaml@2.9.0)
-
   packages/dsh-reading-core:
     devDependencies:
       '@types/node':
@@ -193,6 +175,37 @@ importers:
       vitest:
         specifier: ^3.2.4
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jiti@2.7.0)(yaml@2.9.0)
+
+  plugins/dsh-hik-view:
+    dependencies:
+      '@deepseek-ai/cordis':
+        specifier: '>=4.0.0'
+        version: 4.0.1(@deepseek-ai/cordis-plugin-include@1.0.6)(@deepseek-ai/cordis-plugin-loader@1.0.2)
+      '@deepseek-ai/dsh-client-runtime':
+        specifier: '>=0.1.0-rc.6 <0.1.0-rc.9'
+        version: 0.1.0-rc.6(666f138f83f3cea5099ebb8e6528f33a)
+      '@deepseek-ai/dsh-host-webserver':
+        specifier: '>=0.1.0-rc.6 <0.1.0-rc.9'
+        version: 0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1))
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.3
+      '@types/react':
+        specifier: ~18.3.1
+        version: 18.3.1
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      schemastery:
+        specifier: ^3.18.0
+        version: 3.18.0
+      tsdown:
+        specifier: ^0.15.6
+        version: 0.15.12(@emnapi/core@1.11.3)(@emnapi/runtime@1.11.3)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
 
   plugins/dsh-mac-net-ops: {}
 
@@ -3900,6 +3913,9 @@ packages:
     resolution: {integrity: sha512-tJtZBBHA6vjIAaF6EnIaq6laBBP9aq/Y3ouVJjEfoHbRBcHBAHYcMh/w8LDrk2PvIMMq8gmopa5D4V8RmbrxGw==}
     engines: {node: '>= 0.10'}
 
+  cosmokit@1.8.1:
+    resolution: {integrity: sha512-PDBv4l90xZKrUsZ0vtoycgZpO/j4iFsqJXrAxsyBDsnQRI7ZMJXIjgDJsKNjd5L8jnVnnlrDCdhkFbTncgCVjQ==}
+
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
     engines: {node: '>= 8'}
@@ -4752,6 +4768,9 @@ packages:
 
   scheduler@0.23.2:
     resolution: {integrity: sha512-UOShsPwz7NrMUqhR6t0hWjFduvOzbtv7toDH1/hIrfRNIDBnnBWd0CwJTGvTpngVlmwGCdP9/Zl/tVrDqcuYzQ==}
+
+  schemastery@3.18.0:
+    resolution: {integrity: sha512-Jw2uxjoyyqc/yeurmChUEc/jbi8GsrdXV/KmqRUDZXJAXAmrJiPsz8vKa17l/VckyzljHZ9oGaul443CQiXxtA==}
 
   semver@7.8.5:
     resolution: {integrity: sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA==}
@@ -8909,6 +8928,8 @@ snapshots:
       object-assign: 4.1.1
       vary: 1.1.2
 
+  cosmokit@1.8.1: {}
+
   cross-spawn@7.0.6:
     dependencies:
       path-key: 3.1.1
@@ -10015,6 +10036,11 @@ snapshots:
   scheduler@0.23.2:
     dependencies:
       loose-envify: 1.4.0
+
+  schemastery@3.18.0:
+    dependencies:
+      '@standard-schema/spec': 1.1.0
+      cosmokit: 1.8.1
 
   semver@7.8.5: {}
 
