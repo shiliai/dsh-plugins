@@ -10,6 +10,7 @@ plugins/
   dsh-obsidian/
   dsh-reading/
   dsh-remote/
+  dsh-ubuntu-ops/
   dsh-wecom/
 packages/
   dsh-reading-core/
@@ -75,6 +76,8 @@ dsh plugin --profile web add \
   'github:shiliai/dsh-plugins#path:/plugins/dsh-reading'
 dsh plugin --profile web add \
   'github:shiliai/dsh-plugins#path:/plugins/dsh-remote'
+dsh plugin --profile web add \
+  'github:shiliai/dsh-plugins#path:/plugins/dsh-ubuntu-ops'
 dsh plugin --profile web add \
   'github:shiliai/dsh-plugins#path:/plugins/dsh-wecom'
 ```
