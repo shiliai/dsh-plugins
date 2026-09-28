@@ -58,6 +58,15 @@ declare module '@deepseek-ai/dsh-client-runtime/client' {
         }
       }
       scope(id: string): import('@deepseek-ai/cordis').Context | undefined
+      open(id: string): void
+    }
+    /**
+     * Present in dsh-client-runtime 0.1.2-rc.1 (moved off `workspaces`);
+     * absent in 0.1.0-rc.6 — feature code must fall back to
+     * `workspaces.connectWorkspace` when this is undefined.
+     */
+    uiWorkspace?: {
+      connectWorkspace(workspaceId: string): Promise<string>
     }
     conversation: {
       input: {
