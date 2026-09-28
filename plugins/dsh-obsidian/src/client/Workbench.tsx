@@ -81,6 +81,8 @@ export function Workbench({ store, close, addContextToChat }: Props) {
     }
   }, [])
 
+  const notePaths = useMemo(() => flattenNotePaths(state.tree), [state.tree])
+
   if (anchor === null) return createPortal(<div className={css.workbenchUnavailable} role="status">Waiting for the active conversation…</div>, document.body)
 
   const rootRect = anchor.root.getBoundingClientRect()
@@ -128,6 +130,7 @@ export function Workbench({ store, close, addContextToChat }: Props) {
   const setPaneVisibility = (key: WorkbenchPaneKey, value: boolean) => {
     setVisibility(current => ({ ...current, [key]: value }))
   }
+  const restorePanes = () => setVisibility(DEFAULT_VISIBILITY)
   const mobilePane = (['editor', 'tree', 'preview'] as const).find(key => visibility[key])
   const pane = (key: 'tree' | 'editor' | 'preview', title: string, content: React.ReactNode) => {
     if (!visibility[key] || (compact && mobilePane !== key)) return null
@@ -138,7 +141,6 @@ export function Workbench({ store, close, addContextToChat }: Props) {
       <div className={css.workbenchResize} role="separator" aria-label={`Resize ${title.replace('Note editor', 'note pane')}`} onPointerDown={event => beginResize(key, event)} onPointerMove={moveResize} onPointerUp={finishResize} />
     </section>
   }
-  const notePaths = useMemo(() => flattenNotePaths(state.tree), [state.tree])
 
   return createPortal(<div className={css.workbenchRoot} data-dsh-obsidian-workbench>
     {pane('tree', 'Vault', <div className={css.workbenchTree}><VaultBrowser store={store} closeBrowser={close} wide expandSidebar={() => undefined} addContextToChat={addContextToChat} /></div>)}
@@ -148,7 +150,7 @@ export function Workbench({ store, close, addContextToChat }: Props) {
       <footer className={css.statusBar}><span>{state.active === null ? '' : `${state.draft.split(/\r?\n/u).length} lines`}</span><span>{store.dirty ? 'Modified' : 'Saved'}</span></footer>
     </div>)}
     {pane('preview', 'Preview', <article className={css.preview}>{state.active === null ? <div className={css.panelLoading}>Preview follows the selected note.</div> : <MarkdownPreview content={state.draft} notePath={state.active.path} notePaths={notePaths} openNote={openTab} />}</article>)}
-    {!visibility.tree && !visibility.editor && !visibility.preview && <div className={css.workbenchEmpty} role="status">All workbench panes are hidden. Use the pane menu to restore one.</div>}
+    {!visibility.tree && !visibility.editor && !visibility.preview && <div className={css.workbenchEmpty} role="status"><span>All workbench panes are hidden.</span><button className={css.actionCommand} type="button" onClick={restorePanes}>Restore all panes</button></div>}
     {!compact && visibility.chat && <div className={css.workbenchChatResize} role="separator" aria-label="Resize chat pane" onPointerDown={event => beginResize('chat', event)} onPointerMove={moveResize} onPointerUp={finishResize} style={{ left: layout.chat.left - 5, top: rect.top, height: rect.bottom - rect.top }} />}
     <div className={css.workbenchChrome}><button className={css.iconButton} type="button" title="Show or hide panes" aria-label="Show or hide panes" aria-expanded={paneMenuOpen} onClick={() => setPaneMenuOpen(value => !value)}><PanelLeftOpen size={15} /></button><button className={css.iconButton} type="button" title="Close workbench" aria-label="Close workbench" onClick={close}><X size={16} /></button>{paneMenuOpen && <div className={css.workbenchPaneMenu} role="menu" aria-label="Workbench panes">{(Object.keys(PANE_LABELS) as WorkbenchPaneKey[]).map(key => <label key={key} className={css.workbenchPaneMenuItem}><input type="checkbox" checked={visibility[key]} onChange={event => setPaneVisibility(key, event.target.checked)} /> <span>{PANE_LABELS[key]}</span></label>)}</div>}</div>
     {thoughtsOpen && <div className={css.modalOverlay}><ThoughtsPanel close={() => setThoughtsOpen(false)} /></div>}
@@ -164,6 +166,10 @@ function finite(value: unknown, fallback: number): number { return typeof value 
 function loadVisibility(): WorkbenchVisibility {
   try {
     const value = JSON.parse(localStorage.getItem(VISIBILITY_STORAGE_KEY) ?? '{}') as Partial<WorkbenchVisibility>
-    return { tree: value.tree !== false, editor: value.editor !== false, preview: value.preview !== false, chat: value.chat !== false }
+    const visibility: WorkbenchVisibility = { tree: value.tree !== false, editor: value.editor !== false, preview: value.preview !== false, chat: value.chat !== false }
+    // Lockout guard: hiding every content pane leaves only an empty workbench
+    // with a restore affordance that is easy to miss, so treat it as corrupt.
+    if (!visibility.tree && !visibility.editor && !visibility.preview) return DEFAULT_VISIBILITY
+    return visibility
   } catch { return DEFAULT_VISIBILITY }
 }
