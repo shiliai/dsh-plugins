@@ -10,6 +10,7 @@ import { VaultBrowser } from './VaultBrowser.tsx'
 import { ThoughtsPanel } from './ThoughtsPanel.tsx'
 import type { VaultStore } from './store.ts'
 import type { VaultContextKind, VaultTreeNode } from '../contracts.ts'
+import type { VaultContextAddResult } from './index.tsx'
 import { calculateWorkbenchLayout, type WorkbenchPaneKey, type WorkbenchRect, type WorkbenchVisibility } from './workbench-geometry.ts'
 import { findConversationAnchor, type ConversationAnchor } from './workbench-anchor.ts'
 import css from './styles.module.css?dsh-inline'
@@ -17,7 +18,7 @@ import css from './styles.module.css?dsh-inline'
 interface Props {
   store: VaultStore
   close(): void
-  addContextToChat(kind: VaultContextKind, value: string): Promise<void>
+  addContextToChat(kind: VaultContextKind, value: string): Promise<VaultContextAddResult>
 }
 
 const STORAGE_KEY = 'dsh-obsidian.workbench.widths'

@@ -9,6 +9,7 @@ import { VaultBrowser } from './VaultBrowser.tsx'
 import { VaultStore } from './store.ts'
 import { vaultApi } from './api.ts'
 import { appendVaultContext } from './context-reference.ts'
+import { currentSessionIsBlank, landInVaultWorkspace, type VaultLandingContext } from './vault-landing.ts'
 import { pluginVersion } from './version.ts'
 import type { VaultContextKind } from '../contracts.ts'
 import { Workbench } from './Workbench.tsx'
@@ -17,7 +18,7 @@ import css from './styles.module.css?dsh-inline'
 import { SkillBrowser } from './SkillBrowser.tsx'
 import { WorkspaceRegistry } from '@dsh-plugins/dsh-reading-core'
 
-export const inject = ['slots', 'layout', 'sessions', 'conversation', 'workspaces']
+export const inject = ['slots', 'layout', 'sessions', 'conversation', 'workspaces', 'uiWorkspace']
 
 function ObsidianSkillsSettings({ store }: { store: VaultStore }) {
   const state = store.getSnapshot()
@@ -33,6 +34,14 @@ function ObsidianSkillsSettings({ store }: { store: VaultStore }) {
 
 export type PanelTarget = 'conversation' | 'conversation.session' | 'details'
 
+/** Outcome of adding Vault context to the composer (issue #135). */
+export interface VaultContextAddResult {
+  /** True when the conversation moved into the vault workspace. */
+  landed: boolean
+  /** Session whose composer received the reference. */
+  sessionId: string
+}
+
 export function panelTargetFor(sessions: { current: string | undefined; byId: Record<string, { blank: boolean }> }): PanelTarget {
   if (sessions.current === undefined) return 'conversation'
   return sessions.byId[sessions.current]?.blank === false ? 'details' : 'conversation.session'
@@ -41,7 +50,7 @@ export function panelTargetFor(sessions: { current: string | undefined; byId: Re
 interface FooterProps {
   wide: boolean
   store: VaultStore
-  addContextToChat(kind: VaultContextKind, value: string): Promise<void>
+  addContextToChat(kind: VaultContextKind, value: string): Promise<VaultContextAddResult>
 }
 
 function FooterButton({ wide, store, addContextToChat }: FooterProps) {
@@ -67,15 +76,25 @@ export function apply(ctx: ClientContext): void {
 
   const desiredPanelTarget = (): PanelTarget => panelTargetFor(ctx.sessions.list.getSnapshot())
 
-  const addContextToChat = async (kind: VaultContextKind, value: string): Promise<void> => {
-    const sessionId = ctx.sessions.list.getSnapshot().current
+  const addContextToChat = async (kind: VaultContextKind, value: string): Promise<VaultContextAddResult> => {
+    const sessions = ctx.sessions.list.getSnapshot()
+    const sessionId = sessions.current
     if (sessionId === undefined) throw new Error('Open a chat before adding Vault context.')
-    const actx = ctx.sessions.scope(sessionId)
+    const reference = await vaultApi.context(kind, value)
+    const workspaceId = await workspaces.register(reference.vaultRoot)
+    // Issue #135: a still-blank conversation follows the reference into the
+    // vault workspace; a conversation in progress stays in its own workspace
+    // and only receives the reference block.
+    let targetSessionId = sessionId
+    if (currentSessionIsBlank(sessions)) {
+      const landing: VaultLandingContext = { uiWorkspace: ctx.uiWorkspace, workspaces: ctx.workspaces, sessions: ctx.sessions }
+      targetSessionId = await landInVaultWorkspace(landing, workspaceId) ?? sessionId
+    }
+    const actx = ctx.sessions.scope(targetSessionId)
     if (actx === undefined) throw new Error('The current chat is not available.')
     const input = ctx.conversation.input.for(actx)
-    const reference = await vaultApi.context(kind, value)
-    await workspaces.register(reference.vaultRoot)
     input.setDraft(appendVaultContext(input.state.getSnapshot().draft, reference))
+    return { landed: targetSessionId !== sessionId, sessionId: targetSessionId }
   }
 
   const mountPanel = (): void => {

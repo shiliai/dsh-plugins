@@ -17,6 +17,7 @@ import Search from 'lucide-react/dist/esm/icons/search'
 import Tag from 'lucide-react/dist/esm/icons/tag'
 import X from 'lucide-react/dist/esm/icons/x'
 import type { VaultContextKind, VaultTreeNode } from '../contracts.ts'
+import type { VaultContextAddResult } from './index.tsx'
 import type { VaultStore } from './store.ts'
 import css from './styles.module.css?dsh-inline'
 
@@ -25,7 +26,7 @@ interface Props {
   closeBrowser(): void
   wide: boolean
   expandSidebar(): void
-  addContextToChat(kind: VaultContextKind, value: string): Promise<void>
+  addContextToChat(kind: VaultContextKind, value: string): Promise<VaultContextAddResult>
 }
 
 interface ContextTarget {
@@ -127,8 +128,8 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
     setContextMenu(null)
     setFeedback(null)
     try {
-      await addContextToChat(target.kind, target.value)
-      setFeedback({ kind: 'success', text: `Added ${target.label} to chat.` })
+      const result = await addContextToChat(target.kind, target.value)
+      setFeedback({ kind: 'success', text: result.landed ? `Added ${target.label} to chat and moved the conversation to the vault workspace.` : `Added ${target.label} to chat.` })
     } catch (error) {
       setFeedback({ kind: 'error', text: error instanceof Error ? error.message : 'Could not add Vault context to chat.' })
     }
