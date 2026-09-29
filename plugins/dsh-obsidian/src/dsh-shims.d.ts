@@ -61,9 +61,19 @@ declare module '@deepseek-ai/dsh-client-runtime/client' {
       open(id: string): void
     }
     /**
+     * Untyped, declaration-free service read. The client runner's ctx facade
+     * resolves `ctx.<service>` only for services declared on the plugin's own
+     * `inject` list, but `ctx.get(name)` skips the declaration gate and returns
+     * `undefined` when the service does not exist. Use it for services that are
+     * only present on newer hosts (see `uiWorkspace`).
+     */
+    get(name: string): unknown
+    /**
      * Present in dsh-client-runtime 0.1.2-rc.1 (moved off `workspaces`);
      * absent in 0.1.0-rc.6 — feature code must fall back to
-     * `workspaces.connectWorkspace` when this is undefined.
+     * `workspaces.connectWorkspace` when this is undefined. Resolve it with
+     * `ctx.get('uiWorkspace')`: declaring it on `inject` would park the whole
+     * plugin on hosts that do not provide the service.
      */
     uiWorkspace?: {
       connectWorkspace(workspaceId: string): Promise<string>

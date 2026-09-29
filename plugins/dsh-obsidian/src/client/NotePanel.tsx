@@ -8,6 +8,7 @@ import RefreshCw from 'lucide-react/dist/esm/icons/refresh-cw'
 import Save from 'lucide-react/dist/esm/icons/save'
 import Trash2 from 'lucide-react/dist/esm/icons/trash-2'
 import X from 'lucide-react/dist/esm/icons/x'
+import { DiscardPrompt } from './DiscardPrompt.tsx'
 import { MarkdownPreview } from './MarkdownPreview.tsx'
 import type { VaultStore } from './store.ts'
 import type { VaultTreeNode } from '../contracts.ts'
@@ -136,25 +137,7 @@ export function NotePanel({ store, inputActions, useInput }: Props) {
           </div>
         </section>
       )}
-      {pendingDiscard !== null && (
-        <section
-          className={css.noteAction}
-          role="alertdialog"
-          aria-labelledby="discard-changes-title"
-          aria-describedby="discard-changes-description"
-        >
-          <div className={css.noteActionMessage}>
-            <strong id="discard-changes-title">Discard unsaved changes?</strong>
-            <span id="discard-changes-description">
-              {pendingDiscard.kind === 'open' ? `Open ${pendingDiscard.path} instead.` : 'Close this note.'}
-            </span>
-          </div>
-          <div className={css.actionControls}>
-            <button className={css.iconButton} type="button" title="Cancel" aria-label="Cancel" autoFocus onClick={() => { store.cancelPendingDiscard() }}><X size={15} /></button>
-            <button className={`${css.actionCommand} ${css.danger}`} type="button" onClick={() => { void store.discardPendingChanges() }}><Trash2 size={14} />Discard</button>
-          </div>
-        </section>
-      )}
+      {pendingDiscard !== null && <DiscardPrompt store={store} />}
       {state.error !== null && <div className={css.panelError} role="alert">{state.error}</div>}
       {state.loadingNote || note === null
         ? <div className={css.panelLoading}>Opening...</div>

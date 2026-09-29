@@ -18,7 +18,11 @@ import css from './styles.module.css?dsh-inline'
 import { SkillBrowser } from './SkillBrowser.tsx'
 import { WorkspaceRegistry } from '@dsh-plugins/dsh-reading-core'
 
-export const inject = ['slots', 'layout', 'sessions', 'conversation', 'workspaces', 'uiWorkspace']
+// `uiWorkspace` is intentionally NOT declared here: `inject` entries are hard
+// activation dependencies, so hosts without the service (dsh-client-runtime
+// 0.1.0-rc.6) would park the whole plugin forever. Resolve it per call with
+// `ctx.get('uiWorkspace')`, which returns undefined where it is absent.
+export const inject = ['slots', 'layout', 'sessions', 'conversation', 'workspaces']
 
 function ObsidianSkillsSettings({ store }: { store: VaultStore }) {
   const state = store.getSnapshot()
@@ -87,7 +91,10 @@ export function apply(ctx: ClientContext): void {
     // and only receives the reference block.
     let targetSessionId = sessionId
     if (currentSessionIsBlank(sessions)) {
-      const landing: VaultLandingContext = { uiWorkspace: ctx.uiWorkspace, workspaces: ctx.workspaces, sessions: ctx.sessions }
+      // ctx.get skips the inject declaration gate: the service exists on rc.1
+      // hosts and is undefined on rc.6, where the workspaces face falls back.
+      const uiWorkspace = ctx.get('uiWorkspace') as VaultLandingContext['uiWorkspace']
+      const landing: VaultLandingContext = { uiWorkspace, workspaces: ctx.workspaces, sessions: ctx.sessions }
       targetSessionId = await landInVaultWorkspace(landing, workspaceId) ?? sessionId
     }
     const actx = ctx.sessions.scope(targetSessionId)

@@ -161,4 +161,44 @@ describe('VaultStore.createNote', () => {
     await expect(store.createNote('TODO', 'Nope')).rejects.toThrow('same-origin')
     expect(store.getSnapshot().error).toBeNull()
   })
+
+  it('opens the new note even when another note has unsaved edits', async () => {
+    const newNote = { ...home, path: 'New.md', content: '# New' }
+    const api = apiWithNotes([Promise.resolve(home), Promise.resolve(newNote)])
+    api.write = async () => newNote
+    const store = new VaultStore({ open() {}, close() {} }, api)
+    await store.openNote('Home.md')
+    store.setDraft('# Unsaved edits')
+    expect(store.dirty).toBe(true)
+
+    await store.createNote('', 'New')
+    const snapshot = store.getSnapshot()
+    expect(snapshot.active?.path).toBe('New.md')
+    // No invisible discard prompt may park over the creation flow: a pending
+    // discard refuses every later open/close until the page is reloaded.
+    expect(snapshot.pendingDiscard).toBeNull()
+  })
+
+  it('parks a discard prompt on a dirty open and resolves it either way', async () => {
+    const api = apiWithNotes([Promise.resolve(home), Promise.resolve(roadmap), Promise.resolve(roadmap)])
+    const store = new VaultStore({ open() {}, close() {} }, api)
+    await store.openNote('Home.md')
+    store.setDraft('# Unsaved edits')
+
+    await store.openNote('Projects/Roadmap.md')
+    expect(store.getSnapshot()).toMatchObject({
+      active: { path: 'Home.md' },
+      pendingDiscard: { kind: 'open', path: 'Projects/Roadmap.md' },
+    })
+
+    store.cancelPendingDiscard()
+    expect(store.getSnapshot().pendingDiscard).toBeNull()
+
+    await store.openNote('Projects/Roadmap.md')
+    await store.discardPendingChanges()
+    const snapshot = store.getSnapshot()
+    expect(snapshot.pendingDiscard).toBeNull()
+    expect(snapshot.active?.path).toBe('Projects/Roadmap.md')
+    expect(snapshot.draft).toBe(roadmap.content)
+  })
 })
