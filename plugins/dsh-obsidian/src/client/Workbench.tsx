@@ -6,6 +6,8 @@ import Save from 'lucide-react/dist/esm/icons/save'
 import PanelLeftClose from 'lucide-react/dist/esm/icons/panel-left-close'
 import PanelLeftOpen from 'lucide-react/dist/esm/icons/panel-left-open'
 import { MarkdownPreview } from './MarkdownPreview.tsx'
+import { DiscardPrompt } from './DiscardPrompt.tsx'
+import { NoteQuickOpen } from './NoteQuickOpen.tsx'
 import { VaultBrowser } from './VaultBrowser.tsx'
 import { ThoughtsPanel } from './ThoughtsPanel.tsx'
 import type { VaultStore } from './store.ts'
@@ -34,6 +36,7 @@ export function Workbench({ store, close, addContextToChat }: Props) {
   const [visibility, setVisibility] = useState<WorkbenchVisibility>(() => loadVisibility())
   const [tabs, setTabs] = useState<string[]>([])
   const [thoughtsOpen, setThoughtsOpen] = useState(false)
+  const [quickOpen, setQuickOpen] = useState(false)
   const [paneMenuOpen, setPaneMenuOpen] = useState(false)
   const draftCache = useRef(new Map<string, string>())
   const originalMargin = useRef<{ element: HTMLElement; left: string; top: string; visibility: string } | null>(null)
@@ -67,11 +70,19 @@ export function Workbench({ store, close, addContextToChat }: Props) {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
       if (paneMenuOpen) { setPaneMenuOpen(false); return }
+      // The quick-open picker and discard prompt handle Escape themselves;
+      // Escape must not tear down the workbench underneath them.
+      if (quickOpen || state.pendingDiscard !== null) return
       close()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [close, paneMenuOpen])
+  }, [close, paneMenuOpen, quickOpen, state.pendingDiscard])
+
+  // A pending discard belongs to this surface's prompts; closing the
+  // workbench without resolving it would leave the store refusing every
+  // later note open, so cancel (never discard) on the way out.
+  useEffect(() => () => { store.cancelPendingDiscard() }, [store])
 
   useEffect(() => () => {
     const original = originalMargin.current
@@ -144,14 +155,16 @@ export function Workbench({ store, close, addContextToChat }: Props) {
   }
 
   return createPortal(<div className={css.workbenchRoot} data-dsh-obsidian-workbench>
-    {pane('tree', 'Vault', <div className={css.workbenchTree}><VaultBrowser store={store} closeBrowser={close} wide expandSidebar={() => undefined} addContextToChat={addContextToChat} /></div>)}
+    {pane('tree', 'Vault', <div className={css.workbenchTree}><VaultBrowser store={store} closeBrowser={close} wide expandSidebar={() => undefined} addContextToChat={addContextToChat} openNote={openTab} /></div>)}
     {pane('editor', 'Note editor', <div className={css.workbenchEditor}>
-      <div className={css.workbenchTabs} role="tablist">{tabs.map(path => <button key={path} className={`${css.workbenchTab} ${state.active?.path === path ? css.selected : ''}`} type="button" role="tab" aria-selected={state.active?.path === path} onClick={() => openTab(path)}><span>{path.split('/').at(-1)}</span><X size={12} onClick={event => { event.stopPropagation(); closeTab(path) }} /></button>)}<button className={css.iconButton} type="button" title="Open a note from the tree" aria-label="Open a note from the tree"><Plus size={15} /></button></div>
+      <div className={css.workbenchTabs} role="tablist">{tabs.map(path => <button key={path} className={`${css.workbenchTab} ${state.active?.path === path ? css.selected : ''}`} type="button" role="tab" aria-selected={state.active?.path === path} onClick={() => openTab(path)}><span>{path.split('/').at(-1)}</span><X size={12} onClick={event => { event.stopPropagation(); closeTab(path) }} /></button>)}<button className={css.iconButton} type="button" title="Open a note (search the vault)" aria-label="Open a note from the vault" onClick={() => { setQuickOpen(true) }}><Plus size={15} /></button></div>
       {state.active === null || state.loadingNote ? <div className={css.panelLoading}>Open a note from the Vault pane.</div> : <textarea className={css.editor} aria-label={`Edit ${state.active.path}`} value={state.draft} onChange={event => store.setDraft(event.target.value)} />}
       <footer className={css.statusBar}><span>{state.active === null ? '' : `${state.draft.split(/\r?\n/u).length} lines`}</span><span>{store.dirty ? 'Modified' : 'Saved'}</span></footer>
     </div>)}
     {pane('preview', 'Preview', <article className={css.preview}>{state.active === null ? <div className={css.panelLoading}>Preview follows the selected note.</div> : <MarkdownPreview content={state.draft} notePath={state.active.path} notePaths={notePaths} openNote={openTab} />}</article>)}
     {!visibility.tree && !visibility.editor && !visibility.preview && <div className={css.workbenchEmpty} role="status"><span>All workbench panes are hidden.</span><button className={css.actionCommand} type="button" onClick={restorePanes}>Restore all panes</button></div>}
+    {quickOpen && <div className={css.modalOverlay} onPointerDown={event => { if (event.target === event.currentTarget) setQuickOpen(false) }}><NoteQuickOpen openNote={openTab} close={() => { setQuickOpen(false) }} /></div>}
+    {state.pendingDiscard !== null && <div className={css.modalOverlay}><div className={css.workbenchDiscard}><DiscardPrompt store={store} /></div></div>}
     {!compact && visibility.chat && <div className={css.workbenchChatResize} role="separator" aria-label="Resize chat pane" onPointerDown={event => beginResize('chat', event)} onPointerMove={moveResize} onPointerUp={finishResize} style={{ left: layout.chat.left - 5, top: rect.top, height: rect.bottom - rect.top }} />}
     <div className={css.workbenchChrome}><button className={css.iconButton} type="button" title="Show or hide panes" aria-label="Show or hide panes" aria-expanded={paneMenuOpen} onClick={() => setPaneMenuOpen(value => !value)}><PanelLeftOpen size={15} /></button><button className={css.iconButton} type="button" title="Close workbench" aria-label="Close workbench" onClick={close}><X size={16} /></button>{paneMenuOpen && <div className={css.workbenchPaneMenu} role="menu" aria-label="Workbench panes">{(Object.keys(PANE_LABELS) as WorkbenchPaneKey[]).map(key => <label key={key} className={css.workbenchPaneMenuItem}><input type="checkbox" checked={visibility[key]} onChange={event => setPaneVisibility(key, event.target.checked)} /> <span>{PANE_LABELS[key]}</span></label>)}</div>}</div>
     {thoughtsOpen && <div className={css.modalOverlay}><ThoughtsPanel close={() => setThoughtsOpen(false)} /></div>}

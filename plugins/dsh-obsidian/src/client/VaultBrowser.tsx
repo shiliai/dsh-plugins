@@ -13,9 +13,11 @@ import FolderOpen from 'lucide-react/dist/esm/icons/folder-open'
 import FolderCog from 'lucide-react/dist/esm/icons/folder-cog'
 import LoaderCircle from 'lucide-react/dist/esm/icons/loader-circle'
 import MessageSquarePlus from 'lucide-react/dist/esm/icons/message-square-plus'
+import RefreshCw from 'lucide-react/dist/esm/icons/refresh-cw'
 import Search from 'lucide-react/dist/esm/icons/search'
 import Tag from 'lucide-react/dist/esm/icons/tag'
 import X from 'lucide-react/dist/esm/icons/x'
+import { DiscardPrompt } from './DiscardPrompt.tsx'
 import type { VaultContextKind, VaultTreeNode } from '../contracts.ts'
 import type { VaultContextAddResult } from './index.tsx'
 import type { VaultStore } from './store.ts'
@@ -27,6 +29,13 @@ interface Props {
   wide: boolean
   expandSidebar(): void
   addContextToChat(kind: VaultContextKind, value: string): Promise<VaultContextAddResult>
+  /**
+   * How a note row opens its note. Defaults to `store.openNote(path)`, which
+   * may park a pending-discard prompt; surfaces that own their own note panes
+   * (the workbench) inject a handler with workbench-appropriate semantics
+   * (per-path draft cache, dirty-tolerant open).
+   */
+  openNote?(path: string): void
 }
 
 interface ContextTarget {
@@ -47,9 +56,10 @@ interface TreePreferences {
 
 const TREE_PREFERENCES_KEY = 'dsh-obsidian.vault.tree-preferences'
 
-export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addContextToChat }: Props) {
+export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addContextToChat, openNote }: Props) {
   const state = store.useSnapshot()
   const directoryListing = state.directoryListing
+  const openNoteAt = openNote ?? ((path: string) => { void store.openNote(path) })
   // In-place note creation: parentDir '' means the vault root.
   const [creation, setCreation] = useState<{ parentDir: string } | null>(null)
   // Path of a just-created note: scrolled into view with a flash highlight.
@@ -58,6 +68,11 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; text: string; path?: string } | null>(null)
   const [treePreferences, setTreePreferences] = useState<TreePreferences>(() => loadTreePreferences())
   const treeRef = useRef<HTMLDivElement | null>(null)
+
+  const refreshVisibleViews = (): void => {
+    void store.refreshTree()
+    if (store.getSnapshot().view === 'tags') void store.refreshTags()
+  }
 
   useEffect(() => {
     void store.initialize()
@@ -74,7 +89,17 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
         tagRefreshTicks = 0
       }
     }, 5000)
-    return () => { window.clearInterval(interval) }
+    // Background tabs throttle timers to one run per minute, and a page that
+    // sat hidden while a conversation created notes must not show a stale tree
+    // until the next tick; refresh as soon as the page returns.
+    const refreshWhenVisible = (): void => { if (!document.hidden) refreshVisibleViews() }
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    window.addEventListener('focus', refreshWhenVisible)
+    return () => {
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+      window.removeEventListener('focus', refreshWhenVisible)
+    }
   }, [store])
 
   useEffect(() => {
@@ -198,6 +223,20 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
         >
           <ChevronsDownUp size={16} />
         </button>
+        <button
+          className={css.iconButton}
+          type="button"
+          title="Refresh vault (notes created elsewhere appear here)"
+          aria-label="Refresh vault"
+          disabled={state.loadingTree || state.loadingTags}
+          onClick={() => {
+            refreshVisibleViews()
+            const selectedTag = store.getSnapshot().selectedTag
+            if (store.getSnapshot().view === 'tags' && selectedTag !== null) void store.selectTag(selectedTag)
+          }}
+        >
+          <RefreshCw className={state.loadingTree || state.loadingTags ? css.spin : undefined} size={16} />
+        </button>
         <button className={css.iconButton} type="button" title="New note" aria-label="New note" onClick={() => { startCreation('') }}>
           <FilePlus2 size={16} />
         </button>
@@ -260,8 +299,9 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
           </div>
         )}
 
-        {feedback !== null && <div className={feedback.kind === 'success' ? css.inlineSuccess : css.inlineError} role={feedback.kind === 'success' ? 'status' : 'alert'}>{feedback.kind === 'success' && feedback.path !== undefined ? <button className={css.noteLink} type="button" onClick={() => { if (feedback.path !== undefined) void store.openNote(feedback.path) }}>{feedback.text}</button> : feedback.text}</div>}
+        {feedback !== null && <div className={feedback.kind === 'success' ? css.inlineSuccess : css.inlineError} role={feedback.kind === 'success' ? 'status' : 'alert'}>{feedback.kind === 'success' && feedback.path !== undefined ? <button className={css.noteLink} type="button" onClick={() => { if (feedback.path !== undefined) openNoteAt(feedback.path) }}>{feedback.text}</button> : feedback.text}</div>}
         {state.error !== null && <div className={css.inlineError} role="alert">{state.error}</div>}
+        {state.pendingDiscard !== null && <DiscardPrompt store={store} />}
 
         <div
           ref={treeRef}
@@ -289,7 +329,7 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
               activePath={state.active?.path}
               defaultExpanded={treePreferences.defaultExpanded}
               expandedPaths={treePreferences.expandedPaths}
-              open={path => { void store.openNote(path) }}
+              open={path => openNoteAt(path)}
               openMenu={openContextMenu}
               add={target => { void addContext(target) }}
               setExpanded={(path, expanded) => { setTreePreferences(value => ({ ...value, expandedPaths: { ...value.expandedPaths, [path]: expanded } })) }}
@@ -306,7 +346,7 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
             const target = { kind: 'note' as const, value: result.path, label: result.path }
             return (
               <ContextRow key={`${result.path}:${result.line}`} target={target} openMenu={openContextMenu} add={addContext}>
-                <button className={css.searchResult} type="button" onClick={() => { void store.openNote(result.path) }}>
+                <button className={css.searchResult} type="button" onClick={() => { openNoteAt(result.path) }}>
                   <span><FileText size={14} />{result.path}</span>
                   <small>{result.line > 0 ? `L${result.line} ` : ''}{result.excerpt}</small>
                 </button>
@@ -329,7 +369,7 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
             const target = { kind: 'note' as const, value: path, label: path }
             return (
               <ContextRow key={path} target={target} openMenu={openContextMenu} add={addContext}>
-                <button className={css.treeRow} type="button" onClick={() => { void store.openNote(path) }}><FileText size={14} /><span>{path}</span></button>
+                <button className={css.treeRow} type="button" onClick={() => { openNoteAt(path) }}><FileText size={14} /><span>{path}</span></button>
               </ContextRow>
             )
           })}

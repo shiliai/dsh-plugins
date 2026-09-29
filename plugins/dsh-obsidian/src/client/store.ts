@@ -313,7 +313,10 @@ export class VaultStore {
       await this.api.write(normalized, `# ${titleFromPath(normalized)}\n\n`)
       await this.refreshTree()
       if (this.snapshot.view === 'tags') await this.refreshTags()
-      await this.openNote(normalized)
+      // allowDirty: surfaces with per-note draft caches (the workbench) keep
+      // the previous note's edits restorable, so creating must not park a
+      // discard prompt over the new note.
+      await this.openNote(normalized, { allowDirty: true })
       this.setMode('edit')
       return normalized
     } catch (error) {

@@ -400,6 +400,35 @@
 .workbenchPaneMenuItem input { margin: 0; accent-color: #2e7d62; }
 .workbenchEmpty { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 16px; border: 1px solid var(--dsw-alias-border-l2, #d9dedb); border-radius: 6px; background: var(--dsw-alias-bg-layer-1, #fff); color: var(--dsw-alias-label-secondary, #66706a); font-size: 12px; pointer-events: auto; }
 .workbenchRoot .modalOverlay { pointer-events: auto; z-index: 60; }
+
+/* ── Workbench quick-open (note picker) ─────────────────────────── */
+
+.quickOpen {
+  width: min(460px, calc(100vw - 48px));
+  max-height: min(520px, calc(100vh - 64px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l2, #d9dedb);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1, #fff);
+  box-shadow: 0 12px 36px rgba(21, 31, 26, .2);
+}
+.quickOpen .searchBox { flex: none; }
+.quickOpenResults { flex: 1; min-height: 60px; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.quickOpenResults .treeRow { width: 100%; justify-content: flex-start; }
+.quickOpenResults .treeRow span { flex: 1; text-align: left; }
+.workbenchDiscard {
+  width: min(420px, calc(100vw - 48px));
+  padding: 4px 0;
+  border: 1px solid var(--dsw-alias-border-l2, #d9dedb);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1, #fff);
+  box-shadow: 0 12px 36px rgba(21, 31, 26, .2);
+}
+
+
 .workbenchUnavailable { position: fixed; left: 12px; bottom: 12px; z-index: 16; padding: 7px 10px; border: 1px solid var(--dsw-alias-border-l2, #d9dedb); border-radius: 6px; background: var(--dsw-alias-bg-layer-1, #fff); color: var(--dsw-alias-label-secondary, #66706a); font-size: 12px; pointer-events: auto; }
 .skillDiagnostic { display: flex; flex-direction: column; gap: 1px; margin-top: 5px; }
 .skillDiagnostic code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
