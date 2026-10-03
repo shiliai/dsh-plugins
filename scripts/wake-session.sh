@@ -55,7 +55,14 @@ while [ $# -gt 0 ]; do
 done
 for required in BASE COOKIE_JAR SESSION_ID; do
   if [ -z "${!required}" ]; then
-    echo "wake-session.sh: --$(echo "$required" | tr '_-' 'a-z-' | tr 'A-Z' 'a-z') is required" >&2
+    # Explicit mapping: the old tr-based lowercasing printed "--cookieajar"
+    # because tr maps '_' to 'a' and '-' to 'z'.
+    case "$required" in
+      BASE) flag="--base" ;;
+      COOKIE_JAR) flag="--cookie-jar" ;;
+      SESSION_ID) flag="--session-id" ;;
+    esac
+    echo "wake-session.sh: $flag is required" >&2
     exit 2
   fi
 done

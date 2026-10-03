@@ -137,6 +137,16 @@ WAKE_MESSAGE_FILE="$(node -e '
     process.stdout.write(String(req.wake?.messageFile ?? ""))
   } catch { process.stdout.write("") }
 ' "$CLAIMED")"
+# How the cookie was prepared at filing time (minted / verified-existing-jar /
+# reused-unverified / unavailable). Only used to make a skipped or failed wake
+# explain itself — it never changes the restart status.
+WAKE_COOKIE_STATE="$(node -e '
+  const fs = require("fs")
+  try {
+    const req = JSON.parse(fs.readFileSync(process.argv[1], "utf8"))
+    process.stdout.write(String(req.wake?.cookieState ?? ""))
+  } catch { process.stdout.write("") }
+' "$CLAIMED")"
 
 mkdir -p "$LOG_DIR"
 RUN_LOG="$LOG_DIR/prod-restart-$(date +%Y%m%d-%H%M%S).log"
@@ -151,10 +161,10 @@ if DSH_WEB_SERVICE_LABEL="$LABEL" "$PROD_RESTART_SH" >"$RUN_LOG" 2>&1; then
           --wait-seconds "$WAKE_WAIT_SECONDS" >>"$RUN_LOG" 2>&1; then
         WAKE_NOTE="; wake delivered to $WAKE_SESSION_ID"
       else
-        WAKE_NOTE="; wake FAILED for $WAKE_SESSION_ID (see $RUN_LOG) — resume the session manually with scripts/wake-session.sh"
+        WAKE_NOTE="; wake FAILED for $WAKE_SESSION_ID (cookie state: ${WAKE_COOKIE_STATE:-unknown}, see $RUN_LOG) — resume manually with scripts/wake-session.sh --session-id $WAKE_SESSION_ID --message-file $WAKE_MESSAGE_FILE"
       fi
     else
-      WAKE_NOTE="; wake skipped for $WAKE_SESSION_ID (missing message file, cookie jar, or $WAKE_SESSION_SH)"
+      WAKE_NOTE="; wake skipped for $WAKE_SESSION_ID (missing message file, cookie jar, or $WAKE_SESSION_SH; cookie state: ${WAKE_COOKIE_STATE:-unknown})"
     fi
   fi
   finish ok "production restarted; log: $RUN_LOG$WAKE_NOTE"

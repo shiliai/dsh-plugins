@@ -16,11 +16,18 @@
 # after the restarted host passes its health check — no pre-armed cron and no
 # guessed timestamps (both have failed in practice; the cron race killed the
 # requesting turn before the job could be created). The script durably copies
-# the wake message into the workflow dir and mints the wake cookie jar BEFORE
+# the wake message into the workflow dir and prepares the wake cookie jar BEFORE
 # filing the request, so the doomed host dying mid-turn loses nothing:
 #
 #   scripts/prod-restart-request.sh "reason…" \
 #     --wake-session session-… --wake-message-file /tmp/wake.md
+#
+# Cookie preparation is best-effort and NEVER blocks filing. A host that does
+# not answer HTTP is often exactly the reason for the restart, and refusing to
+# file would strand the channel: an existing jar is reused as-is (the signed
+# cookie survives restarts — its HMAC secret is durable in .credentials.yaml),
+# and a failed mint only degrades the wake, which the watcher reports as
+# "wake FAILED" without flipping the restart status.
 #
 # Fire-and-forget: after the request is filed, THIS host may be replaced at
 # any moment. After it comes back (the wake message is delivered
@@ -63,29 +70,66 @@ if { [ -n "$WAKE_SESSION_ID" ] && [ -z "$WAKE_MESSAGE_FILE" ]; } || { [ -z "$WAK
   exit 2
 fi
 REASON="${REASON_ARGS[*]:-manual restart request}"
+WAKE_COOKIE_STATE=""   # verified-existing-jar | reused-unverified | minted | unavailable
 
 if [ -n "$WAKE_SESSION_ID" ]; then
   case "$WAKE_SESSION_ID" in session-*) ;; *) echo "prod-restart-request.sh: --wake-session must look like session-…" >&2; exit 2 ;; esac
   [ -f "$WAKE_MESSAGE_FILE" ] || { echo "prod-restart-request.sh: wake message file not found: $WAKE_MESSAGE_FILE" >&2; exit 2; }
-  # Mint the wake cookie NOW, from the launch token in the prod stdout log —
-  # after the restart the old token is gone and the doomed host cannot mint.
-  TOKEN_LINE="$(grep -o 'token=[A-Za-z0-9_-]*' "$PROD_STDOUT_LOG" 2>/dev/null | tail -1 || true)"
-  if [ -z "$TOKEN_LINE" ]; then
-    echo "prod-restart-request.sh: no launch token found in $PROD_STDOUT_LOG; cannot mint the wake cookie." >&2
-    echo "  Mint it manually (curl -s -c $COOKIE_JAR -o /dev/null \"$PROD_BASE/?token=<token>\") and re-run." >&2
-    exit 1
-  fi
-  CODE="$(curl -s -o /dev/null -w '%{http_code}' -c "$COOKIE_JAR" "$PROD_BASE/?token=${TOKEN_LINE#token=}")"
-  if [ "$CODE" != "200" ] && [ "$CODE" != "303" ]; then
-    echo "prod-restart-request.sh: cookie mint against $PROD_BASE returned $CODE; aborting without filing." >&2
-    exit 1
-  fi
-  # Durable copy of the wake message (the original may live in /tmp and the
-  # requesting host is about to die; nothing here outlives the restart unless
-  # it is inside $DIR).
+
+  # Durable copy of the wake message FIRST. The original may live in /tmp and the
+  # requesting host is about to die; nothing here outlives the restart unless it
+  # is inside $DIR. This must happen before any cookie work, so a degraded wake
+  # still leaves the manual fallback with the message in hand.
   TMP_MSG="$DIR/wake-message.txt.tmp.$$"
   cat "$WAKE_MESSAGE_FILE" > "$TMP_MSG"
   mv "$TMP_MSG" "$WAKE_MESSAGE_COPY"
+
+  # Cookie preparation is best-effort: it can degrade, but it must not stop the
+  # request from being filed (a host that does not answer HTTP is frequently the
+  # reason for the restart). The signed cookie survives restarts — its HMAC
+  # secret is durable in .credentials.yaml — so an existing jar is reusable.
+  if [ -f "$COOKIE_JAR" ] && grep -q 'dsh-auth' "$COOKIE_JAR" 2>/dev/null; then
+    # Netscape jars write HttpOnly cookies as "#HttpOnly_…" lines, so the cookie
+    # line is not distinguishable from a comment by anchoring on '^#'.
+    # curl still writes %{http_code} (000) on a failed request: use `|| true`,
+    # never `|| echo 000` — that appended a second 000 and broke the compare.
+    CODE="$(curl -s -o /dev/null -w '%{http_code}' -b "$COOKIE_JAR" -m 5 "$PROD_BASE/" || true)"
+    [ -n "$CODE" ] || CODE="000"
+    if [ "$CODE" = "200" ] || [ "$CODE" = "303" ]; then
+      WAKE_COOKIE_STATE="verified-existing-jar"
+    elif [ "$CODE" = "401" ] || [ "$CODE" = "000" ]; then
+      # Expired or unreachable: keep the jar, and mint only if a token is found.
+      WAKE_COOKIE_STATE="reused-unverified"
+      echo "prod-restart-request.sh: existing cookie jar kept (host returned $CODE); wake may fail at delivery time." >&2
+    else
+      echo "prod-restart-request.sh: existing jar returned $CODE; trying a fresh mint." >&2
+    fi
+  fi
+
+  if [ -z "$WAKE_COOKIE_STATE" ]; then
+    # Mint NOW, from the launch token in the prod stdout log — after the restart
+    # the old token is gone and the doomed host cannot mint. The last match wins:
+    # the log rotates per restart, so an older token in the same file is stale.
+    TOKEN_LINE="$(grep -o 'token=[A-Za-z0-9_-]*' "$PROD_STDOUT_LOG" 2>/dev/null | tail -1 || true)"
+    if [ -z "$TOKEN_LINE" ]; then
+      WAKE_COOKIE_STATE="unavailable"
+      echo "prod-restart-request.sh: no launch token found in $PROD_STDOUT_LOG; cannot mint the wake cookie." >&2
+      echo "  Request is still filed; the wake will be reported as skipped/FAILED. Manual fallback:" >&2
+      echo "  mint a jar on the new host and run scripts/wake-session.sh with $WAKE_MESSAGE_COPY." >&2
+    else
+      CODE="$(curl -s -o /dev/null -w '%{http_code}' -c "$COOKIE_JAR" -m 10 "$PROD_BASE/?token=${TOKEN_LINE#token=}" || true)"
+      [ -n "$CODE" ] || CODE="000"
+      if [ "$CODE" = "200" ] || [ "$CODE" = "303" ]; then
+        WAKE_COOKIE_STATE="minted"
+      else
+        # Unreachable host: the request is still worth filing. If a jar already
+        # exists it stays in play; otherwise the wake degrades to a loud note.
+        WAKE_COOKIE_STATE="unavailable"
+        echo "prod-restart-request.sh: cookie mint against $PROD_BASE returned $CODE (host may be down)." >&2
+        echo "  Request is still filed; the wake is armed only if $COOKIE_JAR holds a usable cookie." >&2
+      fi
+    fi
+  fi
 fi
 
 if [ -f "$REQUEST" ] || [ -f "$CLAIMED" ]; then
@@ -102,16 +146,18 @@ fi
 
 TMP="$REQUEST.tmp.$$"
 node -e '
-  const [requestedBy, reason, wakeSessionId, wakeMessageFile] = process.argv.slice(1)
+  const [requestedBy, reason, wakeSessionId, wakeMessageFile, wakeCookieState] = process.argv.slice(1)
   const request = {
     nonce: require("node:crypto").randomUUID(),
     requestedAt: Date.now(),
     requestedBy,
     reason,
   }
-  if (wakeSessionId) request.wake = { sessionId: wakeSessionId, messageFile: wakeMessageFile }
+  if (wakeSessionId) {
+    request.wake = { sessionId: wakeSessionId, messageFile: wakeMessageFile, cookieState: wakeCookieState || "unavailable" }
+  }
   process.stdout.write(JSON.stringify(request, null, 2) + "\n")
-' "${DSH_SESSION_ID:-external}" "$REASON" "$WAKE_SESSION_ID" "$WAKE_MESSAGE_COPY" > "$TMP"
+' "${DSH_SESSION_ID:-external}" "$REASON" "$WAKE_SESSION_ID" "$WAKE_MESSAGE_COPY" "$WAKE_COOKIE_STATE" > "$TMP"
 # Atomic create: a concurrent request loses the race instead of silently
 # overwriting the pending one (mv would clobber).
 if ! ln "$TMP" "$REQUEST" 2>/dev/null; then
@@ -125,6 +171,16 @@ echo "prod-restart-request.sh: restart request filed ($REQUEST)."
 if [ -n "$WAKE_SESSION_ID" ]; then
   echo "  Integrated wake armed: after the restart passes its health check, the"
   echo "  watcher resumes $WAKE_SESSION_ID with $WAKE_MESSAGE_COPY (cookie: $COOKIE_JAR)."
+  case "$WAKE_COOKIE_STATE" in
+    unavailable)
+      echo "  Wake cookie state: unavailable — the wake will be recorded as skipped." >&2
+      echo "  On the new host: mint a jar, then run scripts/wake-session.sh with $WAKE_MESSAGE_COPY." ;;
+    reused-unverified)
+      echo "  Wake cookie state: reused-unverified (host was unreachable or the jar"
+      echo "  returned 401 at filing time); delivery may still succeed on the new host." ;;
+    *)
+      echo "  Wake cookie state: $WAKE_COOKIE_STATE." ;;
+  esac
 fi
 echo "  The test-side watcher executes it within ~60s; this host may restart any"
 echo "  moment after that. Check $DIR/last-result.json once production is back."

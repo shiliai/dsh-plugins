@@ -89,9 +89,12 @@
   - **Integrated wake (recommended, default)**: file the restart with
     `scripts/prod-restart-request.sh "reason" --wake-session session-…
     --wake-message-file <path>`. The script durably copies the wake message
-    into the workflow dir and mints the cookie jar BEFORE filing (token from
-    the prod stdout log; minting fails loudly instead of filing half-armed),
-    and the test-side watcher runs `scripts/wake-session.sh` against the new
+    into the workflow dir and prepares the cookie jar BEFORE filing (token from
+    the prod stdout log). Cookie prep is best-effort and must never block filing:
+    an existing jar is reused (the signed cookie survives restarts), and a failed
+    mint only degrades the wake — refusing to file for an unresponsive host would
+    strand the channel, and that host is often the very reason for the restart).
+    The test-side watcher then runs `scripts/wake-session.sh` against the new
     host right after its health check passes. The wake outcome is appended to
     `last-result.json` (`wake delivered to …` / `wake FAILED …`); a wake
     failure never flips the restart status. Do NOT pre-arm dsh-cron oneshot
@@ -132,7 +135,12 @@ the sandbox absorbs every cold boot.
   `$DSH_DEV_HOME` (default `~/.local/dsh-home-dev`, never the production
   `DSH_HOME`), trims the bundle list to base + web + the target plugins, and
   injects the dev overlay (hmr root -> worktree `lib`, installed copy disabled,
-  worktree build inserted with `config: {}`). It resolves the dsh binary from
+  worktree build inserted carrying that plugin's own patch-row `config:` block,
+  falling back to `config: {}` when it has none). A patch row does not feed an
+  inserted entry, so a plugin that requires a config key must have it carried —
+  otherwise it throws at boot and launchd KeepAlive turns it into a respawn loop
+  (dsh-obsidian >= 0.6.0 needs `vaultRoot`; the generator copies the row's config
+  verbatim, so `!!js` env-derived values survive). It resolves the dsh binary from
   the *running production host* so dev/prod run the same dsh version (if the
   production host is unreachable it falls back to the newest dsh-cli release
   and says so — version parity is then not guaranteed). The home/port guards
