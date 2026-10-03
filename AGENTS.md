@@ -82,26 +82,42 @@
     (kickstart of `io.shiliai.dsh-dev-5280`; the tool result persists on the
     surviving production host). The test env is disposable; its sessions and
     cron jobs do not survive a `dev-sandbox.sh` reassembly.
-- Waking a session after a restart (test → prod, verified 2026-09-22): a
-  restart interrupts the in-flight turn and the GUI session waits for someone
-  to re-issue it. The resident test host can resume it unattended:
-  1. BEFORE the restart, mint a browser-session cookie on the target host:
-     `curl -s -c <jar> -o /dev/null "http://127.0.0.1:3280/?token=<launch-token>"`
-     (the launch token is in the host's stdout log). The signed cookie stays
-     valid across restarts — its HMAC secret is durable in
-     `.credentials.yaml`, and only the per-process launch token rotates.
-  2. On the test host, arm a dsh-cron oneshot command job that runs
-     `scripts/wake-session.sh --base http://127.0.0.1:3280 --cookie-jar <jar>
-     --session-id session-… --message "…"` — it polls until the port is back,
-     then POSTs `/api/session/prompt` with `{args: {request: {…, mode:
-     'queue'}}}`; the RPC itself resumes the session and queues the message
-     as the next turn. Wire format notes: the endpoint lives in the URL path
-     (`/api/session/prompt`), the envelope is `{type:'client-request',
-     rpcId, method, payload}`, and typert wants the payload wrapped as
-     `{args: {<method-args>}}` with the call's single parameter named
-     (`request` for session/prompt).
-  The interrupted turn is never replayed — put the continuation context in
-  the wake message.
+- Waking a session after a restart (test → prod; integrated flow verified
+  2026-10-03): a restart interrupts the in-flight turn and the GUI session
+  waits for someone to re-issue it. The interrupted turn is never replayed —
+  put the continuation context in the wake message.
+  - **Integrated wake (recommended, default)**: file the restart with
+    `scripts/prod-restart-request.sh "reason" --wake-session session-…
+    --wake-message-file <path>`. The script durably copies the wake message
+    into the workflow dir and mints the cookie jar BEFORE filing (token from
+    the prod stdout log; minting fails loudly instead of filing half-armed),
+    and the test-side watcher runs `scripts/wake-session.sh` against the new
+    host right after its health check passes. The wake outcome is appended to
+    `last-result.json` (`wake delivered to …` / `wake FAILED …`); a wake
+    failure never flips the restart status. Do NOT pre-arm dsh-cron oneshot
+    wake jobs with guessed timestamps for this — the requesting turn is
+    killed by the restart before it can finish creating the job, and a stale
+    timestamp is silently dropped by misfire-skip (both bit on 2026-10-03).
+  - **Manual fallback** (watcher too old to know `wake`, or wake failed):
+    1. Mint a browser-session cookie on the target host:
+       `curl -s -c <jar> -o /dev/null "http://127.0.0.1:3280/?token=<launch-token>"`
+       (the launch token is in the host's stdout log). The signed cookie
+       stays valid across restarts — its HMAC secret is durable in
+       `.credentials.yaml`, and only the per-process launch token rotates.
+    2. Run `scripts/wake-session.sh --base http://127.0.0.1:3280 --cookie-jar
+       <jar> --session-id session-… --message "…"` (or `--message-file
+       <path>`): it polls until the port is back, then POSTs
+       `/api/session/prompt` with `{args: {request: {…, mode: 'queue'}}}`;
+       the RPC itself resumes the session and queues the message as the next
+       turn. Wire format notes: the endpoint lives in the URL path
+       (`/api/session/prompt`), the envelope is `{type:'client-request',
+       rpcId, method, payload}`, and typert wants the payload wrapped as
+       `{args: {<method-args>}}` with the call's single parameter named
+       (`request` for session/prompt).
+  - Unattended post-restart verification: a session woken this way IS the
+    verification step (read `last-result.json`, check the listener pid,
+    report). A separate verify agent cannot write outside its workspace
+    sandbox — keep the verification in the woken session.
 
 ## Local development workflow: dev sandbox (5280) + launchd production (3280)
 

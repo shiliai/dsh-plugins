@@ -17,11 +17,12 @@
 #     --cookie-jar ~/.local/state/dsh-dev-workflow/prod-cookies.txt \
 #     --session-id session-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX \
 #     --message "继续上一步:……" [--wait-seconds 1500]
+#   (or --message-file <path> instead of --message; exactly one is required)
 #
 # The prompt is admitted with mode 'queue': the RPC itself resumes the session
 # on the new host and queues the message as the next turn. A turn that was in
 # flight when the old host died is NOT replayed — carry the continuation
-# context in --message.
+# context in --message / --message-file.
 #
 # Exit status: 0 when the host accepted the prompt; 1 on timeout or rejection.
 set -euo pipefail
@@ -30,9 +31,10 @@ BASE=""
 COOKIE_JAR=""
 SESSION_ID=""
 MESSAGE=""
+MESSAGE_FILE=""
 WAIT_SECONDS=1500
 
-usage() { sed -n '2,27p' "$0"; }
+usage() { sed -n '2,30p' "$0"; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --base) [ $# -ge 2 ] || { echo "wake-session.sh: --base needs a value" >&2; exit 2; }
@@ -43,18 +45,29 @@ while [ $# -gt 0 ]; do
       SESSION_ID="$2"; shift 2 ;;
     --message) [ $# -ge 2 ] || { echo "wake-session.sh: --message needs a value" >&2; exit 2; }
       MESSAGE="$2"; shift 2 ;;
+    --message-file) [ $# -ge 2 ] || { echo "wake-session.sh: --message-file needs a value" >&2; exit 2; }
+      MESSAGE_FILE="$2"; shift 2 ;;
     --wait-seconds) [ $# -ge 2 ] || { echo "wake-session.sh: --wait-seconds needs a value" >&2; exit 2; }
       WAIT_SECONDS="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "wake-session.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
-for required in BASE COOKIE_JAR SESSION_ID MESSAGE; do
+for required in BASE COOKIE_JAR SESSION_ID; do
   if [ -z "${!required}" ]; then
     echo "wake-session.sh: --$(echo "$required" | tr '_-' 'a-z-' | tr 'A-Z' 'a-z') is required" >&2
     exit 2
   fi
 done
+if [ -n "$MESSAGE" ] && [ -n "$MESSAGE_FILE" ]; then
+  echo "wake-session.sh: --message and --message-file are mutually exclusive" >&2
+  exit 2
+fi
+if [ -n "$MESSAGE_FILE" ]; then
+  [ -f "$MESSAGE_FILE" ] || { echo "wake-session.sh: message file not found: $MESSAGE_FILE" >&2; exit 2; }
+  MESSAGE="$(cat "$MESSAGE_FILE")"
+fi
+[ -n "$MESSAGE" ] || { echo "wake-session.sh: --message or --message-file is required" >&2; exit 2; }
 [ -f "$COOKIE_JAR" ] || { echo "wake-session.sh: cookie jar not found: $COOKIE_JAR (mint it before the restart — see header)" >&2; exit 2; }
 case "$SESSION_ID" in session-*) ;; *) echo "wake-session.sh: session id must look like session-…" >&2; exit 2 ;; esac
 

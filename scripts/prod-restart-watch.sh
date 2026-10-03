@@ -31,6 +31,12 @@ LABEL="${DSH_WEB_SERVICE_LABEL:-io.shiliai.dsh-remote-mac}"
 # dev-service.sh install drops next to it in ~/.local/dsh-dev-service/ (the
 # checkout may be a worktree that gets deleted after merge).
 PROD_RESTART_SH="${PROD_RESTART_SH:-$(cd "$(dirname "$0")" && pwd)/prod-restart.sh}"
+# Integrated wake: after a successful restart, resume the session named in
+# the request's `wake` spec (see prod-restart-request.sh). The wake runs on
+# this (test-side) process — the doomed production host is already gone.
+WAKE_SESSION_SH="${WAKE_SESSION_SH:-$(cd "$(dirname "$0")" && pwd)/wake-session.sh}"
+PROD_BASE="${DSH_PROD_BASE:-http://127.0.0.1:3280}"
+WAKE_WAIT_SECONDS="${DSH_WAKE_WAIT_SECONDS:-900}"
 
 # Reclaim a stale in-progress request BEFORE anything else, and even when no
 # new request is pending, so a stranded CLAIMED never blocks the channel.
@@ -113,11 +119,45 @@ fi
 if [ ! -x "$PROD_RESTART_SH" ]; then
   finish failed "prod-restart.sh not found at $PROD_RESTART_SH (reinstall the watcher: scripts/dev-service.sh install)"
 fi
+
+# Integrated wake spec, read from the claim before finish() deletes it. A
+# wake failure must never flip the restart status — the restart succeeded;
+# the note only records that resuming the session needs manual action.
+WAKE_SESSION_ID="$(node -e '
+  const fs = require("fs")
+  try {
+    const req = JSON.parse(fs.readFileSync(process.argv[1], "utf8"))
+    process.stdout.write(String(req.wake?.sessionId ?? ""))
+  } catch { process.stdout.write("") }
+' "$CLAIMED")"
+WAKE_MESSAGE_FILE="$(node -e '
+  const fs = require("fs")
+  try {
+    const req = JSON.parse(fs.readFileSync(process.argv[1], "utf8"))
+    process.stdout.write(String(req.wake?.messageFile ?? ""))
+  } catch { process.stdout.write("") }
+' "$CLAIMED")"
+
 mkdir -p "$LOG_DIR"
 RUN_LOG="$LOG_DIR/prod-restart-$(date +%Y%m%d-%H%M%S).log"
 echo "prod-restart-watch.sh: executing restart request (log: $RUN_LOG)"
 if DSH_WEB_SERVICE_LABEL="$LABEL" "$PROD_RESTART_SH" >"$RUN_LOG" 2>&1; then
-  finish ok "production restarted; log: $RUN_LOG"
+  WAKE_NOTE=""
+  if [ -n "$WAKE_SESSION_ID" ] && [ -n "$WAKE_MESSAGE_FILE" ]; then
+    if [ -f "$WAKE_MESSAGE_FILE" ] && [ -f "$DIR/prod-cookies.txt" ] && [ -x "$WAKE_SESSION_SH" ]; then
+      echo "prod-restart-watch.sh: delivering integrated wake to $WAKE_SESSION_ID" >>"$RUN_LOG"
+      if "$WAKE_SESSION_SH" --base "$PROD_BASE" --cookie-jar "$DIR/prod-cookies.txt" \
+          --session-id "$WAKE_SESSION_ID" --message-file "$WAKE_MESSAGE_FILE" \
+          --wait-seconds "$WAKE_WAIT_SECONDS" >>"$RUN_LOG" 2>&1; then
+        WAKE_NOTE="; wake delivered to $WAKE_SESSION_ID"
+      else
+        WAKE_NOTE="; wake FAILED for $WAKE_SESSION_ID (see $RUN_LOG) — resume the session manually with scripts/wake-session.sh"
+      fi
+    else
+      WAKE_NOTE="; wake skipped for $WAKE_SESSION_ID (missing message file, cookie jar, or $WAKE_SESSION_SH)"
+    fi
+  fi
+  finish ok "production restarted; log: $RUN_LOG$WAKE_NOTE"
 else
   finish failed "prod-restart.sh exited $?, log: $RUN_LOG"
 fi
