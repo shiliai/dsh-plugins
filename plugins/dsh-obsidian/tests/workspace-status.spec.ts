@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { inferWorkspaceState, samePath, vaultWorkspaceTitle, type WorkspaceSummary } from '../src/client/workspace-status.ts'
+import { bindFace, inferWorkspaceState, samePath, vaultWorkspaceTitle, type WorkspaceSummary } from '../src/client/workspace-status.ts'
 
 const vaultWorkspace = (overrides: Partial<WorkspaceSummary> = {}): WorkspaceSummary => ({
   workspaceId: 'ws-vault',
@@ -51,5 +51,27 @@ describe('vaultWorkspaceTitle', () => {
   })
   it('keeps a free base untouched', () => {
     expect(vaultWorkspaceTitle('/a/notes', ['Obsidian · other'])).toBe('Obsidian · notes')
+  })
+})
+
+describe('bindFace', () => {
+  it('keeps `this` bound for class-style host faces', () => {
+    const face = {
+      subscribe: (_listener: () => void) => () => {},
+      getSnapshot(this: unknown): string { return this === undefined ? 'unbound' : 'bound' },
+    }
+    // A detached reference — what useSyncExternalStore received before the fix —
+    // loses `this` and throws inside host faces like dsh-api-workspace-controller
+    // (`this.refreshSnapshot()`), crashing the whole slot entry. The wrapper must
+    // preserve the binding.
+    const detached = face.getSnapshot as () => string
+    expect(detached()).toBe('unbound')
+    expect(bindFace(face, 'fallback').getSnapshot()).toBe('bound')
+  })
+
+  it('falls back to the empty snapshot when the host face is absent', () => {
+    const bound = bindFace(undefined, 'fallback')
+    expect(bound.getSnapshot()).toBe('fallback')
+    expect(typeof bound.subscribe(() => {})).toBe('function')
   })
 })

@@ -32,6 +32,21 @@ const NOOP_SUBSCRIBE = (): (() => void) => () => {}
 const EMPTY_SESSIONS = { current: undefined, byId: {} as Record<string, { cwd?: string; blank?: boolean; displayTitle?: string; title?: string }> }
 const EMPTY_WORKSPACES: { items?: readonly WorkspaceSummary[] } = {}
 
+/** A host registry face as useSyncExternalStore consumes it. */
+type Observable<S> = { subscribe(listener: () => void): () => void; getSnapshot(): S }
+
+/**
+ * Bind a face before handing it to useSyncExternalStore — never pass a bare
+ * method reference. Host faces are class instances whose getSnapshot() reads
+ * `this` (dsh-api-workspace-controller's `this.refreshSnapshot()`), so an
+ * unbound call throws inside the store and takes the whole slot entry down:
+ * the footer action then never renders (observed on 0.1.2-rc.1 hosts).
+ */
+export function bindFace<S>(face: Observable<S> | undefined, fallback: S): Observable<S> {
+  if (face === undefined) return { subscribe: NOOP_SUBSCRIBE, getSnapshot: () => fallback }
+  return { subscribe: listener => face.subscribe(listener), getSnapshot: () => face.getSnapshot() }
+}
+
 /**
  * Path comparison for "does this conversation write into the vault".
  * Case-insensitive (macOS default filesystem) with trailing-slash trimming.
@@ -94,16 +109,11 @@ export interface WorkspaceStatus {
  * (host/registry differences) by reading `undefined` snapshots.
  */
 export function useWorkspaceStatus(source: WorkspaceStatusSource | undefined, vaultRoot: string): WorkspaceStatus {
-  const sessions = useSyncExternalStore(
-    source?.sessions?.subscribe ?? NOOP_SUBSCRIBE,
-    source?.sessions?.getSnapshot ?? (() => EMPTY_SESSIONS),
-    source?.sessions?.getSnapshot ?? (() => EMPTY_SESSIONS),
-  )
-  const workspaces = useSyncExternalStore(
-    source?.workspaces?.subscribe ?? NOOP_SUBSCRIBE,
-    source?.workspaces?.getSnapshot ?? (() => EMPTY_WORKSPACES),
-    source?.workspaces?.getSnapshot ?? (() => EMPTY_WORKSPACES),
-  )
+  const sessionsFace = bindFace(source?.sessions, EMPTY_SESSIONS)
+  const workspacesFace = bindFace(source?.workspaces, EMPTY_WORKSPACES)
+
+  const sessions = useSyncExternalStore(sessionsFace.subscribe, sessionsFace.getSnapshot, sessionsFace.getSnapshot)
+  const workspaces = useSyncExternalStore(workspacesFace.subscribe, workspacesFace.getSnapshot, workspacesFace.getSnapshot)
   const items = workspaces.items
   const currentSessionId = sessions?.current
   const session = currentSessionId !== undefined ? sessions?.byId[currentSessionId] : undefined
