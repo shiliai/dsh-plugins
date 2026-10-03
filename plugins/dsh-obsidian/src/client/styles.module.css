@@ -392,14 +392,60 @@
 .workbenchTab:hover, .workbenchTab.selected { background: var(--dsw-alias-interactive-bg-hover, #edf1ef); color: var(--dsw-alias-label-primary, #1d2420); }
 .workbenchResize { position: absolute; z-index: 2; top: 0; right: -5px; bottom: 0; width: 10px; cursor: col-resize; pointer-events: auto; }
 .workbenchChatResize { position: fixed; z-index: 2; width: 10px; cursor: col-resize; pointer-events: auto; }
-.workbenchChrome { position: fixed; top: 7px; right: 8px; display: flex; gap: 3px; pointer-events: auto; }
-.workbenchChrome .iconButton { background: var(--dsw-alias-bg-layer-1, #fff); border: 1px solid var(--dsw-alias-border-l2, #d9dedb); }
 .workbenchPaneMenu { position: absolute; top: 32px; right: 0; min-width: 170px; padding: 6px; border: 1px solid var(--dsw-alias-border-l2, #d9dedb); border-radius: 6px; background: var(--dsw-alias-bg-layer-1, #fff); box-shadow: 0 5px 18px rgba(21, 31, 26, .14); }
 .workbenchPaneMenuItem { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 7px; border-radius: 4px; color: var(--dsw-alias-label-primary, #1d2420); font-size: 12px; cursor: pointer; }
 .workbenchPaneMenuItem:hover { background: var(--dsw-alias-interactive-bg-hover, #edf1ef); }
 .workbenchPaneMenuItem input { margin: 0; accent-color: #2e7d62; }
-.workbenchEmpty { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 16px; border: 1px solid var(--dsw-alias-border-l2, #d9dedb); border-radius: 6px; background: var(--dsw-alias-bg-layer-1, #fff); color: var(--dsw-alias-label-secondary, #66706a); font-size: 12px; pointer-events: auto; }
 .workbenchRoot .modalOverlay { pointer-events: auto; z-index: 60; }
+
+/* ── Workbench header bar (mode id / pane segmented control / chip / exit) ── */
+
+.workbenchBar { position: absolute; inset: 0; height: 100%; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: var(--dsw-alias-bg-layer-1, #fff); border: 1px solid var(--dsw-alias-border-l2, #d9dedb); border-radius: 6px; pointer-events: auto; }
+.workbenchMode { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; border: 0; border-radius: 5px; background: transparent; color: var(--dsw-alias-label-primary, #1d2420); font: inherit; font-size: 12.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.workbenchMode:hover { background: var(--dsw-alias-interactive-bg-hover, #edf1ef); }
+.workbenchModeGlyph { color: #2e7d62; }
+.workbenchVault { color: var(--dsw-alias-label-secondary, #66706a); font-weight: 400; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.workbenchSeg { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--dsw-alias-border-l2, #d9dedb); border-radius: 7px; background: var(--dsw-alias-bg-base, #fbfcfb); }
+.workbenchSegBtn { border: 0; border-radius: 5px; padding: 3px 9px; background: transparent; color: var(--dsw-alias-label-secondary, #66706a); font: inherit; font-size: 12px; cursor: pointer; }
+.workbenchSegBtn[aria-pressed="true"] { background: var(--dsw-alias-bg-layer-1, #fff); color: var(--dsw-alias-label-primary, #1d2420); font-weight: 600; box-shadow: 0 1px 2px rgba(21, 31, 26, .12), inset 0 0 0 1px var(--dsw-alias-border-l2, #d9dedb); }
+.workbenchExit { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; padding: 4px 11px; border: 1px solid var(--dsw-alias-border-l2, #d9dedb); border-radius: 7px; background: var(--dsw-alias-bg-layer-1, #fff); color: var(--dsw-alias-label-primary, #1d2420); font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.workbenchExit:hover { background: var(--dsw-alias-interactive-bg-hover, #edf1ef); }
+.workbenchExit svg { color: var(--dsw-alias-label-secondary, #66706a); }
+.iconButtonActive { background: var(--dsw-alias-interactive-bg-hover, #e7f0ec); color: #2e7d62; box-shadow: inset 0 0 0 1px #bcd6cb; }
+
+/* ── Workspace chip ────────────────────────────────────────────── */
+
+.chipWrap { position: relative; margin-left: 4px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; padding: 3px 10px; border-radius: 999px; font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.chip > span { overflow: hidden; text-overflow: ellipsis; }
+.chipDot { width: 7px; height: 7px; border-radius: 50%; background: #2e7d62; }
+.chipOk { border: 1px solid #bcd6cb; background: #e7f0ec; color: #235c49; }
+.chipWarn { border: 1px solid #ecd9ae; background: #fdf4e3; color: #9a6b15; font-weight: 600; }
+.chipUnknown { border: 1px solid var(--dsw-alias-border-l2, #d9dedb); background: var(--dsw-alias-bg-base, #f2f4f3); color: var(--dsw-alias-label-secondary, #66706a); cursor: default; }
+.chipPopover { position: absolute; top: 30px; left: 0; z-index: 70; width: 330px; display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--dsw-alias-border-l2, #d9dedb); border-radius: 10px; background: var(--dsw-alias-bg-layer-1, #fff); box-shadow: 0 10px 32px rgba(21, 31, 26, .16); font-size: 12px; }
+.chipRow { display: flex; gap: 8px; min-width: 0; }
+.chipRow > span:first-child { flex: 0 0 76px; color: var(--dsw-alias-label-secondary, #66706a); }
+.chipRow > span:last-child, .chipRow > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
+.chipWarnLine { padding: 7px 9px; border: 1px solid #ecd9ae; border-radius: 7px; background: #fdf4e3; color: #9a6b15; font-size: 11.5px; line-height: 1.6; }
+.chipResultOk { color: #235c49; font-size: 11.5px; }
+.chipResultError { color: var(--dsw-alias-state-error-secondary, #a52f2f); font-size: 11.5px; }
+.chipActions { display: flex; align-items: center; gap: 8px; }
+.chipPrimary { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border: 0; border-radius: 7px; background: #2e7d62; color: #fff; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.chipPrimary:disabled { opacity: .6; }
+.chipGhost { padding: 5px 12px; border: 1px solid var(--dsw-alias-border-l2, #d9dedb); border-radius: 7px; background: var(--dsw-alias-bg-layer-1, #fff); color: var(--dsw-alias-label-primary, #1d2420); font: inherit; font-size: 12px; cursor: pointer; }
+.chipHint { color: var(--dsw-alias-label-secondary, #66706a); font-size: 11px; line-height: 1.6; }
+
+/* ── Path A restore bar / Path B confirm bubble ────────────────── */
+
+.workbenchRestoreBar { position: fixed; z-index: 20; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 14px; border: 1px solid var(--dsw-alias-border-l2, #d9dedb); border-radius: 8px; background: var(--dsw-alias-bg-layer-1, #fff); box-shadow: 0 6px 20px rgba(21, 31, 26, .12); color: var(--dsw-alias-label-secondary, #66706a); font-size: 12px; pointer-events: auto; }
+.workbenchConfirm { position: fixed; z-index: 70; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--dsw-alias-border-l2, #d9dedb); border-radius: 8px; background: var(--dsw-alias-bg-layer-1, #fff); box-shadow: 0 8px 24px rgba(21, 31, 26, .16); color: var(--dsw-alias-label-primary, #1d2420); font-size: 12px; pointer-events: auto; }
+.workbenchConfirmActions { display: flex; gap: 6px; }
+
+/* ── Exit toast (footer-level, survives workbench unmount) ─────── */
+
+.exitToast { position: fixed; z-index: 80; left: 50%; bottom: 96px; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; max-width: min(620px, calc(100vw - 48px)); padding: 10px 14px; border-radius: 9px; background: #222b26; color: #f4f7f5; font-size: 12.5px; line-height: 1.6; box-shadow: 0 8px 24px rgba(21, 31, 26, .3); pointer-events: auto; }
+.exitToastSub { color: #aab8b0; }
+.exitToastAction { flex: none; padding: 3px 10px; border: 1px solid #4c5a52; border-radius: 6px; background: #2d3831; color: #d7e5dd; font: inherit; font-size: 12px; cursor: pointer; }
 
 /* ── Workbench quick-open (note picker) ─────────────────────────── */
 

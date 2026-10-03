@@ -54,7 +54,12 @@ declare module '@deepseek-ai/dsh-client-runtime/client' {
         subscribe(listener: () => void): () => void
         getSnapshot(): {
           current: string | undefined
-          byId: Record<string, { blank: boolean }>
+          /**
+           * Session rows carry `cwd` on hosts that expose the working
+           * directory (used by the workspace chip as its primary fact);
+           * absence degrades the chip to its group-membership fallback.
+           */
+          byId: Record<string, { blank: boolean; cwd?: string; displayTitle?: string; title?: string }>
         }
       }
       scope(id: string): import('@deepseek-ai/cordis').Context | undefined
@@ -89,6 +94,17 @@ declare module '@deepseek-ai/dsh-client-runtime/client' {
     workspaces: {
       create(input: { path: string }): Promise<{ workspaceId: string }>
       connectWorkspace(workspaceId: string): Promise<string>
+      rename(workspaceId: string, title: string): Promise<unknown>
+      /**
+       * The workspace projection feed (`WorkspaceListState`): `items` rows
+       * carry `path`, `title`, and `sessionIds`. Read via
+       * `useSyncExternalStore`-style subscribe/getSnapshot; absent on hosts
+       * that do not expose the list face.
+       */
+      list?: {
+        subscribe(listener: () => void): () => void
+        getSnapshot(): { items?: readonly import('./client/workspace-status.ts').WorkspaceSummary[] }
+      }
     }
     effect(disposer: () => (() => void), label: string): void
   }

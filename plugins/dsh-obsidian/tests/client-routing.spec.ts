@@ -26,11 +26,8 @@ describe('panelTargetFor', () => {
       effect() {},
     } as never)
 
-    const footer = registrations.find(registration => registration.name === 'sidebar.footer.action')
-    const openBrowser = footer?.inject?.().openBrowser as (() => void)
-    openBrowser()
-    const browser = registrations.find(registration => registration.name === 'sidebar.workspaces')
-    const store = browser?.inject?.().store as { openNote(path: string): Promise<void> }
+    const settings = registrations.find(registration => registration.name === 'settings.plugins.tab')
+    const store = settings?.inject?.().store as { openNote(path: string): Promise<void> }
     void store.openNote('Home.md')
     await Promise.resolve()
     expect(registrations.map(registration => registration.name)).toContain('conversation')

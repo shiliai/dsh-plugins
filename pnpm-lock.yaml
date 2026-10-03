@@ -11,6 +11,24 @@ importers:
 
   .: {}
 
+  packages/dsh-config-portability:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.3
+      '@types/react':
+        specifier: ~18.3.1
+        version: 18.3.1
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jiti@2.7.0)(yaml@2.9.0)
+
   packages/dsh-reading-core:
     devDependencies:
       '@types/node':

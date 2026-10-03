@@ -66,7 +66,26 @@ describe('VaultStore request generations', () => {
     await store.openNote('Projects/Roadmap.md', { allowDirty: true })
     expect(store.getSnapshot().active?.path).toBe('Projects/Roadmap.md')
     await store.openNote('Home.md', { allowDirty: true })
+    // Store-owned draft cache: the tab switch restores the retained draft…
+    expect(store.getSnapshot().draft).toBe('# Draft kept in tab')
+    // …and hasDirtyDrafts reflects the pending edit across surfaces.
+    expect(store.hasDirtyDrafts).toBe(true)
+  })
+
+  it('loads fresh content for a non-allowDirty open (discard flow)', async () => {
+    const api = apiWithNotes([Promise.resolve(home), Promise.resolve(roadmap), Promise.resolve(home), Promise.resolve(roadmap), Promise.resolve(home)])
+    const store = new VaultStore({ open() {}, close() {} }, api)
+    await store.openNote('Home.md')
+    store.setDraft('# Draft kept in tab')
+    await store.openNote('Projects/Roadmap.md', { allowDirty: true })
+    await store.openNote('Home.md')
+    // The plain open loads server content…
     expect(store.getSnapshot().draft).toBe(home.content)
+    // …while Home's earlier unsaved edits stay cached for a later allowDirty open.
+    expect(store.hasDirtyDrafts).toBe(true)
+    await store.openNote('Projects/Roadmap.md', { allowDirty: true })
+    await store.openNote('Home.md', { allowDirty: true })
+    expect(store.getSnapshot().draft).toBe('# Draft kept in tab')
   })
 
   it('keeps typing during a pending save and remains dirty after its completion', async () => {
