@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dsh-obsidian 0.9 设计原型 · 一键退出 与 工作区一致性</title>
+<style>
+  /* ── 设计 token(对齐宿主 --dsw-alias-*)────────────────────────── */
+  :root {
+    --bg-base: #fff;
+    --bg-layer-1: #fff;
+    --bg-hover: #edf1ef;
+    --border: #d9dedb;
+    --border-l1: #e5eae7;
+    --label: #1d2420;
+    --label-2nd: #66706a;
+    --accent: #2e7d62;
+    --accent-quiet: #e7f0ec;
+    --warn: #9a6b15;
+    --warn-bg: #fdf4e3;
+    --warn-border: #ecd9ae;
+    --ok-bg: #e7f0ec;
+    --ok-border: #bcd6cb;
+    --toast-bg: #222b26;
+    --code: #f3f5f4;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+    background: #f2f4f3; color: var(--label);
+    padding: 32px 24px 80px; display: flex; flex-direction: column; gap: 48px; align-items: center;
+  }
+  .page-title { font-size: 20px; font-weight: 700; }
+  .page-sub { font-size: 13px; color: var(--label-2nd); margin-top: 6px; text-align: center; line-height: 1.7; }
+  .board-wrap { width: 1120px; max-width: 100%; }
+  .board-label { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+  .board-label .tag { background: var(--accent); color: #fff; font-size: 12px; font-weight: 600; border-radius: 4px; padding: 2px 8px; }
+  .board-label h2 { font-size: 15px; }
+  .board-label span { font-size: 12px; color: var(--label-2nd); }
+
+  /* ── 浏览器窗框 ─────────────────────────────────────────────── */
+  .window { background: var(--bg-base); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; box-shadow: 0 8px 28px rgba(21,31,26,.08); }
+  .win-titlebar { height: 30px; background: #f7f8f7; border-bottom: 1px solid var(--border-l1); display: flex; align-items: center; padding: 0 12px; gap: 6px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #d3d9d6; }
+  .win-titlebar .addr { margin-left: 12px; font-size: 11px; color: var(--label-2nd); background: #fff; border: 1px solid var(--border-l1); border-radius: 5px; padding: 2px 14px; }
+
+  /* ── 宿主应用外壳 ───────────────────────────────────────────── */
+  .app { display: flex; height: 620px; }
+  .app-header { position: absolute; }
+  .main-col { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+  .host-header { height: 44px; border-bottom: 1px solid var(--border-l1); display: flex; align-items: center; padding: 0 16px; gap: 12px; font-size: 12px; color: var(--label-2nd); flex-shrink: 0; }
+  .host-header .mode { display: flex; align-items: center; gap: 5px; }
+  .host-header .session-log { margin-left: auto; border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 12px; color: var(--label); background: #fff; }
+
+  /* ── 侧边栏 ─────────────────────────────────────────────────── */
+  .sidebar { width: 232px; border-right: 1px solid var(--border-l1); display: flex; flex-direction: column; font-size: 12px; flex-shrink: 0; background: #fbfcfb; }
+  .side-brand { height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 14px; font-weight: 600; border-bottom: 1px solid var(--border-l1); }
+  .side-section { padding: 10px 14px 4px; color: var(--label-2nd); font-size: 11px; letter-spacing: .04em; }
+  .ws-group { margin: 2px 8px; border-radius: 6px; }
+  .ws-group .ws-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-weight: 600; border-radius: 6px; }
+  .ws-group .ws-head .chev { color: var(--label-2nd); font-size: 10px; }
+  .ws-group .ws-head .count { margin-left: auto; color: var(--label-2nd); font-weight: 400; font-size: 11px; }
+  .ws-group.active { background: var(--accent-quiet); outline: 1px solid var(--ok-border); }
+  .ws-row { display: flex; align-items: center; gap: 7px; padding: 5px 8px 5px 24px; color: var(--label); border-radius: 5px; }
+  .ws-row:hover { background: var(--bg-hover); }
+  .ws-row.current { background: #fff; outline: 1px solid var(--ok-border); font-weight: 600; }
+  .ws-row .dot-cur { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-left: auto; }
+  .side-footer { margin-top: auto; border-top: 1px solid var(--border-l1); padding: 8px; display: flex; gap: 6px; }
+  .footer-btn { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 6px; color: var(--label-2nd); }
+  .footer-btn.active { background: var(--accent-quiet); color: var(--accent); outline: 1px solid var(--ok-border); font-weight: 600; }
+
+  /* ── 对话区(工作台底下/退出后的底层)───────────────────────── */
+  .conversation { flex: 1; padding: 24px 48px; overflow: hidden; font-size: 13px; line-height: 1.8; color: var(--label); position: relative; }
+  .conversation .msg { max-width: 640px; margin: 0 auto 18px; }
+  .conversation .msg .who { font-size: 11px; color: var(--label-2nd); margin-bottom: 4px; }
+  .conversation .msg .bubble { background: var(--code); border-radius: 8px; padding: 10px 14px; }
+  .conversation .msg.assistant .bubble { background: transparent; border: 1px solid var(--border-l1); }
+  .composer { position: absolute; left: 48px; right: 48px; bottom: 18px; border: 1px solid var(--border); border-radius: 10px; background: #fff; padding: 12px 14px; font-size: 13px; color: var(--label-2nd); box-shadow: 0 4px 14px rgba(21,31,26,.06); }
+  .file-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font-size: 11px; margin-top: 8px; background: #fff; }
+
+  /* ── 工作台 ─────────────────────────────────────────────────── */
+  .workbench { position: absolute; inset: 44px 0 0 0; display: flex; flex-direction: column; }
+  .wb-header { height: 38px; flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 10px; background: #fff; border-bottom: 1px solid var(--border); }
+  .wb-id { display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; padding: 4px 8px; border-radius: 6px; }
+  .wb-id:hover { background: var(--bg-hover); }
+  .wb-id .glyph { color: var(--accent); }
+  .wb-id .vault { color: var(--label-2nd); font-weight: 400; }
+  .seg { display: flex; border: 1px solid var(--border); border-radius: 7px; padding: 2px; gap: 2px; background: #fbfcfb; }
+  .seg button { border: 0; background: transparent; font: inherit; font-size: 12px; color: var(--label-2nd); padding: 4px 10px; border-radius: 5px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: #fff; color: var(--label); font-weight: 600; box-shadow: 0 1px 2px rgba(21,31,26,.12), inset 0 0 0 1px var(--border); }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; border-radius: 999px; padding: 4px 10px; cursor: pointer; }
+  .chip .dot { width: 7px; height: 7px; border-radius: 50%; }
+  .chip.ok { background: var(--ok-bg); border: 1px solid var(--ok-border); color: #235c49; }
+  .chip.ok .dot { background: var(--accent); }
+  .chip.warn { background: var(--warn-bg); border: 1px solid var(--warn-border); color: var(--warn); font-weight: 600; }
+  .chip.unknown { background: #f2f4f3; border: 1px solid var(--border); color: var(--label-2nd); }
+  .wb-exit { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--label); background: #fff; border: 1px solid var(--border); border-radius: 7px; padding: 5px 12px; cursor: pointer; }
+  .wb-exit:hover { background: var(--bg-hover); }
+  .wb-exit .x { color: var(--label-2nd); }
+
+  .wb-body { flex: 1; display: flex; gap: 8px; padding: 8px; min-height: 0; background: #fbfcfb; }
+  .pane { background: #fff; border: 1px solid var(--border); border-radius: 8px; display: flex; flex-direction: column; min-width: 0; }
+  .pane .pane-head { height: 30px; flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 12px; font-size: 12px; color: var(--label-2nd); border-bottom: 1px solid var(--border-l1); }
+  .pane .pane-head .hide { margin-left: auto; color: var(--label-2nd); border: 1px solid var(--border-l1); border-radius: 5px; padding: 2px 6px; font-size: 10px; }
+  .pane .pane-body { flex: 1; padding: 10px 12px; font-size: 12px; color: var(--label); overflow: hidden; }
+  .pane.tree { width: 208px; flex-shrink: 0; }
+  .pane.editor { flex: 1.2; }
+  .pane.preview { flex: 1.2; }
+  .pane.chat-push { flex: 0 0 320px; background: transparent; border: 1px dashed transparent; }
+  .tree-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 5px; }
+  .tree-row:hover { background: var(--bg-hover); }
+  .tree-row.sel { background: var(--accent-quiet); font-weight: 600; }
+  .tree-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tree-row.indent-1 { padding-left: 22px; }
+  .editor-area { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.7; color: var(--label); white-space: pre-wrap; }
+  .editor-tabs { display: flex; gap: 4px; padding: 6px 8px 0; }
+  .editor-tab { font-size: 11px; border: 1px solid var(--border-l1); border-radius: 5px 5px 0 0; padding: 3px 10px; color: var(--label-2nd); }
+  .editor-tab.sel { background: #fff; color: var(--label); font-weight: 600; border-bottom-color: #fff; }
+  .editor-tab .plus { color: var(--accent); font-weight: 700; }
+  .statusbar { border-top: 1px solid var(--border-l1); padding: 4px 12px; font-size: 10.5px; color: var(--label-2nd); display: flex; justify-content: space-between; }
+  .statusbar .dirty { color: var(--warn); font-weight: 600; }
+
+  /* ── toast ──────────────────────────────────────────────────── */
+  .toast { position: absolute; left: 50%; bottom: 86px; transform: translateX(-50%); background: var(--toast-bg); color: #f4f7f5; font-size: 12.5px; border-radius: 9px; padding: 10px 14px; display: flex; align-items: center; gap: 12px; box-shadow: 0 8px 24px rgba(21,31,26,.3); max-width: 620px; }
+  .toast .undo { border: 1px solid #4c5a52; background: #2d3831; color: #d7e5dd; border-radius: 6px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
+  .toast .sub { color: #aab8b0; }
+
+  /* ── popover ────────────────────────────────────────────────── */
+  .popover { position: absolute; width: 330px; background: #fff; border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 32px rgba(21,31,26,.16); padding: 12px; font-size: 12px; z-index: 30; }
+  .popover .kv { display: flex; gap: 8px; padding: 4px 0; }
+  .popover .kv .k { width: 76px; color: var(--label-2nd); flex-shrink: 0; }
+  .popover .kv .v { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .popover .warn-line { background: var(--warn-bg); border: 1px solid var(--warn-border); color: var(--warn); border-radius: 7px; padding: 7px 9px; margin: 8px 0; font-size: 11.5px; line-height: 1.6; }
+  .popover .btn { display: inline-flex; align-items: center; gap: 6px; border-radius: 7px; padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .popover .btn.primary { background: var(--accent); color: #fff; }
+  .popover .btn.ghost { border: 1px solid var(--border); color: var(--label); margin-left: 8px; }
+  .popover .hint { color: var(--label-2nd); font-size: 11px; margin-top: 8px; line-height: 1.6; }
+
+  .callout { width: 1120px; max-width: 100%; font-size: 12.5px; color: var(--label-2nd); line-height: 1.8; background: #fff; border: 1px solid var(--border-l1); border-left: 3px solid var(--accent); border-radius: 8px; padding: 12px 16px; }
+  .callout b { color: var(--label); }
+  .mono { font-family: ui-monospace, Menlo, monospace; font-size: 11px; background: var(--code); border-radius: 4px; padding: 1px 5px; }
+</style>
+</head>
+<body>
+
+<div>
+  <div class="page-title">dsh-obsidian 0.9 设计原型 · 一键退出 Obsidian 模式 与 对话工作区一致性</div>
+  <div class="page-sub">配套文档:<span class="mono">docs/design-obsidian-mode-exit-and-workspace.md</span> · 仅表达布局与状态,配色沿用宿主 token,不代表最终像素</div>
+</div>
+
+<!-- ═══════════════ 画板 A:默认态 ═══════════════ -->
+<div class="board-wrap">
+  <div class="board-label"><span class="tag">A</span><h2>Obsidian 模式 · 默认态(新工作台标题栏)</h2><span>常驻 segmented control + 带文字的退出按钮;右上角不再有漂浮图标</span></div>
+  <div class="window">
+    <div class="win-titlebar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="addr">127.0.0.1:3280</span></div>
+    <div class="app">
+      <div class="sidebar">
+        <div class="side-brand">◆ DSH</div>
+        <div class="side-section">WORKSPACES</div>
+        <div class="ws-group"><div class="ws-head"><span class="chev">▾</span>dsh-plugins<span class="count">12</span></div>
+          <div class="ws-row">修复 privacy-filter 误报</div>
+        </div>
+        <div class="ws-group"><div class="ws-head"><span class="chev">▸</span>obsidian-notes<span class="count">3</span></div></div>
+        <div class="side-footer">
+          <div class="footer-btn active" title="当前处于 Obsidian 模式,点击退出">🗎 Obsidian</div>
+          <div class="footer-btn">⚙ 设置</div>
+        </div>
+      </div>
+      <div class="main-col">
+        <div class="host-header"><span class="mode">☁ 标准模式</span><span class="session-log">Session 日志 ⇲</span></div>
+        <div class="conversation" style="padding:0;">
+          <div class="workbench">
+            <div class="wb-header">
+              <div class="wb-id" title="/Users/chris/obsidian/MyVault"><span class="glyph">🗎</span>Obsidian <span class="vault">· MyVault</span></div>
+              <div class="seg" role="toolbar" aria-label="面板开关">
+                <button aria-pressed="true">Vault</button>
+                <button aria-pressed="true">编辑器</button>
+                <button aria-pressed="true">预览</button>
+                <button aria-pressed="true">对话</button>
+              </div>
+              <div class="chip ok" role="status"><span class="dot"></span>对话在 Vault 工作区</div>
+              <button class="wb-exit" aria-keyshortcuts="Esc">退出 Obsidian <span class="x">✕</span></button>
+            </div>
+            <div class="wb-body">
+              <div class="pane tree">
+                <div class="pane-head">Vault <span class="hide">⟨ 隐藏</span></div>
+                <div class="pane-body">
+                  <div class="tree-row sel">📄 meeting-notes</div>
+                  <div class="tree-row indent-1">📄 2026-10 周报</div>
+                  <div class="tree-row indent-1">📄 Fresh-from-chat</div>
+                  <div class="tree-row">📁 projects</div>
+                </div>
+              </div>
+              <div class="pane editor">
+                <div class="editor-tabs"><span class="editor-tab sel">meeting-notes ✕</span><span class="editor-tab">2026-10 周报 ✕</span><span class="editor-tab plus">＋</span></div>
+                <div class="pane-body editor-area"># Meeting notes
+
+- 讨论了 vault landing 的交互
+- 待办:一键退出 Obsidian 模式</div>
+                <div class="statusbar"><span>5 lines</span><span class="dirty">Modified</span></div>
+              </div>
+              <div class="pane preview">
+                <div class="pane-head">Preview <span class="hide">⟨ 隐藏</span></div>
+                <div class="pane-body" style="line-height:1.8;"><b style="font-size:14px;">Meeting notes</b><br>• 讨论了 vault landing 的交互<br>• 待办:一键退出 Obsidian 模式</div>
+              </div>
+              <div class="pane chat-push">
+                <div class="pane-head">对话 <span class="hide">⟩ 隐藏</span></div>
+                <div class="pane-body" style="display:flex; align-items:center; justify-content:center; color:var(--label-2nd); font-size:11px;">(真实会话区 · 可拖宽)</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ 画板 B:全收起 → 自动退出 ═══════════════ -->
+<div class="board-wrap">
+  <div class="board-label"><span class="tag">B</span><h2>收起最后一个内容面板 → 自动退出 + 可撤销 toast</h2><span>不再出现屏幕正中的「Restore all panes」卡片;8 秒内可一键撤销</span></div>
+  <div class="window">
+    <div class="win-titlebar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="addr">127.0.0.1:3280</span></div>
+    <div class="app">
+      <div class="sidebar">
+        <div class="side-brand">◆ DSH</div>
+        <div class="side-section">WORKSPACES</div>
+        <div class="ws-group active"><div class="ws-head"><span class="chev">▾</span>Obsidian · MyVault<span class="count">4</span></div>
+          <div class="ws-row current">Fresh-from-chat<span class="dot-cur"></span></div>
+          <div class="ws-row">meeting-notes</div>
+        </div>
+        <div class="ws-group"><div class="ws-head"><span class="chev">▸</span>dsh-plugins<span class="count">12</span></div></div>
+        <div class="side-footer">
+          <div class="footer-btn" title="退出 Obsidian 模式">🗎 Obsidian</div>
+          <div class="footer-btn">⚙ 设置</div>
+        </div>
+      </div>
+      <div class="main-col">
+        <div class="host-header"><span class="mode">☁ 标准模式</span><span class="session-log">Session 日志 ⇲</span></div>
+        <div class="conversation">
+          <div class="msg"><div class="who">用户</div><div class="bubble">把刚才讨论的结论整理成周报。</div></div>
+          <div class="msg assistant"><div class="who">助手</div><div class="bubble">已写入 <b>2026-10 周报.md</b>。<span class="file-chip">📄 2026-10 周报.md · Obsidian · MyVault</span></div></div>
+          <div class="composer">继续对话…</div>
+        </div>
+        <div class="toast" role="status">
+          <span>已退出 Obsidian 模式(所有面板已收起)</span>
+          <button class="undo">撤销</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ 画板 C:工作区不一致 ═══════════════ -->
+<div class="board-wrap">
+  <div class="board-label"><span class="tag">C</span><h2>工作区不一致 · 警告态 + popover 迁移动作</h2><span>进行中的对话(非空白)进入 Obsidian 模式时,文件去向被明确警告</span></div>
+  <div class="window">
+    <div class="win-titlebar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="addr">127.0.0.1:3280</span></div>
+    <div class="app">
+      <div class="sidebar" style="display:none;"></div>
+      <div class="main-col">
+        <div class="host-header"><span class="mode">☁ 标准模式</span><span class="session-log">Session 日志 ⇲</span></div>
+        <div class="conversation" style="padding:0;">
+          <div class="workbench">
+            <div class="wb-header">
+              <div class="wb-id"><span class="glyph">🗎</span>Obsidian <span class="vault">· MyVault</span></div>
+              <div class="seg"><button aria-pressed="true">Vault</button><button aria-pressed="false">编辑器</button><button aria-pressed="true">预览</button><button aria-pressed="true">对话</button></div>
+              <div class="chip warn" role="status">⚠ 对话在 dsh-plugins 工作区</div>
+              <button class="wb-exit">退出 Obsidian <span class="x">✕</span></button>
+            </div>
+            <div class="wb-body">
+              <div class="pane tree">
+                <div class="pane-head">Vault <span class="hide">⟨ 隐藏</span></div>
+                <div class="pane-body">
+                  <div class="tree-row">📄 meeting-notes</div>
+                  <div class="tree-row">📁 projects</div>
+                </div>
+              </div>
+              <div class="pane preview">
+                <div class="pane-head">Preview <span class="hide">⟨ 隐藏</span></div>
+                <div class="pane-body" style="display:flex; align-items:center; justify-content:center; color:var(--label-2nd); font-size:11px;">Preview follows the selected note.</div>
+              </div>
+              <div class="pane chat-push">
+                <div class="pane-head">对话 <span class="hide">⟩ 隐藏</span></div>
+                <div class="pane-body" style="display:flex; align-items:center; justify-content:center; color:var(--label-2nd); font-size:11px;">(真实会话区)</div>
+              </div>
+              <div class="popover" style="right: 118px; top: 6px;">
+                <div class="kv"><span class="k">当前对话</span><span class="v">修复 privacy-filter 误报</span></div>
+                <div class="kv"><span class="k">对话工作区</span><span class="v">dsh-plugins · /Users/chris/project/dsh-plugins</span></div>
+                <div class="kv"><span class="k">Vault</span><span class="v">MyVault · /Users/chris/obsidian/MyVault</span></div>
+                <div class="warn-line">⚠ 该对话不是空白会话:在本模式里生成的文件将保存到 <b>dsh-plugins</b>,而不会进入 Vault。</div>
+                <button class="btn primary">＋ 在 Vault 中新开对话</button><button class="btn ghost">知道了</button>
+                <div class="hint">进行中的对话无法迁移工作区;新开的 Vault 对话中,生成的文件将保存到 MyVault。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ 画板 D:落地后侧边栏联动 ═══════════════ -->
+<div class="board-wrap">
+  <div class="board-label"><span class="tag">D</span><h2>落地成功 · 命名辨识 + toast 指引</h2><span>空白对话迁入 Vault 工作区后:vault workspace 在侧边栏命名为「Obsidian · <i>vault</i>」,toast 点名去向</span></div>
+  <div class="window">
+    <div class="win-titlebar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="addr">127.0.0.1:3280</span></div>
+    <div class="app">
+      <div class="sidebar">
+        <div class="side-brand">◆ DSH</div>
+        <div class="side-section">WORKSPACES</div>
+        <div class="ws-group active"><div class="ws-head"><span class="chev">▾</span>Obsidian · MyVault<span class="count">4</span></div>
+          <div class="ws-row current">Fresh-from-chat<span class="dot-cur"></span></div>
+        </div>
+        <div class="ws-group"><div class="ws-head"><span class="chev">▸</span>dsh-plugins<span class="count">12</span></div></div>
+        <div class="ws-group"><div class="ws-head"><span class="chev">▸</span>obsidian-notes<span class="count">3</span></div></div>
+        <div class="side-footer">
+          <div class="footer-btn active">🗎 Obsidian</div>
+          <div class="footer-btn">⚙ 设置</div>
+        </div>
+      </div>
+      <div class="main-col">
+        <div class="host-header"><span class="mode">☁ 标准模式</span><span class="session-log">Session 日志 ⇲</span></div>
+        <div class="conversation">
+          <div class="msg"><div class="who">用户</div><div class="bubble"><span class="file-chip">🔗 引用 · meeting-notes</span>&nbsp; 帮我补一节风险项。</div></div>
+          <div class="msg assistant"><div class="who">助手</div><div class="bubble">已追加到 <b>meeting-notes.md</b>。<span class="file-chip">📄 meeting-notes.md · Obsidian · MyVault</span></div></div>
+          <div class="composer">继续对话…</div>
+        </div>
+        <div class="toast" role="status">
+          <span>已切换到 Vault 工作区 — 生成的文件将保存到 <b>MyVault</b><br><span class="sub">侧边栏 workspace 分组:Obsidian · MyVault</span></span>
+          <button class="undo">知道了</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="callout">
+  <b>评审要点(k3-256k)</b>
+  <ol style="margin:8px 0 0 18px; display:flex; flex-direction:column; gap:6px;">
+    <li>画板 A:退出按钮用「退出 Obsidian」文字按钮(替代原右上角漂浮图标)是否足够可发现?segmented control 常驻是否会与面板内「隐藏」按钮形成重复入口造成困惑?</li>
+    <li>画板 B:「收起最后一个内容面板 = 自动退出 + 可撤销 toast」是否优于「禁止全部收起」与「保留中央恢复卡片」两个备选?</li>
+    <li>画板 C:非空白对话的警告 chip 是否过重?「在 Vault 中新开对话」作为唯一迁移动作是否够用?</li>
+    <li>画板 D:不改宿主包的前提下,「workspace 改名 + toast 点名」是否足以解决"侧边栏看到的还是旧 workspace"的认知问题?</li>
+    <li>退出后对话仍留在 Vault 工作区(画板 B 的会话),是否需要在退出 toast 中追加该提示?</li>
+  </ol>
+</div>
+
+</body>
+</html>

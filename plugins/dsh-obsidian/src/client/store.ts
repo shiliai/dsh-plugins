@@ -30,6 +30,8 @@ export interface VaultSnapshot {
   loadingNote: boolean
   saving: boolean
   pendingDiscard: PendingDiscardAction | null
+  /** Workbench open tabs (note paths), persisted across workbench close/reopen. */
+  openTabs: string[]
   error: string | null
 }
 
@@ -73,12 +75,21 @@ const INITIAL: VaultSnapshot = {
   loadingNote: false,
   saving: false,
   pendingDiscard: null,
+  openTabs: [],
   error: null,
 }
 
 export class VaultStore {
   private snapshot: VaultSnapshot = INITIAL
   private readonly listeners = new Set<() => void>()
+  /**
+   * Unsaved drafts per note path, owned by the store so drafts survive every
+   * surface lifecycle (workbench close/reopen, tab switches). Only dirty
+   * drafts are cached: an entry equals "this note has unsaved edits", so
+   * `hasDirtyDrafts` is a size check. Entries are dropped when the draft is
+   * saved, discarded, or equal to the loaded content.
+   */
+  private readonly drafts = new Map<string, string>()
   private noteGeneration = 0
   private draftGeneration = 0
   private saveGeneration = 0
@@ -101,6 +112,11 @@ export class VaultStore {
 
   get dirty(): boolean {
     return this.snapshot.active !== null && this.snapshot.draft !== this.snapshot.active.content
+  }
+
+  /** Whether any open note carries an unsaved cached draft. */
+  get hasDirtyDrafts(): boolean {
+    return this.drafts.size > 0
   }
 
   setPanelSuppressed(suppressed: boolean): void {
@@ -196,6 +212,7 @@ export class VaultStore {
       this.directoryGeneration++
       this.treeGeneration++
       this.tagGeneration++
+      this.drafts.clear()
       if (!this.panelSuppressed) this.panel.close()
       this.update({
         vaultName: info.name,
@@ -214,6 +231,7 @@ export class VaultStore {
         switchingVault: false,
         saving: false,
         pendingDiscard: null,
+        openTabs: [],
       })
       await this.refreshTree()
     } catch (error) {
@@ -234,7 +252,13 @@ export class VaultStore {
       const note = await this.api.note(path)
       if (generation !== this.noteGeneration) return
       this.draftGeneration++
-      this.update({ active: note, draft: note.content, loadingNote: false, mode: 'preview' })
+      // allowDirty openers (workbench tab switches) restore the cached draft;
+      // a plain open (discard flow) loads server content. A cached draft that
+      // matches the loaded content is stale and dropped.
+      const cached = options?.allowDirty === true ? this.drafts.get(path) : undefined
+      const draft = cached !== undefined && cached !== note.content ? cached : note.content
+      if (cached !== undefined && cached === note.content) this.drafts.delete(path)
+      this.update({ active: note, draft, loadingNote: false, mode: 'preview' })
     } catch (error) {
       if (generation === this.noteGeneration) this.update({ loadingNote: false, error: message(error) })
     }
@@ -249,6 +273,7 @@ export class VaultStore {
     this.noteGeneration++
     this.draftGeneration++
     this.invalidateSave()
+    if (this.snapshot.active !== null) this.drafts.delete(this.snapshot.active.path)
     this.update({ active: null, draft: '', saving: false, error: null })
     if (!this.panelSuppressed) this.panel.close()
   }
@@ -265,13 +290,36 @@ export class VaultStore {
     this.draftGeneration++
     this.invalidateSave()
     this.update({ draft: active.content, pendingDiscard: null, saving: false })
+    // The discard resolved: the note is back to server content, so the cache
+    // entry (if any) is stale.
+    this.drafts.delete(active.path)
     if (pending.kind === 'open') await this.openNote(pending.path)
     else this.closeNote()
   }
 
   setDraft(draft: string): void {
     this.draftGeneration++
+    const active = this.snapshot.active?.path
+    if (active !== undefined) {
+      // Cache only real edits: an entry means "unsaved changes", absence
+      // means the note matches its content on disk.
+      if (this.snapshot.active !== null && draft === this.snapshot.active.content) this.drafts.delete(active)
+      else this.drafts.set(active, draft)
+    }
     this.update({ draft })
+  }
+
+  addTab(path: string): void {
+    if (this.snapshot.openTabs.includes(path)) return
+    this.update({ openTabs: [...this.snapshot.openTabs, path] })
+  }
+
+  /** Remove a tab; returns the remaining tabs so callers can pick the next active. */
+  removeTab(path: string): string[] {
+    const openTabs = this.snapshot.openTabs.filter(tab => tab !== path)
+    this.drafts.delete(path)
+    this.update({ openTabs })
+    return openTabs
   }
   setMode(mode: NoteMode): void { this.update({ mode }) }
 
@@ -287,6 +335,7 @@ export class VaultStore {
       const note = await this.api.write(active.path, draft, active.modifiedMs)
       if (saveGeneration !== this.saveGeneration || noteGeneration !== this.noteGeneration || this.snapshot.active?.path !== active.path) return
       const draftChanged = draftGeneration !== this.draftGeneration
+      if (!draftChanged) this.drafts.delete(active.path)
       this.update({ active: note, draft: draftChanged ? this.snapshot.draft : note.content, saving: false })
       await this.refreshTree()
       if (this.snapshot.view === 'tags') await this.refreshTags()
@@ -340,6 +389,9 @@ export class VaultStore {
       this.update({ saving: false })
       const note = await this.api.move(active.path, normalized)
       this.draftGeneration++
+      // renameActive saves first, so no dirty draft survives the move; drop
+      // any defensive cache entry for the old path.
+      this.drafts.delete(active.path)
       this.update({ active: note, draft: note.content, error: null })
       await this.refreshTree()
       if (this.snapshot.view === 'tags') await this.refreshTags()
@@ -357,6 +409,7 @@ export class VaultStore {
       this.invalidateSave()
       this.update({ saving: false })
       await this.api.delete(active.path)
+      this.drafts.delete(active.path)
       this.update({ active: null, draft: '', error: null })
       if (!this.panelSuppressed) this.panel.close()
       await this.refreshTree()
