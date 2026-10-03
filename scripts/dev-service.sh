@@ -249,8 +249,8 @@ EOF
 # $SERVICE_DIR — never from the repo checkout, which may be a worktree that
 # gets deleted after its PR merges.
 install_restart_watch() {
-  cp "$REPO_ROOT/scripts/prod-restart-watch.sh" "$REPO_ROOT/scripts/prod-restart.sh" "$SERVICE_DIR/"
-  chmod 755 "$SERVICE_DIR/prod-restart-watch.sh" "$SERVICE_DIR/prod-restart.sh"
+  cp "$REPO_ROOT/scripts/prod-restart-watch.sh" "$REPO_ROOT/scripts/prod-restart.sh" "$REPO_ROOT/scripts/wake-session.sh" "$SERVICE_DIR/"
+  chmod 755 "$SERVICE_DIR/prod-restart-watch.sh" "$SERVICE_DIR/prod-restart.sh" "$SERVICE_DIR/wake-session.sh"
   cat > "$WATCH_PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -345,8 +345,8 @@ cmd_refresh() {
     echo "dev-service.sh: watcher $WATCH_LABEL is not installed; run 'install' first." >&2
     exit 1
   }
-  cp "$REPO_ROOT/scripts/prod-restart-watch.sh" "$REPO_ROOT/scripts/prod-restart.sh" "$SERVICE_DIR/"
-  chmod 755 "$SERVICE_DIR/prod-restart-watch.sh" "$SERVICE_DIR/prod-restart.sh"
+  cp "$REPO_ROOT/scripts/prod-restart-watch.sh" "$REPO_ROOT/scripts/prod-restart.sh" "$REPO_ROOT/scripts/wake-session.sh" "$SERVICE_DIR/"
+  chmod 755 "$SERVICE_DIR/prod-restart-watch.sh" "$SERVICE_DIR/prod-restart.sh" "$SERVICE_DIR/wake-session.sh"
   launchctl kickstart "gui/$UID_N/$WATCH_LABEL"
   echo "dev-service.sh: watcher scripts refreshed from $REPO_ROOT/scripts/ (dev host untouched)."
 }
@@ -369,7 +369,7 @@ cmd_status() {
 cmd_uninstall() {
   launchctl bootout "gui/$UID_N/$LABEL" 2>/dev/null || true
   launchctl bootout "gui/$UID_N/$WATCH_LABEL" 2>/dev/null || true
-  rm -f "$PLIST" "$WATCH_PLIST" "$RUN_WRAPPER" "$SERVICE_DIR/prod-restart-watch.sh" "$SERVICE_DIR/prod-restart.sh"
+  rm -f "$PLIST" "$WATCH_PLIST" "$RUN_WRAPPER" "$SERVICE_DIR/prod-restart-watch.sh" "$SERVICE_DIR/prod-restart.sh" "$SERVICE_DIR/wake-session.sh"
   echo "dev-service.sh: $LABEL and $WATCH_LABEL removed. Sandbox home kept: $SANDBOX_HOME"
 }
 
