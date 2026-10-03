@@ -55,7 +55,9 @@ test('keeps note workflow and composer routing usable across session transitions
   await page.getByRole('treeitem', { name: /Home/u }).click({ button: 'right' })
   await page.getByRole('menu').getByRole('menuitem', { name: 'Add to chat' }).click()
   const composer = page.getByRole('textbox', { name: /Describe what you want to build/u })
-  await expect(composer).toContainText(/type: note[\s\S]*note: "Home\.md"[\s\S]*absolutePath:/u)
+  // Stale since the reading-core formatter emits entry field `path:` rather than `note:`
+  // (packages/dsh-reading-core/src/context.ts).
+  await expect(composer).toContainText(/type: note[\s\S]*path: "Home\.md"[\s\S]*absolutePath:/u)
 
   await page.getByRole('tab', { name: 'Tags' }).click()
   const homeTag = page.getByRole('button', { name: '#home 1', exact: true })
