@@ -45,6 +45,46 @@ export interface DirectoryEntry {
   path: string
 }
 
+/** The filesystem entry kinds a vault browser row can point at. */
+export type VaultEntryKind = 'note' | 'directory'
+
+/**
+ * Everything the vault browser shows in its "Properties" dialog. Note-only
+ * text statistics stay optional because a note above `maxNoteBytes` is not
+ * read; directory counts are direct children with hidden entries excluded,
+ * matching what the tree lists.
+ */
+export interface VaultEntryProperty {
+  path: string
+  name: string
+  kind: VaultEntryKind
+  absolutePath: string
+  size: number
+  createdMs: number
+  modifiedMs: number
+  accessedMs: number
+  /** POSIX permission triple, e.g. `drwxr-xr-x` or `-rw-r--r--`. */
+  permissions: string
+  lines?: number
+  words?: number
+  characters?: number
+  tags?: string[]
+  files?: number
+  directories?: number
+}
+
+/**
+ * One "Open with" choice. The default handler is always offered; named apps
+ * come from a fixed catalog, and the host resolves them against its own
+ * filesystem so the browser can never name an arbitrary executable.
+ */
+export interface VaultOpener {
+  id: string
+  label: string
+  /** True for the operating system's default application. */
+  default?: boolean
+}
+
 export interface DirectoryListing {
   path: string
   parent: string | null

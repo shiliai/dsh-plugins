@@ -106,6 +106,70 @@ describe('registerVaultApi', () => {
     })
   })
 
+  it('serves entry properties and the host-resolved opener list', async () => {
+    const { baseUrl, root } = await fixture()
+
+    const property = await request(baseUrl, '/dsh-obsidian/api/property?path=Projects%2FRoadmap.md')
+    expect(property.status).toBe(200)
+    expect(await property.json()).toMatchObject({
+      path: 'Projects/Roadmap.md',
+      name: 'Roadmap.md',
+      kind: 'note',
+      absolutePath: join(root, 'Projects', 'Roadmap.md'),
+      lines: 2,
+      tags: ['project/atlas'],
+    })
+
+    const directory = await request(baseUrl, '/dsh-obsidian/api/property?path=Projects')
+    expect(directory.status).toBe(200)
+    expect(await directory.json()).toMatchObject({ kind: 'directory', files: 1, directories: 0 })
+
+    expect((await request(baseUrl, '/dsh-obsidian/api/property?path=Missing.md')).status).toBe(404)
+    expect((await request(baseUrl, '/dsh-obsidian/api/property')).status).toBe(400)
+
+    const openers = await request(baseUrl, '/dsh-obsidian/api/openers?path=Projects%2FRoadmap.md')
+    expect(openers.status).toBe(200)
+    expect((await openers.json() as { openers: { id: string }[] }).openers[0]).toMatchObject({ id: 'default' })
+    expect((await request(baseUrl, '/dsh-obsidian/api/openers?path=Nope.md')).status).toBe(404)
+  })
+
+  it('only opens entries through a catalog opener the host resolves itself', async () => {
+    const { baseUrl } = await fixture()
+    const headers = { origin: 'http://dsh.test', 'content-type': 'application/json' }
+
+    // An opener id outside the catalog never reaches the launcher.
+    const unknown = await request(baseUrl, '/dsh-obsidian/api/open', {
+      method: 'POST', headers, body: JSON.stringify({ path: 'Projects/Roadmap.md', opener: 'rm -rf' }),
+    })
+    expect(unknown.status).toBe(400)
+    expect(await unknown.json()).toMatchObject({ code: 'UNKNOWN_OPENER' })
+
+    const escaped = await request(baseUrl, '/dsh-obsidian/api/open', {
+      method: 'POST', headers, body: JSON.stringify({ path: '../Outside.md' }),
+    })
+    expect(escaped.status).toBe(400)
+    expect(await escaped.json()).toMatchObject({ code: 'INVALID_PATH' })
+
+    const missing = await request(baseUrl, '/dsh-obsidian/api/open', {
+      method: 'POST', headers, body: JSON.stringify({ path: 'Nope.md' }),
+    })
+    expect(missing.status).toBe(404)
+
+    for (const body of ['null', '[]', '{"path":1}', '{"opener":"obsidian"}']) {
+      const invalid = await request(baseUrl, '/dsh-obsidian/api/open', { method: 'POST', headers, body })
+      expect(invalid.status).toBe(400)
+      expect(await invalid.json()).toMatchObject({ code: 'INVALID_BODY' })
+    }
+
+    // Opening hands a path to a desktop app, so it is a mutation: cross-origin
+    // and origin-less requests are refused before anything is launched.
+    const anonymous = await request(baseUrl, '/dsh-obsidian/api/open', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: 'Projects/Roadmap.md' }),
+    })
+    expect(anonymous.status).toBe(403)
+    expect(await anonymous.json()).toMatchObject({ code: 'ORIGIN_DENIED' })
+  })
+
   it('browses directories and switches the active vault for subsequent requests', async () => {
     const { baseUrl, root } = await fixture()
     const alternate = join(root, 'Alternate')

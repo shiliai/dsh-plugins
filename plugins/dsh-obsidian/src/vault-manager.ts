@@ -1,6 +1,6 @@
 import { readdir, realpath, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, resolve } from 'node:path'
-import type { DirectoryListing, NoteDocument, NoteSearchResult, VaultContextKind, VaultContextReference, VaultTag, VaultTreeNode } from './contracts.ts'
+import type { DirectoryListing, NoteDocument, NoteSearchResult, VaultContextKind, VaultContextReference, VaultEntryKind, VaultEntryProperty, VaultTag, VaultTreeNode } from './contracts.ts'
 import { VaultError, VaultService } from './vault-service.ts'
 
 export interface VaultAccess {
@@ -17,6 +17,8 @@ export interface VaultAccess {
   searchNotesByTag(tag: string, includeDescendants?: boolean): Promise<string[]>
   resolveContext(kind: VaultContextKind, value: string): Promise<VaultContextReference>
   openAsset(path: string): ReturnType<VaultService['openAsset']>
+  resolveEntry(path: string): Promise<{ path: string; absolutePath: string; kind: VaultEntryKind }>
+  inspectEntry(path: string): Promise<VaultEntryProperty>
 }
 
 export class VaultManager implements VaultAccess {
@@ -86,4 +88,6 @@ export class VaultManager implements VaultAccess {
     return this.current.resolveContext(kind, value)
   }
   openAsset(path: string): ReturnType<VaultService['openAsset']> { return this.current.openAsset(path) }
+  resolveEntry(path: string): ReturnType<VaultService['resolveEntry']> { return this.current.resolveEntry(path) }
+  inspectEntry(path: string): ReturnType<VaultService['inspectEntry']> { return this.current.inspectEntry(path) }
 }
