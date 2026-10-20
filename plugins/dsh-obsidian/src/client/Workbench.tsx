@@ -92,9 +92,11 @@ export function Workbench({ store, close, addContextToChat, status, openVaultCon
         || target.closest('[data-dsh-obsidian-workbench]') !== null
         || (anchor?.viewArea !== undefined && anchor.viewArea.contains(target))
       if (!inWorkbench) return
-      // The quick-open picker and discard prompt handle Escape themselves;
-      // Escape must not tear down the workbench underneath them.
+      // The quick-open picker, the discard prompt and the entry properties
+      // dialog handle Escape themselves; Escape must not tear down the
+      // workbench underneath them.
       if (quickOpen || state.pendingDiscard !== null) return
+      if (document.querySelector('[data-dsh-obsidian-properties]') !== null) return
       close({ reason: 'manual', visibility, dirtyDrafts: store.hasDirtyDrafts })
     }
     window.addEventListener('keydown', onKeyDown)

@@ -126,9 +126,43 @@
 .tagRow { height: 31px; padding: 0 7px; display: flex; align-items: center; gap: 7px; border-radius: 5px; text-align: left; font-size: 12px; }
 .tagRow span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tagRow small { color: var(--dsw-alias-label-secondary, #66706a); font-size: 11px; }
-.contextMenu { position: fixed; z-index: 60; width: 176px; padding: 5px; border: 1px solid var(--dsw-alias-border-l2, #d9dedb); border-radius: 7px; background: var(--dsw-specific-menu, #fff); box-shadow: 0 8px 24px rgba(21, 31, 26, .16); }
+.contextMenu { position: fixed; z-index: 60; width: 190px; padding: 5px; border: 1px solid var(--dsw-alias-border-l2, #d9dedb); border-radius: 7px; background: var(--dsw-specific-menu, #fff); box-shadow: 0 8px 24px rgba(21, 31, 26, .16); }
 .contextMenu button { width: 100%; height: 31px; padding: 0 8px; display: flex; align-items: center; gap: 8px; border-radius: 5px; text-align: left; font-size: 12px; }
 .contextMenu button:hover { background: var(--dsw-alias-interactive-bg-hover, #edf1ef); }
+/* "Open with ▸" pushes its chevron to the trailing edge. */
+.contextMenuChevron { margin-left: auto; opacity: .5; }
+.contextMenuBack { color: var(--dsw-alias-label-secondary, #66706a); }
+.contextMenuNote { display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 12px; color: var(--dsw-alias-label-secondary, #66706a); }
+.contextMenuNote.inlineError { margin: 0; }
+
+/* ── Entry properties dialog (vault browser) ─────────────────────── */
+
+.propertyCard {
+  width: min(500px, 100%);
+  max-height: 86vh;
+  overflow: auto;
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--dsw-alias-border-l2, #d9dedb);
+  background: var(--dsw-alias-surface-container, #fff);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, .18);
+  color: var(--dsw-alias-label-primary, #202522);
+}
+.propertyHeader { display: flex; align-items: center; gap: 8px; }
+.propertyHeader strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.propertyHeader .iconButton { margin-left: auto; }
+.propertyKind { padding: 1px 6px; border-radius: 4px; background: var(--dsw-alias-interactive-bg-hover, #edf1ef); color: var(--dsw-alias-label-secondary, #66706a); font-size: 11px; }
+.propertyLoading { display: flex; align-items: center; gap: 7px; padding: 8px 0; color: var(--dsw-alias-label-secondary, #66706a); font-size: 12px; }
+.propertyList { margin: 0; display: flex; flex-direction: column; }
+.propertyRow { display: flex; align-items: center; gap: 10px; min-height: 28px; padding: 2px 0; border-bottom: 1px solid var(--dsw-alias-border-l3, #eef1ef); font-size: 12px; }
+.propertyRow:last-child { border-bottom: 0; }
+.propertyRow dt { flex: 0 0 96px; color: var(--dsw-alias-label-secondary, #66706a); }
+.propertyRow dd { flex: 1; min-width: 0; margin: 0; display: flex; align-items: center; gap: 4px; overflow-wrap: anywhere; }
+.propertyMono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
+.propertyRow .iconButton { width: 22px; height: 22px; flex: 0 0 auto; }
 .inlineError, .panelError { color: var(--dsw-alias-state-error-secondary, #9d2e2e); background: var(--dsw-alias-interactive-bg-hover-danger, rgba(188, 57, 57, .09)); font-size: 12px; }
 .inlineError { margin: 3px 10px; padding: 7px 8px; border-radius: 5px; }
 .spin { animation: spin 1s linear infinite; }

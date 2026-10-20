@@ -1,4 +1,4 @@
-import type { AgentSkillDocument, AgentSkillInput, AgentSkillListResult, ApiErrorPayload, DirectoryListing, NoteDocument, NoteSearchResult, Thought, VaultContextKind, VaultContextReference, VaultTag, VaultTreeNode } from '../contracts.ts'
+import type { AgentSkillDocument, AgentSkillInput, AgentSkillListResult, ApiErrorPayload, DirectoryListing, NoteDocument, NoteSearchResult, Thought, VaultContextKind, VaultContextReference, VaultEntryProperty, VaultOpener, VaultTag, VaultTreeNode } from '../contracts.ts'
 
 const API = '/dsh-obsidian/api'
 
@@ -43,6 +43,12 @@ export const vaultApi = {
     body: JSON.stringify({ from, to }),
   }),
   delete: (path: string) => request<void>(`/note?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
+  property: (path: string) => request<VaultEntryProperty>(`/property?path=${encodeURIComponent(path)}`),
+  openers: (path: string) => request<{ openers: VaultOpener[] }>(`/openers?path=${encodeURIComponent(path)}`),
+  open: (path: string, opener?: string) => request<{ opened: boolean }>('/open', {
+    method: 'POST',
+    body: JSON.stringify({ path, ...(opener === undefined ? {} : { opener }) }),
+  }),
   assetUrl: (path: string) => `${API}/asset?path=${encodeURIComponent(path)}`,
   thoughts: (query?: string) => request<{ thoughts: Thought[] }>(`/thoughts${query === undefined ? '' : `?q=${encodeURIComponent(query)}`}`),
   createThought: (text: string) => request<{ thought: Thought }>('/thoughts', { method: 'POST', body: JSON.stringify({ text }) }),

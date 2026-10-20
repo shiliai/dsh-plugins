@@ -209,6 +209,28 @@ Do not add a trailing path. A mismatched origin allows read requests but rejects
   result sets are frozen to their current files when added.
 - Observe external changes through periodic tree and active-note refresh.
 
+### Entry context menu
+
+Right-clicking a note or directory row in the Vault browser also offers:
+
+- **Copy absolute path** — copies the entry's full path (the Vault root joined
+  with the row's Vault-relative path) to the clipboard. A GUI served over plain
+  HTTP from a LAN address is not a secure context, so the copy falls back to the
+  legacy `execCommand` path there.
+- **Open with** — opens the entry on the DSH host with the operating system's
+  default handler or with an explicitly chosen app. The host resolves both the
+  entry and the app from its own catalog (Obsidian, Visual Studio Code, Cursor,
+  Zed, Sublime Text, Typora, iA Writer, MacDown, BBEdit, TextEdit, Notepad —
+  only the ones installed and able to accept a note or directory), so the
+  browser can never name an arbitrary executable. Opening counts as a mutation:
+  it needs the configured browser origin and the entry must resolve inside the
+  Vault (no symlink escapes).
+- **Properties** — a read-only dialog with the entry's Vault-relative and
+  absolute path (each copyable), size, created/modified/accessed timestamps,
+  POSIX permissions, and, for notes, line/word/character counts and parsed tags
+  (direct file and subfolder counts for directories). Statistics are omitted
+  for a note larger than `maxNoteBytes`, which is not read.
+
 Only `.md` files appear as notes. Hidden directories, `.git`, `.obsidian` and `node_modules` are excluded from the note tree. Supported local preview images are PNG, JPEG, GIF, WebP and AVIF.
 
 ## Model tools
@@ -249,6 +271,7 @@ can use the same evidence set.
 - A write never silently replaces an existing note. Replacements require the last observed modification time.
 - A move never overwrites an existing target.
 - Mutation and Vault-selection HTTP requests require the configured browser origin.
+- **Open with** only launches opener ids from the plugin's own app catalog and only for entries that resolve inside the Vault; paths are passed as argv, never through a shell.
 
 Use Obsidian Sync, Git, Time Machine or another backup system before enabling write operations on important notes.
 

@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import {
-  link, lstat, mkdir, open, readdir, realpath, rename, stat, unlink, writeFile,
+  link, lstat, mkdir, open, readFile, readdir, realpath, rename, stat, unlink, writeFile,
 } from 'node:fs/promises'
 import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path'
-import type { NoteDocument, NoteSearchResult, VaultContextKind, VaultContextReference, VaultTag, VaultTreeNode } from './contracts.ts'
+import type { NoteDocument, NoteSearchResult, VaultContextKind, VaultContextReference, VaultEntryKind, VaultEntryProperty, VaultTag, VaultTreeNode } from './contracts.ts'
 import { isObsidianTag, normalizeTag, parseObsidianTags, tagAncestors } from './tags.ts'
 
 const HIDDEN_DIRECTORIES = new Set(['.git', '.obsidian', 'node_modules'])
@@ -277,6 +277,55 @@ export class VaultService {
     }
   }
 
+  /**
+   * Resolve a vault-relative path to its canonical absolute path and the entry
+   * kind the browser row uses. Symlinks that escape the vault are rejected by
+   * {@link existingPath}, so the result is always safe to hand to an opener.
+   */
+  async resolveEntry(path: string): Promise<{ path: string; absolutePath: string; kind: VaultEntryKind }> {
+    const normalized = normalizeRelativePath(path)
+    const absolutePath = await this.existingPath(normalized, 'entry')
+    const info = await stat(absolutePath)
+    return { path: normalized, absolutePath, kind: info.isDirectory() ? 'directory' : 'note' }
+  }
+
+  /**
+   * Read-only metadata for the browser's Properties dialog. Note statistics
+   * are omitted for a note above `maxNoteBytes` (it is not read) and for
+   * non-markdown files; directory counts exclude hidden entries, matching the
+   * tree.
+   */
+  async inspectEntry(path: string): Promise<VaultEntryProperty> {
+    const entry = await this.resolveEntry(path)
+    const info = await stat(entry.absolutePath)
+    const property: VaultEntryProperty = {
+      path: entry.path,
+      name: entry.path.split('/').at(-1) ?? entry.path,
+      kind: entry.kind,
+      absolutePath: entry.absolutePath,
+      size: info.size,
+      createdMs: info.birthtimeMs > 0 ? info.birthtimeMs : info.ctimeMs,
+      modifiedMs: info.mtimeMs,
+      accessedMs: info.atimeMs,
+      permissions: formatPermissions(info.mode, entry.kind === 'directory'),
+    }
+    if (entry.kind === 'directory') {
+      const entries = await readdir(entry.absolutePath, { withFileTypes: true })
+      const visible = entries.filter(child => !child.name.startsWith('.'))
+      property.directories = visible.filter(child => child.isDirectory()).length
+      property.files = visible.length - property.directories
+      return property
+    }
+    if (extname(entry.path).toLocaleLowerCase() !== '.md' || info.size > this.maxNoteBytes) return property
+    const content = await readFile(entry.absolutePath, 'utf8')
+    const newlines = content.match(/\n/gu)?.length ?? 0
+    property.lines = content === '' ? 0 : content.endsWith('\n') ? newlines : newlines + 1
+    property.words = content.split(/\s+/u).filter(word => word !== '').length
+    property.characters = [...content].length
+    property.tags = parseObsidianTags(content)
+    return property
+  }
+
   private assertNotePath(path: string): string {
     const normalized = normalizeRelativePath(path)
     if (extname(normalized).toLocaleLowerCase() !== '.md') {
@@ -427,6 +476,15 @@ export class VaultService {
 
 function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error && error.code === code
+}
+
+/** Render a POSIX-style permission triple (`drwxr-xr-x`) from a stat mode. */
+function formatPermissions(mode: number, directory: boolean): string {
+  const triples = ['---', '--x', '-w-', '-wx', 'r--', 'r-x', 'rw-', 'rwx']
+  const owner = triples[(mode >> 6) & 0b111] ?? '---'
+  const group = triples[(mode >> 3) & 0b111] ?? '---'
+  const other = triples[mode & 0b111] ?? '---'
+  return `${directory ? 'd' : '-'}${owner}${group}${other}`
 }
 
 function contentType(extension: string): string {

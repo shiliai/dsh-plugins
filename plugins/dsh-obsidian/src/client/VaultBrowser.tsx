@@ -1,16 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react'
+import AppWindow from 'lucide-react/dist/esm/icons/app-window'
 import ArrowLeft from 'lucide-react/dist/esm/icons/arrow-left'
 import ArrowUp from 'lucide-react/dist/esm/icons/arrow-up'
 import Check from 'lucide-react/dist/esm/icons/check'
 import ChevronsDownUp from 'lucide-react/dist/esm/icons/chevrons-down-up'
 import ChevronDown from 'lucide-react/dist/esm/icons/chevron-down'
 import ChevronRight from 'lucide-react/dist/esm/icons/chevron-right'
+import Copy from 'lucide-react/dist/esm/icons/copy'
 import FilePlus2 from 'lucide-react/dist/esm/icons/file-plus-2'
 import FileText from 'lucide-react/dist/esm/icons/file-text'
 import Folder from 'lucide-react/dist/esm/icons/folder'
 import FolderOpen from 'lucide-react/dist/esm/icons/folder-open'
 import FolderCog from 'lucide-react/dist/esm/icons/folder-cog'
+import Info from 'lucide-react/dist/esm/icons/info'
 import LoaderCircle from 'lucide-react/dist/esm/icons/loader-circle'
 import MessageSquarePlus from 'lucide-react/dist/esm/icons/message-square-plus'
 import RefreshCw from 'lucide-react/dist/esm/icons/refresh-cw'
@@ -18,7 +21,11 @@ import Search from 'lucide-react/dist/esm/icons/search'
 import Tag from 'lucide-react/dist/esm/icons/tag'
 import X from 'lucide-react/dist/esm/icons/x'
 import { DiscardPrompt } from './DiscardPrompt.tsx'
-import type { VaultContextKind, VaultTreeNode } from '../contracts.ts'
+import { EntryProperties } from './EntryProperties.tsx'
+import { vaultApi } from './api.ts'
+import { copyText } from './clipboard.ts'
+import { absoluteVaultPath } from './paths.ts'
+import type { VaultContextKind, VaultOpener, VaultTreeNode } from '../contracts.ts'
 import type { VaultContextAddResult } from './index.tsx'
 import type { VaultStore } from './store.ts'
 import css from './styles.module.css?dsh-inline'
@@ -49,12 +56,24 @@ interface ContextMenuState extends ContextTarget {
   y: number
 }
 
+/** The "Open with" pane of the context menu; `null` shows the root menu. */
+interface OpenersPane {
+  loading: boolean
+  items: VaultOpener[]
+  error: string | null
+}
+
 interface TreePreferences {
   defaultExpanded: boolean
   expandedPaths: Record<string, boolean>
 }
 
 const TREE_PREFERENCES_KEY = 'dsh-obsidian.vault.tree-preferences'
+
+/** Menu metrics: item height plus the container padding (styles.module.css). */
+const MENU_ITEM_HEIGHT = 31
+const MENU_PADDING = 10
+const MENU_WIDTH = 190
 
 export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addContextToChat, openNote }: Props) {
   const state = store.useSnapshot()
@@ -65,6 +84,9 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
   // Path of a just-created note: scrolled into view with a flash highlight.
   const [flashPath, setFlashPath] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [openersPane, setOpenersPane] = useState<OpenersPane | null>(null)
+  /** Vault-relative path whose Properties dialog is open (null = closed). */
+  const [propertiesPath, setPropertiesPath] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; text: string; path?: string } | null>(null)
   const [treePreferences, setTreePreferences] = useState<TreePreferences>(() => loadTreePreferences())
   const treeRef = useRef<HTMLDivElement | null>(null)
@@ -104,7 +126,10 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
 
   useEffect(() => {
     if (contextMenu === null) return
-    const close = (): void => { setContextMenu(null) }
+    const close = (): void => {
+      setContextMenu(null)
+      setOpenersPane(null)
+    }
     const closeOnEscape = (event: KeyboardEvent): void => { if (event.key === 'Escape') close() }
     window.addEventListener('pointerdown', close)
     window.addEventListener('blur', close)
@@ -142,10 +167,14 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
   const openContextMenu = (event: ReactMouseEvent, target: ContextTarget): void => {
     event.preventDefault()
     event.stopPropagation()
+    setOpenersPane(null)
+    // The menu grows with the target: a directory row also offers note creation.
+    const rows = target.kind === 'directory' ? 5 : target.kind === 'note' ? 4 : 1
+    const height = rows * MENU_ITEM_HEIGHT + MENU_PADDING
     setContextMenu({
       ...target,
-      x: Math.min(event.clientX, window.innerWidth - 184),
-      y: Math.min(event.clientY, window.innerHeight - 48),
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - MENU_WIDTH - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - height - 8)),
     })
   }
 
@@ -158,6 +187,49 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
     } catch (error) {
       setFeedback({ kind: 'error', text: error instanceof Error ? error.message : 'Could not add Vault context to chat.' })
     }
+  }
+
+  /** Copy the absolute path of a note or directory (issue #146). */
+  const copyEntryPath = async (target: ContextTarget): Promise<void> => {
+    setContextMenu(null)
+    setFeedback(null)
+    const absolute = absoluteVaultPath(state.vaultRoot, target.value)
+    try {
+      await copyText(absolute)
+      setFeedback({ kind: 'success', text: `Copied ${absolute}` })
+    } catch (error) {
+      setFeedback({ kind: 'error', text: error instanceof Error ? error.message : 'Could not copy the path.' })
+    }
+  }
+
+  /** Expand the menu into the host's "Open with" choices for this entry. */
+  const requestOpeners = async (target: ContextTarget): Promise<void> => {
+    setOpenersPane({ loading: true, items: [], error: null })
+    try {
+      const { openers } = await vaultApi.openers(target.value)
+      setOpenersPane({ loading: false, items: openers, error: null })
+    } catch (error) {
+      setOpenersPane({ loading: false, items: [], error: error instanceof Error ? error.message : 'Could not list apps.' })
+    }
+  }
+
+  const openEntry = async (target: ContextTarget, opener: VaultOpener): Promise<void> => {
+    setContextMenu(null)
+    setOpenersPane(null)
+    setFeedback(null)
+    try {
+      await vaultApi.open(target.value, opener.id)
+      setFeedback({ kind: 'success', text: `Opened ${target.label} in ${opener.label}.` })
+    } catch (error) {
+      setFeedback({ kind: 'error', text: error instanceof Error ? error.message : 'Could not open the entry.' })
+    }
+  }
+
+  const showProperties = (target: ContextTarget): void => {
+    setContextMenu(null)
+    setOpenersPane(null)
+    setFeedback(null)
+    setPropertiesPath(target.value)
   }
   const startCreation = (parentDir: string): void => {
     setContextMenu(null)
@@ -379,10 +451,44 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
         </div>
       </>}
 
+      {propertiesPath !== null && <EntryProperties path={propertiesPath} close={() => { setPropertiesPath(null) }} />}
+
       {contextMenu !== null && (
-        <div className={css.contextMenu} role="menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={event => { event.stopPropagation() }}>
-          {contextMenu.kind === 'directory' && <button type="button" role="menuitem" onClick={() => { createInFolder(contextMenu) }}><FilePlus2 size={14} />New note here</button>}
-          <button type="button" role="menuitem" onClick={() => { void addContext(contextMenu) }}><MessageSquarePlus size={14} />Add to chat</button>
+        <div
+          className={css.contextMenu}
+          role="menu"
+          aria-label={`Actions for ${contextMenu.label}`}
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onPointerDown={event => { event.stopPropagation() }}
+          onContextMenu={event => { event.preventDefault() }}
+        >
+          {openersPane === null ? (
+            <>
+              {contextMenu.kind === 'directory' && <button type="button" role="menuitem" onClick={() => { createInFolder(contextMenu) }}><FilePlus2 size={14} />New note here</button>}
+              {(contextMenu.kind === 'note' || contextMenu.kind === 'directory') && <button type="button" role="menuitem" onClick={() => { void copyEntryPath(contextMenu) }}><Copy size={14} />Copy absolute path</button>}
+              {(contextMenu.kind === 'note' || contextMenu.kind === 'directory') && (
+                <button type="button" role="menuitem" aria-haspopup="menu" onClick={() => { void requestOpeners(contextMenu) }}>
+                  <AppWindow size={14} />Open with<ChevronRight className={css.contextMenuChevron} size={14} />
+                </button>
+              )}
+              {(contextMenu.kind === 'note' || contextMenu.kind === 'directory') && <button type="button" role="menuitem" onClick={() => { showProperties(contextMenu) }}><Info size={14} />Properties</button>}
+              <button type="button" role="menuitem" onClick={() => { void addContext(contextMenu) }}><MessageSquarePlus size={14} />Add to chat</button>
+            </>
+          ) : (
+            <>
+              <button type="button" role="menuitem" className={css.contextMenuBack} onClick={() => { setOpenersPane(null) }}>
+                <ArrowLeft size={14} />Open with
+              </button>
+              {openersPane.loading && <div className={css.contextMenuNote} role="status"><LoaderCircle className={css.spin} size={13} />Looking for apps…</div>}
+              {openersPane.error !== null && <div className={`${css.contextMenuNote} ${css.inlineError}`} role="alert">{openersPane.error}</div>}
+              {!openersPane.loading && openersPane.error === null && openersPane.items.length === 0 && (
+                <div className={css.contextMenuNote} role="status">No app on the host can open this entry.</div>
+              )}
+              {!openersPane.loading && openersPane.error === null && openersPane.items.map(opener => (
+                <button key={opener.id} type="button" role="menuitem" onClick={() => { void openEntry(contextMenu, opener) }}>{opener.label}</button>
+              ))}
+            </>
+          )}
         </div>
       )}
     </section>

@@ -9,6 +9,7 @@ import { AgentSkillStoreError, AgentSkillRevisionConflictError } from './skill-s
 import { AgentSkillCodecError } from './skill-codec.ts'
 import { AgentSkillValidationError } from './validate-skill.ts'
 import type { ThoughtService } from './thought-service.ts'
+import { listOpeners, openWith } from './openers.ts'
 
 const API_PREFIX = '/dsh-obsidian/api'
 
@@ -132,6 +133,27 @@ async function route(request: IncomingMessage, response: ServerResponse, vault: 
       response.once('finish', resolve)
       stream.pipe(response)
     }).finally(async () => asset.handle.close())
+    return
+  }
+  if (request.method === 'GET' && endpoint === '/property') {
+    sendJson(response, 200, await vault.inspectEntry(requiredQuery(url, 'path')))
+    return
+  }
+  if (request.method === 'GET' && endpoint === '/openers') {
+    const entry = await vault.resolveEntry(requiredQuery(url, 'path'))
+    sendJson(response, 200, { openers: await listOpeners(entry) })
+    return
+  }
+  if (request.method === 'POST' && endpoint === '/open') {
+    assertConfiguredOrigin(request, allowlist)
+    const body = await readJson(request, 8192)
+    if (!isRecord(body) || typeof body.path !== 'string' || (body.opener !== undefined && typeof body.opener !== 'string')) {
+      throw new VaultError('Invalid open body.', 'INVALID_BODY', 400)
+    }
+    // The host resolves the entry and the opener itself: the request only ever
+    // names a vault-relative path and a catalog id.
+    await openWith(await vault.resolveEntry(body.path), body.opener as string | undefined)
+    sendJson(response, 200, { opened: true })
     return
   }
   if (request.method === 'PUT' && endpoint === '/note') {

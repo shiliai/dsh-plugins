@@ -180,6 +180,14 @@ dsh --profile web --patch ./obsidian-vault.patch.yml
 - 从搜索框把当前关键词结果集整体添加到聊天。Tag 和关键词结果集添加后会冻结为当时的文件清单。
 - 通过定时刷新观察外部文件或模型工具造成的变化。
 
+### 文件右键菜单
+
+在 Vault 文件浏览器中右键笔记或目录行，还可以：
+
+- **Copy absolute path**：复制该条目的完整绝对路径（Vault 根目录 + 行的 Vault 相对路径）。如果 GUI 通过普通 HTTP 从局域网地址访问（非安全上下文），复制会自动退回到 `execCommand` 方式。
+- **Open with**：在 DSH 所在主机上用系统默认应用或指定应用打开该条目。Host 会用自带的应应用目录（Obsidian、Visual Studio Code、Cursor、Zed、Sublime Text、Typora、iA Writer、MacDown、BBEdit、TextEdit、Notepad —— 只在已安装且能接受笔记或目录时出现）自行解析条目与应用，浏览器无法指定任意可执行文件。打开属于修改类操作：需要配置的浏览器 Origin，且条目必须解析在 Vault 内（不允许符号链接逃逸）。
+- **Properties**：只读属性对话框，显示 Vault 相对路径与绝对路径（均可一键复制）、大小、创建/修改/访问时间、POSIX 权限，笔记还会显示行数/词数/字符数和解析出的 Tag（目录显示直接子文件与子目录数量）。超过 `maxNoteBytes` 的笔记不会被读取，因此不显示文本统计。
+
 只有 `.md` 文件会显示为笔记。隐藏目录、`.git`、`.obsidian` 和 `node_modules` 不会出现在笔记树中。本地预览支持 PNG、JPEG、GIF、WebP 和 AVIF 图片。
 
 ## 模型工具
@@ -209,6 +217,7 @@ dsh --profile web --patch ./obsidian-vault.patch.yml
 - 写入不会静默覆盖已有笔记；替换时必须提供最近一次读取到的修改时间。
 - 移动操作不会覆盖已有目标文件。
 - 修改和 Vault 选择 HTTP 请求必须来自配置的浏览器 Origin。
+- **Open with** 只会启动插件内置应用目录中的 opener，且只对解析在 Vault 内的条目生效；路径以 argv 形式传入，不经过 shell。
 
 对重要笔记启用写入操作前，请使用 Obsidian Sync、Git、Time Machine 或其他方式进行备份。
 
