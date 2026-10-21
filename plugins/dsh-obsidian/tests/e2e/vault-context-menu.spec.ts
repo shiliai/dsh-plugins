@@ -68,7 +68,19 @@ test('entry context menu copies the absolute path, opens with, and shows propert
   await defaultApp.click()
   await expect(page.getByText(/^Opened Home\.md in Default app(?:lication)?\.$/u)).toBeVisible()
 
+  // ── Escape unwinds one layer, never Obsidian mode ─────────────────────
+  await homeRow.click({ button: 'right' })
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Open with' }).click()
+  await expect(page.getByRole('menu').getByRole('menuitem', { name: /^Default app/u })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('vault-context-menu.png') })
+  await page.keyboard.press('Escape')
+  const rootMenu = page.getByRole('menu')
+  await expect(rootMenu.getByRole('menuitem', { name: 'Copy absolute path' })).toBeVisible()
+  await expect(workbench).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toBeHidden()
+  await expect(workbench).toBeVisible()
+  await expect(homeRow).toBeVisible()
 
   // ── Properties ────────────────────────────────────────────────────────
   await homeRow.click({ button: 'right' })
