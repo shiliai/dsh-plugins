@@ -130,7 +130,16 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
       setContextMenu(null)
       setOpenersPane(null)
     }
-    const closeOnEscape = (event: KeyboardEvent): void => { if (event.key === 'Escape') close() }
+    // Escape unwinds one layer at a time: the openers pane collapses back to
+    // the root menu, then the menu closes. The workbench Escape guard skips
+    // while `[data-dsh-obsidian-menu]` is mounted, so neither step exits
+    // Obsidian mode underneath.
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      if (openersPane !== null) setOpenersPane(null)
+      else close()
+    }
     window.addEventListener('pointerdown', close)
     window.addEventListener('blur', close)
     window.addEventListener('keydown', closeOnEscape)
@@ -139,7 +148,7 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
       window.removeEventListener('blur', close)
       window.removeEventListener('keydown', closeOnEscape)
     }
-  }, [contextMenu])
+  }, [contextMenu, openersPane])
 
   useEffect(() => {
     try { localStorage.setItem(TREE_PREFERENCES_KEY, JSON.stringify(treePreferences)) } catch { /* storage is optional */ }
@@ -458,6 +467,7 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
           className={css.contextMenu}
           role="menu"
           aria-label={`Actions for ${contextMenu.label}`}
+          data-dsh-obsidian-menu=""
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onPointerDown={event => { event.stopPropagation() }}
           onContextMenu={event => { event.preventDefault() }}
