@@ -131,9 +131,11 @@ describe('registerVaultApi', () => {
     expect(openers.status).toBe(200)
     // Which openers exist depends on the host desktop (a headless CI runner has
     // none), so assert the shape rather than a fixed list.
-    const { openers: available } = await openers.json() as { openers: { id: string; label: string }[] }
+    const { openers: available, reveal } = await openers.json() as { openers: { id: string; label: string }[]; reveal: { id: string; label: string } | null }
     expect(Array.isArray(available)).toBe(true)
     for (const opener of available) expect(opener).toMatchObject({ id: expect.any(String), label: expect.any(String) })
+    // Present only on hosts with a desktop; it never *is* an application.
+    if (reveal !== null) expect(reveal).toMatchObject({ id: 'reveal', label: expect.stringMatching(/Reveal in |Show in /u) })
     expect((await request(baseUrl, '/dsh-obsidian/api/openers?path=Nope.md')).status).toBe(404)
   })
 
@@ -172,6 +174,35 @@ describe('registerVaultApi', () => {
     })
     expect(anonymous.status).toBe(403)
     expect(await anonymous.json()).toMatchObject({ code: 'ORIGIN_DENIED' })
+  })
+
+  it('guards the reveal action like any other desktop hand-off', async () => {
+    const { baseUrl } = await fixture()
+    const headers = { origin: 'http://dsh.test', 'content-type': 'application/json' }
+
+    // Every refusal happens before a file manager is launched.
+    const anonymous = await request(baseUrl, '/dsh-obsidian/api/reveal', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: 'Projects/Roadmap.md' }),
+    })
+    expect(anonymous.status).toBe(403)
+    expect(await anonymous.json()).toMatchObject({ code: 'ORIGIN_DENIED' })
+
+    for (const body of ['null', '[]', '{}', '{"path":1}']) {
+      const invalid = await request(baseUrl, '/dsh-obsidian/api/reveal', { method: 'POST', headers, body })
+      expect(invalid.status).toBe(400)
+      expect(await invalid.json()).toMatchObject({ code: 'INVALID_BODY' })
+    }
+
+    const escaped = await request(baseUrl, '/dsh-obsidian/api/reveal', {
+      method: 'POST', headers, body: JSON.stringify({ path: '../Outside.md' }),
+    })
+    expect(escaped.status).toBe(400)
+    expect(await escaped.json()).toMatchObject({ code: 'INVALID_PATH' })
+
+    const missing = await request(baseUrl, '/dsh-obsidian/api/reveal', {
+      method: 'POST', headers, body: JSON.stringify({ path: 'Nope.md' }),
+    })
+    expect(missing.status).toBe(404)
   })
 
   it('browses directories and switches the active vault for subsequent requests', async () => {

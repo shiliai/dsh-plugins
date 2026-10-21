@@ -9,7 +9,7 @@ import { AgentSkillStoreError, AgentSkillRevisionConflictError } from './skill-s
 import { AgentSkillCodecError } from './skill-codec.ts'
 import { AgentSkillValidationError } from './validate-skill.ts'
 import type { ThoughtService } from './thought-service.ts'
-import { listOpeners, openWith } from './openers.ts'
+import { listOpeners, openWith, revealActionLabel, revealEntry } from './openers.ts'
 
 const API_PREFIX = '/dsh-obsidian/api'
 
@@ -141,7 +141,18 @@ async function route(request: IncomingMessage, response: ServerResponse, vault: 
   }
   if (request.method === 'GET' && endpoint === '/openers') {
     const entry = await vault.resolveEntry(requiredQuery(url, 'path'))
-    sendJson(response, 200, { openers: await listOpeners(entry) })
+    const label = revealActionLabel()
+    sendJson(response, 200, { openers: await listOpeners(entry), reveal: label === undefined ? null : { id: 'reveal', label } })
+    return
+  }
+  if (request.method === 'POST' && endpoint === '/reveal') {
+    assertConfiguredOrigin(request, allowlist)
+    const body = await readJson(request, 8192)
+    if (!isRecord(body) || typeof body.path !== 'string') {
+      throw new VaultError('Invalid reveal body.', 'INVALID_BODY', 400)
+    }
+    await revealEntry(await vault.resolveEntry(body.path))
+    sendJson(response, 200, { revealed: true })
     return
   }
   if (request.method === 'POST' && endpoint === '/open') {

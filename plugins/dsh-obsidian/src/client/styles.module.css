@@ -132,6 +132,8 @@
 /* "Open with ▸" pushes its chevron to the trailing edge. */
 .contextMenuChevron { margin-left: auto; opacity: .5; }
 .contextMenuBack { color: var(--dsw-alias-label-secondary, #66706a); }
+/* "Reveal in Finder" sits below the app list, separated from it. */
+.contextMenuReveal { margin-top: 4px; border-top: 1px solid var(--dsw-alias-border-l3, #eef1ef) !important; border-radius: 0 0 5px 5px !important; }
 .contextMenuNote { display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 12px; color: var(--dsw-alias-label-secondary, #66706a); }
 .contextMenuNote.inlineError { margin: 0; }
 

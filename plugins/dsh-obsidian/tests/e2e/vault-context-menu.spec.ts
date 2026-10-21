@@ -68,6 +68,19 @@ test('entry context menu copies the absolute path, opens with, and shows propert
   await defaultApp.click()
   await expect(page.getByText(/^Opened Home\.md in Default app(?:lication)?\.$/u)).toBeVisible()
 
+  // ── Reveal in the host file manager (launch intercepted) ───────────────
+  await page.route('**/dsh-obsidian/api/reveal', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ revealed: true }),
+  }))
+  await homeRow.click({ button: 'right' })
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Open with' }).click()
+  const revealEntry = page.getByRole('menu').getByRole('menuitem', { name: /^(Reveal in|Show in)/u })
+  await expect(revealEntry).toHaveCount(1)
+  await revealEntry.click()
+  await expect(page.getByText('Revealed Home.md on the host desktop.', { exact: true })).toBeVisible()
+
   // ── Escape unwinds one layer, never Obsidian mode ─────────────────────
   await homeRow.click({ button: 'right' })
   await page.getByRole('menu').getByRole('menuitem', { name: 'Open with' }).click()

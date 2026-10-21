@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
+import { dirname } from 'node:path'
 import type { VaultEntryKind, VaultOpener } from './contracts.ts'
 import { VaultError } from './vault-service.ts'
 
@@ -122,6 +123,55 @@ export async function listOpeners(entry: OpenerEntry, internals: OpenerInternals
     : []
   for (const app of await resolveApps(entry.kind, internals)) openers.push({ id: app.id, label: app.label })
   return openers
+}
+
+/**
+ * Label for the host desktop's "reveal in the file manager" action, or
+ * `undefined` when the platform has no reachable desktop to reveal in.
+ */
+export function revealActionLabel(internals: OpenerInternals = {}): string | undefined {
+  const platform = internals.platform ?? process.platform
+  if (!canOpenDefault(platform, internals.env ?? process.env)) return undefined
+  if (platform === 'darwin') return 'Reveal in Finder'
+  if (platform === 'win32') return 'Reveal in File Explorer'
+  return 'Show in file manager'
+}
+
+/**
+ * Show `entry` in the host desktop's file manager, selecting it where the
+ * platform supports that (Finder, Explorer). Linux opens the containing
+ * folder instead.
+ *
+ * @throws {VaultError} `OPEN_UNSUPPORTED` without a desktop, `REVEAL_FAILED`
+ * when the launcher itself failed.
+ */
+export async function revealEntry(entry: OpenerEntry, internals: OpenerInternals = {}): Promise<void> {
+  const platform = internals.platform ?? process.platform
+  if (revealActionLabel(internals) === undefined) {
+    throw new VaultError(`Revealing entries is not supported on ${platform}.`, 'OPEN_UNSUPPORTED', 400)
+  }
+  const { command, args } = revealCommand(platform, entry.absolutePath, entry.kind)
+  const run = internals.run ?? runCommand
+  try {
+    await run(command, args, OPEN_TIMEOUT_MS)
+  } catch (error) {
+    throw new VaultError(`Could not reveal the entry: ${message(error)}`, 'REVEAL_FAILED', 500)
+  }
+}
+
+/**
+ * The exact argv used to reveal a path. Pure so every platform can be tested
+ * from any host.
+ */
+export function revealCommand(platform: OpenerPlatform, absolutePath: string, kind: VaultEntryKind): { command: string; args: string[] } {
+  if (platform === 'darwin') return { command: 'open', args: ['-R', absolutePath] }
+  if (platform === 'win32') return { command: 'explorer.exe', args: [`/select,${absolutePath}`] }
+  if (platform === 'linux') {
+    // No portable "select" flag exists; the containing folder is as close as
+    // xdg-open gets, and a directory is already its own container.
+    return { command: 'xdg-open', args: [kind === 'directory' ? absolutePath : dirname(absolutePath)] }
+  }
+  throw new VaultError(`Revealing entries is not supported on ${platform}.`, 'OPEN_UNSUPPORTED', 400)
 }
 
 /**

@@ -25,7 +25,7 @@ import { EntryProperties } from './EntryProperties.tsx'
 import { vaultApi } from './api.ts'
 import { copyText } from './clipboard.ts'
 import { absoluteVaultPath } from './paths.ts'
-import type { VaultContextKind, VaultOpener, VaultTreeNode } from '../contracts.ts'
+import type { VaultContextKind, VaultOpener, VaultRevealAction, VaultTreeNode } from '../contracts.ts'
 import type { VaultContextAddResult } from './index.tsx'
 import type { VaultStore } from './store.ts'
 import css from './styles.module.css?dsh-inline'
@@ -60,6 +60,8 @@ interface ContextMenuState extends ContextTarget {
 interface OpenersPane {
   loading: boolean
   items: VaultOpener[]
+  /** Host desktop reveal action, or null where the host has no desktop. */
+  reveal: VaultRevealAction | null
   error: string | null
 }
 
@@ -213,12 +215,25 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
 
   /** Expand the menu into the host's "Open with" choices for this entry. */
   const requestOpeners = async (target: ContextTarget): Promise<void> => {
-    setOpenersPane({ loading: true, items: [], error: null })
+    setOpenersPane({ loading: true, items: [], reveal: null, error: null })
     try {
-      const { openers } = await vaultApi.openers(target.value)
-      setOpenersPane({ loading: false, items: openers, error: null })
+      const { openers, reveal } = await vaultApi.openers(target.value)
+      setOpenersPane({ loading: false, items: openers, reveal, error: null })
     } catch (error) {
-      setOpenersPane({ loading: false, items: [], error: error instanceof Error ? error.message : 'Could not list apps.' })
+      setOpenersPane({ loading: false, items: [], reveal: null, error: error instanceof Error ? error.message : 'Could not list apps.' })
+    }
+  }
+
+  /** Show the entry in the host desktop's file manager (Finder, Explorer, …). */
+  const revealInDesktop = async (target: ContextTarget): Promise<void> => {
+    setContextMenu(null)
+    setOpenersPane(null)
+    setFeedback(null)
+    try {
+      await vaultApi.reveal(target.value)
+      setFeedback({ kind: 'success', text: `Revealed ${target.label} on the host desktop.` })
+    } catch (error) {
+      setFeedback({ kind: 'error', text: error instanceof Error ? error.message : 'Could not reveal the entry.' })
     }
   }
 
@@ -497,6 +512,11 @@ export function VaultBrowser({ store, closeBrowser, wide, expandSidebar, addCont
               {!openersPane.loading && openersPane.error === null && openersPane.items.map(opener => (
                 <button key={opener.id} type="button" role="menuitem" onClick={() => { void openEntry(contextMenu, opener) }}>{opener.label}</button>
               ))}
+              {!openersPane.loading && openersPane.error === null && openersPane.reveal !== null && (
+                <button type="button" role="menuitem" className={css.contextMenuReveal} onClick={() => { void revealInDesktop(contextMenu) }}>
+                  <FolderOpen size={14} />{openersPane.reveal.label}
+                </button>
+              )}
             </>
           )}
         </div>
