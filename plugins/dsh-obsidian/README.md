@@ -224,7 +224,11 @@ Right-clicking a note or directory row in the Vault browser also offers:
   only the ones installed and able to accept a note or directory), so the
   browser can never name an arbitrary executable. Opening counts as a mutation:
   it needs the configured browser origin and the entry must resolve inside the
-  Vault (no symlink escapes).
+  Vault (no symlink escapes). The same pane ends with **Reveal in Finder**
+  (**Reveal in File Explorer** on Windows, **Show in file manager** on Linux):
+  it selects the entry in the host's file manager — Finder and Explorer select
+  it, Linux opens the containing folder — and is hidden on a host without a
+  reachable desktop.
 - **Properties** — a read-only dialog with the entry's Vault-relative and
   absolute path (each copyable), size, created/modified/accessed timestamps,
   POSIX permissions, and, for notes, line/word/character counts and parsed tags

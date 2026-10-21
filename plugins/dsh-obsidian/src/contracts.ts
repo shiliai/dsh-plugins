@@ -85,6 +85,17 @@ export interface VaultOpener {
   default?: boolean
 }
 
+/**
+ * The host desktop's "reveal in the file manager" action for one entry. It is
+ * offered alongside the openers because it needs the host's platform label and
+ * its launcher, but it is not an application: `null` when the host has no
+ * desktop to reveal in.
+ */
+export interface VaultRevealAction {
+  id: 'reveal'
+  label: string
+}
+
 export interface DirectoryListing {
   path: string
   parent: string | null

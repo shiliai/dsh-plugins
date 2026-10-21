@@ -1,4 +1,4 @@
-import type { AgentSkillDocument, AgentSkillInput, AgentSkillListResult, ApiErrorPayload, DirectoryListing, NoteDocument, NoteSearchResult, Thought, VaultContextKind, VaultContextReference, VaultEntryProperty, VaultOpener, VaultTag, VaultTreeNode } from '../contracts.ts'
+import type { AgentSkillDocument, AgentSkillInput, AgentSkillListResult, ApiErrorPayload, DirectoryListing, NoteDocument, NoteSearchResult, Thought, VaultContextKind, VaultContextReference, VaultEntryProperty, VaultOpener, VaultRevealAction, VaultTag, VaultTreeNode } from '../contracts.ts'
 
 const API = '/dsh-obsidian/api'
 
@@ -44,7 +44,11 @@ export const vaultApi = {
   }),
   delete: (path: string) => request<void>(`/note?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
   property: (path: string) => request<VaultEntryProperty>(`/property?path=${encodeURIComponent(path)}`),
-  openers: (path: string) => request<{ openers: VaultOpener[] }>(`/openers?path=${encodeURIComponent(path)}`),
+  openers: (path: string) => request<{ openers: VaultOpener[]; reveal: VaultRevealAction | null }>(`/openers?path=${encodeURIComponent(path)}`),
+  reveal: (path: string) => request<{ revealed: boolean }>('/reveal', {
+    method: 'POST',
+    body: JSON.stringify({ path }),
+  }),
   open: (path: string, opener?: string) => request<{ opened: boolean }>('/open', {
     method: 'POST',
     body: JSON.stringify({ path, ...(opener === undefined ? {} : { opener }) }),

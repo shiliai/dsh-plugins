@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { listOpeners, openerCommand, openWith, type OpenerInternals } from '../src/openers.ts'
+import { listOpeners, openerCommand, openWith, revealActionLabel, revealCommand, revealEntry, type OpenerInternals } from '../src/openers.ts'
 
 const NOTE = { absolutePath: '/vault/Notes/Today.md', kind: 'note' as const }
 const DIRECTORY = { absolutePath: '/vault/Projects', kind: 'directory' as const }
@@ -97,6 +97,50 @@ describe('listOpeners', () => {
     })
     expect(exists).toHaveBeenCalledWith('C:\\Program Files\\Microsoft VS Code\\Code.exe')
     expect(openers.map(opener => opener.id)).toEqual(['default', 'vscode'])
+  })
+})
+
+describe('revealActionLabel', () => {
+  it('names the host file manager per platform', () => {
+    expect(revealActionLabel({ platform: 'darwin' })).toBe('Reveal in Finder')
+    expect(revealActionLabel({ platform: 'win32' })).toBe('Reveal in File Explorer')
+    expect(revealActionLabel({ platform: 'linux', env: { DISPLAY: ':0' } })).toBe('Show in file manager')
+  })
+
+  it('is unavailable without a reachable desktop', () => {
+    expect(revealActionLabel({ platform: 'linux', env: {} })).toBeUndefined()
+    expect(revealActionLabel({ platform: 'aix' as NodeJS.Platform })).toBeUndefined()
+  })
+})
+
+describe('revealCommand', () => {
+  it('selects the entry in Finder and File Explorer', () => {
+    expect(revealCommand('darwin', '/vault/Notes/Today.md', 'note')).toEqual({ command: 'open', args: ['-R', '/vault/Notes/Today.md'] })
+    expect(revealCommand('win32', 'C:\\vault\\Today.md', 'note')).toEqual({ command: 'explorer.exe', args: ['/select,C:\\vault\\Today.md'] })
+  })
+
+  it('opens the containing folder on Linux, and a directory itself', () => {
+    expect(revealCommand('linux', '/vault/Notes/Today.md', 'note')).toEqual({ command: 'xdg-open', args: ['/vault/Notes'] })
+    expect(revealCommand('linux', '/vault/Projects', 'directory')).toEqual({ command: 'xdg-open', args: ['/vault/Projects'] })
+  })
+
+  it('refuses platforms without a desktop', () => {
+    expect(() => revealCommand('aix' as NodeJS.Platform, '/vault/Today.md', 'note')).toThrow(/not supported on aix/u)
+  })
+})
+
+describe('revealEntry', () => {
+  it('runs the platform reveal command', async () => {
+    const seams = internals([])
+    await revealEntry(NOTE, seams)
+    expect(seams.run).toHaveBeenCalledWith('open', ['-R', '/vault/Notes/Today.md'], expect.any(Number))
+  })
+
+  it('reports an unsupported host and a launcher failure', async () => {
+    await expect(revealEntry(NOTE, internals([], { platform: 'linux', env: {} })))
+      .rejects.toMatchObject({ code: 'OPEN_UNSUPPORTED' })
+    const failing = internals([], { run: vi.fn(async () => { throw new Error('nope') }) })
+    await expect(revealEntry(NOTE, failing)).rejects.toMatchObject({ code: 'REVEAL_FAILED' })
   })
 })
 
