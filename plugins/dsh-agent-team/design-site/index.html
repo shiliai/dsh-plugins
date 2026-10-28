@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dsh-agent-team v2 设计 —— 类型化任务契约</title>
+<script src="./mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #171a23; --panel2: #1d212d; --line: #2a2f3f;
+    --text: #e6e8ee; --muted: #9aa1b2; --accent: #6ea8fe; --accent2: #7ee0a3;
+    --warn: #f2c97d; --err: #ef8a8a; --chip: #232838;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.75 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; }
+  .layout { display: grid; grid-template-columns: 236px 1fr; min-height: 100vh; }
+  nav { position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+        background: var(--panel); border-right: 1px solid var(--line); padding: 20px 14px; }
+  nav .brand { font-weight: 700; font-size: 15px; padding: 4px 10px 2px; }
+  nav .brand small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
+  nav a { display: block; color: var(--muted); text-decoration: none; padding: 6px 10px;
+          border-radius: 8px; font-size: 13.5px; }
+  nav a:hover { color: var(--text); background: var(--panel2); }
+  main { padding: 36px 48px 120px; max-width: 1080px; }
+  h1 { font-size: 27px; margin: 0 0 4px; }
+  h1 .v2 { color: var(--accent); }
+  .subtitle { color: var(--muted); margin: 0 0 28px; }
+  h2 { font-size: 20px; margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line); }
+  h2 .idx { color: var(--accent); font-family: ui-monospace, monospace; margin-right: 8px; font-size: 16px; }
+  h3 { font-size: 16px; margin: 26px 0 8px; color: var(--accent2); }
+  p, li { color: #cdd2de; }
+  code { background: var(--chip); padding: 1px 6px; border-radius: 5px; font-size: 13px;
+         font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent2); }
+  pre { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+        padding: 18px 20px; overflow-x: auto; font-size: 13px; line-height: 1.65; }
+  pre code { background: none; padding: 0; color: #cdd2de; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 13.5px; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--panel); color: var(--accent); font-weight: 600; white-space: nowrap; }
+  tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
+  .diagram { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+             padding: 18px 10px; margin: 16px 0; overflow-x: auto; }
+  .diagram figcaption, .cap { color: var(--muted); font-size: 12.5px; text-align: center; margin-top: 6px; }
+  .mermaid { display: flex; justify-content: center; min-height: 40px; }
+  .callout { border-left: 3px solid var(--accent); background: var(--panel);
+             padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout.ok { border-left-color: var(--accent2); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 20px; }
+  .card h4 { margin: 0 0 8px; font-size: 14.5px; color: var(--accent); }
+  .card.v1 h4 { color: var(--err); } .card.v2c h4 { color: var(--accent2); }
+  .card ul { margin: 0; padding-left: 18px; } .card li { font-size: 13.5px; }
+  .tag { display: inline-block; background: var(--chip); border: 1px solid var(--line);
+         border-radius: 999px; padding: 0 10px; font-size: 12px; color: var(--muted); margin-right: 6px; }
+  .toc { columns: 2; font-size: 13.5px; color: var(--muted); }
+  footer { margin-top: 80px; color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--line); padding-top: 16px; }
+  @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } nav { display: none; } .grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="layout">
+<nav>
+  <div class="brand">dsh-agent-team<small>v2 设计 · 类型化任务契约</small></div>
+  <a href="#motivation">1 · 动机:v1 的缺口</a>
+  <a href="#principle">2 · 设计公理</a>
+  <a href="#overview">3 · 总览与组件图</a>
+  <a href="#contract">4 · 任务契约</a>
+  <a href="#builtin">5 · 内置契约</a>
+  <a href="#flow">6 · 主流程时序</a>
+  <a href="#brain">7 · 分层路由大脑</a>
+  <a href="#verify">8 · 验收门状态机</a>
+  <a href="#fanout">9 · 批量扇出</a>
+  <a href="#feedback">10 · 统计反馈环</a>
+  <a href="#safety">11 · 安全边界</a>
+  <a href="#config">12 · 配置</a>
+  <a href="#milestones">13 · 里程碑</a>
+</nav>
+<main>
+
+<h1>dsh-agent-team <span class="v2">v2</span> 设计方案</h1>
+<p class="subtitle">从「自由文本委派」到「类型化任务契约」—— 把"值得派发"从模型判断下沉为架构保证 · 2026-09-23 草案 · <code>DESIGN.v2.md</code></p>
+
+<div class="callout">
+<b>一句话:</b>v1 用 jev 判断"这个自由文本任务简不简单";v2 用<b>类型化任务契约(Task Contract)</b>在接口层面锁定规格完整性与结果可验证性,再配上<b>批量扇出、分层路由大脑、验收-重试-升级闭环</b>。目标版本 <code>0.2.0</code>,<code>team_delegate</code> 行为完全不变。
+</div>
+
+<h2 id="motivation"><span class="idx">01</span>动机:v1 的五个结构性缺口</h2>
+<p>v1(0.1.0)已在生产运行,数据与实测暴露出五个结构性问题——它们不是参数问题,是<b>自由文本接口</b>本身的问题:</p>
+
+<div class="diagram">
+<pre class="mermaid">
+flowchart LR
+  subgraph V1["v1:自由文本单径"]
+    direction TB
+    A1["team_delegate(task: string)"] --> B1["jev 每次判定<br/>(1–2s,关键路径)"]
+    B1 --> C1["单 worker 一次性执行"]
+    C1 --> D1["输出原样返回<br/>❶无验收"]
+    D1 --> E1["stats 只写不读<br/>❹不回流"]
+  end
+  style V1 fill:#1a1416,stroke:#5a3038,color:#e8c8c8
+  style A1 fill:#241a1c,stroke:#7a4048
+  style B1 fill:#241a1c,stroke:#7a4048
+  style C1 fill:#241a1c,stroke:#7a4048
+  style D1 fill:#241a1c,stroke:#7a4048
+  style E1 fill:#241a1c,stroke:#7a4048
+</pre>
+</div>
+
+<table>
+<tr><th>#</th><th>缺口</th><th>v1 实证</th><th>v2 解法</th></tr>
+<tr><td>❶</td><td><b>规格完整性无保证</b>:自由文本写得含糊,worker 就含糊执行</td><td>worker prompt 只有一层前缀兜底</td><td>契约 <code>spec()</code> 编译器:leader 填类型化表单</td></tr>
+<tr><td>❷</td><td><b>结果无验收</b>:验收成本吃掉派发收益</td><td><code>outputText()</code> 原样返回</td><td>结构 + 语义双层验收门,机器可判</td></tr>
+<tr><td>❸</td><td><b>每次派发都打 jev</b>,重复任务反复付 1–2s</td><td>jev 在 <code>execute</code> 第一步</td><td>分层大脑:typed 任务路由 0 延迟</td></tr>
+<tr><td>❹</td><td><b>统计只积累不回流</b></td><td><code>appendStats</code> 只写不读</td><td>滚动聚合 → 熔断先验,进路由决策</td></tr>
+<tr><td>❺</td><td><b>无批量扇出;能力事故重复踩</b></td><td>UNSUPPORTED_REASONING_EFFORT 每次 spawn 时才发现</td><td>分片并行 + 能力记忆(冷却期)</td></tr>
+</table>
+
+<h2 id="principle"><span class="idx">02</span>设计公理:什么时候派发是划算的</h2>
+<p>来自路由讨论的结论——派发值得当且仅当以下四条同时成立。v2 的全部组件都是为了把这四条从 <b>jev 的判断依据</b>变成<b>契约接口的结构属性</b>:</p>
+
+<div class="grid2">
+  <div class="card"><h4>📐 规格完整性</h4><ul><li>一句话能写全任务</li><li>接口:类型化 <code>inputSchema</code> + <code>spec()</code> 编译器</li><li>leader 填表,不写散文</li></ul></div>
+  <div class="card"><h4>✅ 结果可机器验收</h4><ul><li>退出码 / schema / 条数对齐等客观校验</li><li>接口:<code>outputSchema</code> + <code>verify()</code></li><li>错了能自动重试,再错升级</li></ul></div>
+  <div class="card"><h4>🧨 影响半径有界</h4><ul><li>read-only / workspace-write / external-effect 三级</li><li>external-effect 恒留 leader</li><li>命令走白名单别名,不接受自由命令</li></ul></div>
+  <div class="card"><h4>📦 批量放大收益</h4><ul><li>分片并行:N 项任务摊薄固定开销</li><li>接口:<code>shardable</code> 声明 + 有界并发</li><li>部分成功不丢弃</li></ul></div>
+</div>
+
+<h2 id="overview"><span class="idx">03</span>总体架构与组件图</h2>
+<p>六层单向依赖;唯一的反向边是统计反馈环(聚合 → 熔断先验)。虚线是进程外依赖:</p>
+
+<div class="diagram">
+<pre class="mermaid">
+graph TB
+  subgraph TOOLS["工具层 · tool.ts / tool-task.ts / tool-stats.ts"]
+    T1["team_task(kind, input)"]
+    T2["team_delegate(task) · v1 兼容"]
+    T3["team_stats(query)"]
+  end
+
+  subgraph BRAIN["路由大脑 · brain.ts"]
+    direction TB
+    L1["① 契约策略(route 字段)"]
+    L2["② 影响半径门"]
+    L3["③ 熔断先验 ← 聚合"]
+    L4["④ 判定缓存(TTL)"]
+    L5["⑤ jev(仅 freeform / auto)"]
+    L6["⑥ fail-open → leader"]
+    L1 --> L2 --> L3 --> L4 --> L5 --> L6
+  end
+
+  subgraph REG["契约注册表 · contracts/"]
+    R0["registry.ts<br/>注册 + 配置覆盖合并"]
+    R1["translate"]
+    R2["extract"]
+    R3["bulk-edit"]
+    R4["run-checks"]
+    R5["summarize / format-convert"]
+    R6["freeform(v1 包装)"]
+    R0 --- R1 & R2 & R3 & R4 & R5 & R6
+  end
+
+  subgraph EXEC["执行引擎 · executor.ts + fanout.ts"]
+    E1["能力记忆选工"]
+    E2["spawn(outputSchema 约束)<br/>+ 预算控制"]
+    E3["验收门:结构→语义→重试→升级"]
+    E4["扇出:分片→有界并行→合并"]
+    E1 --> E2 --> E3
+    E3 --- E4
+  end
+
+  subgraph STATS["统计与反馈 · stats.ts v2"]
+    S1["routing-stats.jsonl<br/>追加写,不进关键路径"]
+    S2["滚动聚合<br/>passRate / 均时 / p95"]
+    S3["worker-health.json<br/>能力记忆 + 冷却"]
+    S1 --> S2
+    S3 -.-> E1
+  end
+
+  JEV["jev API<br/>api.typesafe.ai"]
+  W1["worker 子代理 ×N<br/>subagents.start"]
+  FS["文件系统<br/>(checks 白名单命令)"]
+
+  T1 & T2 --> BRAIN
+  T3 --> S2
+  BRAIN --> REG
+  BRAIN -.->|"熔断先验"| S2
+  BRAIN -.-> L5
+  L5 -.-> JEV
+  BRAIN --> EXEC
+  E2 --> W1
+  E4 --> W1
+  E3 --> S1
+  E1 -.-> S3
+  E4 -.-> FS
+  style TOOLS fill:#141a26,stroke:#31415f,color:#dbe4f5
+  style BRAIN fill:#1a1622,stroke:#4a3a63,color:#e4dcf2
+  style REG fill:#131f18,stroke:#2f5040,color:#d9ece1
+  style EXEC fill:#1f1a13,stroke:#5f5030,color:#f2ead8
+  style STATS fill:#131820,stroke:#315063,color:#d9ebf2
+  style JEV fill:#201416,stroke:#63363c,color:#f2dcdc
+  style W1 fill:#201416,stroke:#63363c,color:#f2dcdc
+  style FS fill:#201416,stroke:#63363c,color:#f2dcdc
+</pre>
+<figcaption>组件图:工具层 → 路由大脑 → 契约注册表 → 执行引擎 → 统计反馈;jev 与 worker 子代理在进程外</figcaption>
+</div>
+
+<div class="callout ok">
+<b>平台事实(v1 已核实)被正面利用:</b>① <code>SubagentStartRequest.outputSchema</code> —— worker 最终输出在子代理运行时即受 schema 约束,结构校验前移到平台层;② <code>agentOptions</code> preflight 抛错 —— route 非法在 <code>start</code> 时即失败,v2 把错误分类写入能力记忆。
+</div>
+
+<h2 id="contract"><span class="idx">04</span>核心抽象:TaskContract</h2>
+
+<pre><code>interface TaskContract&lt;I, O&gt; {
+  kind: string                    // 注册表键,如 'translate'
+  inputSchema: JSONSchema         // team_task 入参校验(第一道结构门)
+  outputSchema: JSONSchema        // worker 输出结构契约(spawn 时交给运行时)
+  blastRadius: 'read-only' | 'workspace-write' | 'external-effect'
+
+  spec(input: I): ContentBlock[]  // 规格编译器:类型化输入 → 完整 worker prompt
+
+  verify?(input: I, output: O): Promise&lt;VerifyReport&gt;  // 语义验收(pass|fail|partial)
+  shardable?: { itemsKey: keyof I; shardSize: number } // 批量声明
+
+  defaultPolicy: { route: 'worker' | 'leader' | 'auto'; worker?: string; effort?: string }
+  budget: { maxToolCalls?: number; timeoutMs?: number; maxTokens?: number }
+  retries: number                 // 验收失败重试预算,默认 1
+}</code></pre>
+
+<p>两个编译期保证,对应缺口 ❶❷:</p>
+<ul>
+<li><b>规格完整性是构造出来的:</b><code>spec()</code> 拿类型化输入渲染 prompt——路径、要求、输出格式全部来自 schema 校验过的字段,没有"忘了写输出格式"这种事;</li>
+<li><b>可验收性是构造出来的:</b>结构层由 <code>outputSchema</code> 双重把关(运行时约束 + 引擎复验),语义层由 <code>verify()</code> 把关;两者都过才算 pass。</li>
+</ul>
+
+<h2 id="builtin"><span class="idx">05</span>内置契约(首批)</h2>
+<table>
+<tr><th>kind</th><th>输入</th><th>输出</th><th>语义验收</th><th>影响半径</th><th>默认路由</th></tr>
+<tr><td><code>translate</code></td><td><code>{texts[], targetLang, style?}</code></td><td><code>{translations[]}</code></td><td>条数一致、非空、语言抽检</td><td>read-only</td><td>worker</td></tr>
+<tr><td><code>extract</code></td><td><code>{files[], fields}</code></td><td><code>{records[]}</code></td><td>schema 覆盖率,每文件至少一条或显式 miss</td><td>read-only</td><td>worker</td></tr>
+<tr><td><code>bulk-edit</code></td><td><code>{edits[], paths[], dryRun}</code></td><td><code>{changes[]}</code></td><td>dryRun 先行;应用后 run-checks 通过才算 pass</td><td>workspace-write</td><td>worker</td></tr>
+<tr><td><code>run-checks</code></td><td><code>{check(白名单别名)}</code></td><td><code>{passed, summary, logTail}</code></td><td><b>退出码即验收</b>(确定性校验器)</td><td>read-only(白名单内)</td><td>worker</td></tr>
+<tr><td><code>summarize</code></td><td><code>{source, maxWords}</code></td><td><code>{summary}</code></td><td>词数上限、要点覆盖抽检</td><td>read-only</td><td>worker</td></tr>
+<tr><td><code>format-convert</code></td><td><code>{files[], toFormat}</code></td><td><code>{outputs[]}</code></td><td>转换器退出码 + 输出可解析</td><td>workspace-write</td><td>worker</td></tr>
+<tr><td><code>freeform</code></td><td>v1 <code>task</code> 文本</td><td>原文本</td><td>无(语义无法机器验收)</td><td>视任务</td><td><b>auto → jev</b></td></tr>
+</table>
+
+<div class="callout warn">
+<b>关键设计:</b><code>run-checks</code> 的命令<b>只接受配置白名单别名</b>(如 <code>checks: {typecheck: 'pnpm typecheck'}</code>),不接受自由命令——把"外部效应"锁进窄接口,这是影响半径可控的前提。<code>bulk-edit</code> 的语义验收直接复用它:改完能过 typecheck/test 才算通过。
+</div>
+
+<h2 id="flow"><span class="idx">06</span>主流程时序:一次 <code>team_task</code> 的生命周期</h2>
+
+<div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant L as Leader(会话模型)
+  participant T as team_task 工具
+  participant B as 路由大脑(6层)
+  participant C as 契约 spec()
+  participant E as 执行引擎
+  participant W as Worker 子代理
+  participant V as 验收门
+  participant S as Stats v2
+
+  L->>T: {kind:'translate', input:{texts×24, targetLang:'en'}}
+  T->>B: route(kind, input)
+  Note over B: ①契约策略:worker形<br/>②半径:read-only ✓<br/>③熔断:通过率正常 ✓<br/>④缓存/⑤jev:typed任务跳过<br/>—— 全程本地,0网络延迟
+  B-->>T: route=worker × local-deepseek
+  T->>C: spec(input)
+  C-->>T: 完整worker prompt(schema锁定)
+  T->>E: 执行(shardable → 3分片)
+  par 分片1
+    E->>W: spawn(outputSchema约束)
+    W-->>V: {translations×8}
+  and 分片2
+    E->>W: spawn
+    W-->>V: {translations×8}
+  and 分片3
+    E->>W: spawn
+    W-->>V: {translations×8}
+  end
+  V->>V: 结构校验 ✓ → 语义验收(条数=24 ✓)
+  alt 验收失败
+    V->>W: 重试(失败明细拼回prompt,预算=1)
+    W-->>V: 修正输出
+    Note over V: 仍失败 → 升级
+  end
+  V-->>E: pass(+验收报告)
+  E->>S: 记录(tier/route/verify/fanout/duration)
+  E-->>L: {decision:'worker', result, verifyReport, fanout:{3/3}}
+  Note over L: leader 拿到的是已验收结果 + 报告<br/>失败时拿到的是诊断,不是垃圾
+</pre>
+<figcaption>主流程:分层路由(本地) → 契约编译 → 分片并行 → 验收门 → 升级路径</figcaption>
+</div>
+
+<h2 id="brain"><span class="idx">07</span>分层路由大脑</h2>
+<p>按序取第一个有结论的层;每层结论记录来源(<code>tier</code> 字段)。typed 任务在前四层出结论,<b>jev 退出关键路径</b>:</p>
+
+<div class="diagram">
+<pre class="mermaid">
+flowchart TD
+  IN["team_task / team_delegate"] --> Q1{"① 契约策略<br/>defaultPolicy.route"}
+  Q1 -->|"worker / leader(绝大多数内置契约)"| OUT1["结论:按策略"]
+  Q1 -->|"'auto'(freeform / 显式配置)"| Q2{"② 影响半径门<br/>blastRadius ≤ max?"}
+  Q2 -->|"external-effect 恒 leader"| OUT2["结论:leader"]
+  Q2 -->|通过| Q3{"③ 熔断先验<br/>kind×worker 近期通过率 ≥ 0.7?<br/>(样本≥10)"}
+  Q3 -->|"低于阈值"| OUT3["结论:leader + 告警"]
+  Q3 -->|通过| Q4{"④ 判定缓存<br/>hash(kind+输入骨架+workers指纹)<br/>TTL 1h"}
+  Q4 -->|命中| OUT4["结论:复用route"]
+  Q4 -->|miss| Q5["⑤ jev:复杂度+执行者<br/>(阈值同v1: conf≥0.6, cx<2)"]
+  Q5 --> ERR{"异常?"}
+  ERR -->|是| OUT6["⑥ fail-open → leader"]
+  ERR -->|否| OUT5["结论:jev"]
+  style IN fill:#141a26,stroke:#31415f
+  style OUT1 fill:#131f18,stroke:#2f5040,color:#d9ece1
+  style OUT2 fill:#241a1c,stroke:#7a4048,color:#f2dcdc
+  style OUT3 fill:#241a1c,stroke:#7a4048,color:#f2dcdc
+  style OUT4 fill:#131f18,stroke:#2f5040,color:#d9ece1
+  style OUT5 fill:#1a1622,stroke:#4a3a63,color:#e4dcf2
+  style OUT6 fill:#241a1c,stroke:#7a4048,color:#f2dcdc
+  style Q5 fill:#1a1622,stroke:#4a3a63,color:#e4dcf2
+</pre>
+<figcaption>路由决策树:①–④ 本地零延迟;⑤ 只服务 freeform 与 auto;⑥ 永不阻塞任务</figcaption>
+</div>
+
+<h3>能力记忆(缺口 ❺ 的后半)</h3>
+<p><code>worker-health.json</code> 持久化 spawn 错误分类(UNSUPPORTED_REASONING_EFFORT / model-not-found / provider down),标记 (worker, effort/契约) 不健康 + 冷却期(默认 30min)。选工顺序:契约覆盖 → 健康且有能力 → 近期失败率低 → costHint 低。v1 的事故从"每次 spawn 时发现"变成"一次发现,冷却期内不再踩"。</p>
+
+<h2 id="verify"><span class="idx">08</span>验收门状态机</h2>
+
+<div class="diagram">
+<pre class="mermaid">
+stateDiagram-v2
+  [*] --> SpecCompiled: spec() 编译完整prompt
+  SpecCompiled --> Spawned: 能力记忆选工 + preflight
+  Spawned --> StructuralCheck: worker 完成(outputSchema 双重把关)
+  StructuralCheck --> SemanticVerify: 结构 pass
+  StructuralCheck --> RetryOrEscalate: 结构 fail
+  SemanticVerify --> Passed: 语义 pass
+  SemanticVerify --> RetryOrEscalate: 语义 fail
+  RetryOrEscalate --> Spawned: "重试预算内:失败明细拼回 prompt"
+  RetryOrEscalate --> Escalated: "预算耗尽"
+  Passed --> [*]: 返回 leader(结果+验收报告)
+  Escalated --> [*]: fallback-leader(诊断+worker原始输出)
+</pre>
+<figcaption>验收-重试-升级:升级负载是诊断报告,leader 拿到后可直接自己干或修正输入重派</figcaption>
+</div>
+
+<ul>
+<li>重试预算默认 1(契约可覆盖);重试 prompt = 原 spec + 验收失败明细 + "输出完整修正结果";</li>
+<li><b>部分成功不丢弃</b>:扇出场景下通过的分片照常返回,失败分片单独列出,leader 可只补做失败部分;</li>
+<li><b>首片失败即中止</b>:扇出快速失败(可配置关闭),避免 N 片全错放大浪费。</li>
+</ul>
+
+<h2 id="fanout"><span class="idx">09</span>批量扇出</h2>
+
+<div class="diagram">
+<pre class="mermaid">
+flowchart LR
+  IN["批量输入<br/>texts × 24"] --> SH["分片器<br/>shardSize=8 → 3片"]
+  SH --> P1["分片1 worker"]
+  SH --> P2["分片2 worker"]
+  SH --> P3["分片3 worker"]
+  P1 & P2 & P3 -.->|"maxConcurrency=3<br/>(有界并行)"| MG["确定性合并<br/>(按原顺序)"]
+  MG --> WV["整体语义验收<br/>条数=24?"]
+  WV -->|"pass"| OK["✅ 24/24 返回"]
+  WV -->|"2片过1片败"| PART["⚠️ 返回通过的16条<br/>+ 失败分片明细<br/>(leader 只补做8条)"]
+  style IN fill:#141a26,stroke:#31415f
+  style SH fill:#1f1a13,stroke:#5f5030,color:#f2ead8
+  style P1 fill:#201416,stroke:#63363c,color:#f2dcdc
+  style P2 fill:#201416,stroke:#63363c,color:#f2dcdc
+  style P3 fill:#201416,stroke:#63363c,color:#f2dcdc
+  style MG fill:#1f1a13,stroke:#5f5030,color:#f2ead8
+  style WV fill:#1f1a13,stroke:#5f5030,color:#f2ead8
+  style OK fill:#131f18,stroke:#2f5040,color:#d9ece1
+  style PART fill:#241f13,stroke:#635a2f,color:#f2ead0
+</pre>
+<figcaption>分片 → 有界并行 → 确定性合并 → 整体验收;部分成功是常态而非异常</figcaption>
+</div>
+
+<p>扇出是 <code>team_task</code> 的<b>输入形态</b>(数组 + 契约声明 <code>shardable</code>),不单独开工具——对 leader 来说"翻一条"和"翻二十四条"是同一个调用。</p>
+
+<h2 id="feedback"><span class="idx">10</span>统计反馈环:从只写到回流</h2>
+
+<pre><code>// routing-stats.jsonl(v2 schema;v1 字段全保留)
+{ "ts": "…", "tool": "team_task", "kind": "translate", "inputDigest": "sha256:…",
+  "tier": "contract",                       // contract|radius|breaker|cache|jev|fail-open
+  "route": "worker", "worker": "local-deepseek",
+  "verify": { "schema": "pass", "semantic": "pass", "retries": 0 },
+  "fanout": { "shards": 3, "passed": 3, "failed": 0 },
+  "durationMs": { "total": 4120, "jev": 0, "workers": 3900 },
+  "usage": { "input_tokens": 0, "output_tokens": 0 }, "error": null }</code></pre>
+
+<div class="diagram">
+<pre class="mermaid">
+graph LR
+  A["每次 team_task / delegate"] -->|"追加写<br/>(失败只warn,不阻塞)"| B[("routing-stats.jsonl")]
+  B -->|"启动时/定期滚动聚合"| C["聚合视图<br/>kind × worker × tier<br/>passRate / 均时 / p95"]
+  C -->|"通过率 < 0.7 且样本 ≥ 10"| D["③ 熔断先验<br/>该组合临时 leader-only"]
+  C -->|"spawn错误分类"| E[("worker-health.json<br/>能力记忆+冷却")]
+  E -->|"选工时跳过冷却组合"| F["执行引擎"]
+  C -->|"查询"| G["team_stats 工具<br/>(leader / 用户观测)"]
+  D --> H["路由大脑"]
+  style B fill:#131820,stroke:#315063,color:#d9ebf2
+  style C fill:#131820,stroke:#315063,color:#d9ebf2
+  style E fill:#131820,stroke:#315063,color:#d9ebf2
+  style D fill:#241a1c,stroke:#7a4048,color:#f2dcdc
+  style G fill:#131f18,stroke:#2f5040,color:#d9ece1
+</pre>
+<figcaption>反馈环:聚合是熔断先验与能力记忆的唯一数据源;缓存只存 route 不存结果,参数变即 miss</figcaption>
+</div>
+
+<h2 id="safety"><span class="idx">11</span>安全边界(继承 v1 并收紧)</h2>
+<table>
+<tr><th>不变量</th><th>机制</th></tr>
+<tr><td>fail-open,永不阻塞任务</td><td>每一层异常都路由回 leader;stats 写失败只 warn</td></tr>
+<tr><td>worker 不可嵌套委派</td><td><code>maxDepth = 0</code>(同 v1),分片 worker 同样受约束</td></tr>
+<tr><td>external-effect 恒留 leader</td><td>半径门硬编码;<code>maxDelegableBlastRadius</code> 只能收紧不能放宽到 external</td></tr>
+<tr><td>自由命令不可执行</td><td><code>run-checks</code> 只认白名单别名;别名未配置 = 契约不可用</td></tr>
+<tr><td>预算硬上限</td><td>每 worker:maxToolCalls / timeoutMs / maxTokens;超限即止并升级</td></tr>
+<tr><td>统计不影响正确性</td><td>聚合只作为路由先验;文件损坏按空处理,原子写</td></tr>
+</table>
+
+<h2 id="config"><span class="idx">12</span>配置(v2 新增;缺省 = v1 行为 + 内置契约默认)</h2>
+<pre><code>agentTeam:
+  workers: [...]                      # v1 结构 + 可选 costHint
+  contracts:                          # 契约级策略覆盖
+    translate: { worker: local-deepseek, retries: 1 }
+    bulk-edit:  { worker: coder-cheap }
+  fanout:     { shardSize: 8, maxConcurrency: 3 }
+  routing:
+    verdictCache:   { ttlMs: 3600000, maxEntries: 500 }
+    circuitBreaker: { minSamples: 10, minPassRate: 0.7, cooldownMs: 1800000 }
+    maxDelegableBlastRadius: workspace-write
+  checks:                             # run-checks 白名单
+    typecheck: 'pnpm typecheck'
+    test:      'pnpm test'
+  budget:     { defaultMaxToolCalls: 30, defaultTimeoutMs: 600000 }
+  healthFile: '~/.dsh/agent-team/worker-health.json'</code></pre>
+
+<h2 id="milestones"><span class="idx">13</span>里程碑与风险</h2>
+<table>
+<tr><th>阶段</th><th>版本</th><th>内容</th><th>价值锚点</th></tr>
+<tr><td>M1</td><td>0.2.0</td><td>契约注册表 + schema 验收 + team_task + 验收门/升级 + stats v2</td><td>补缺口 ❶❷(规格完整 + 可验收)</td></tr>
+<tr><td>M2</td><td>0.3.0</td><td>扇出 + 合并 + 部分成功</td><td>批量经济学,缺口 ❺ 前半</td></tr>
+<tr><td>M3</td><td>0.4.0</td><td>分层大脑(缓存+熔断)+ 能力记忆 + 契约级选工</td><td>缺口 ❸❹❺后半</td></tr>
+<tr><td>M4</td><td>0.5.0</td><td>team_stats + run-checks 白名单 + 文档(+ 可选声明式自定义契约)</td><td>观测与安全收口</td></tr>
+</table>
+
+<table>
+<tr><th>风险</th><th>对策</th></tr>
+<tr><td>契约过窄,leader 退回自己干</td><td>freeform 恒在;观测 per-kind 使用率,按数据扩契约</td></tr>
+<tr><td>worker 输出骗过 schema 但语义错</td><td>语义 verify 抽检 + 熔断;bulk-edit 强制 run-checks 验收</td></tr>
+<tr><td>扇出放大错误(N 片全错)</td><td>分片独立验收 + 首片失败即中止余片(可配置)</td></tr>
+<tr><td>判定缓存固化错误路由</td><td>TTL + 输入骨架哈希(参数变即 miss);只存 route 不存结果</td></tr>
+<tr><td>能力记忆文件损坏</td><td>损坏视为空(降级为无记忆),原子写</td></tr>
+</table>
+
+<div class="callout">
+<b>本版明确不做:</b>每条用户消息自动拦截路由(需 host 深度钩子,风险大收益存疑)· worker 结果再验证 cascade(验收门单层)· client UI(<code>team_stats</code> 足够)· 跨 session 共享工人池。
+</div>
+
+<footer>dsh-agent-team v2 设计草案 · 正文见 <code>plugins/dsh-agent-team/DESIGN.v2.md</code> · v1 事实见 <code>DESIGN.md</code> · 本页为静态图示,mermaid 已本地化(离线可用)</footer>
+
+</main>
+</div>
+<script>mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose',
+  themeVariables: { fontSize: '13.5px', primaryColor: '#1d2230', primaryBorderColor: '#3a4258', primaryTextColor: '#e6e8ee',
+                    lineColor: '#5a6378', secondaryColor: '#231a28', tertiaryColor: '#1a2028' } })</script>
+</body>
+</html>

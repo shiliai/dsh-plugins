@@ -1,6 +1,7 @@
 /** Issue #137 follow-up: workspace-consistency state for the workbench chip. */
 
 import { useSyncExternalStore } from 'react'
+import { currentSessionIdOf, type SessionListView } from './vault-landing.ts'
 
 /** The fields of a host workspace row the chip needs. */
 export interface WorkspaceSummary {
@@ -14,10 +15,7 @@ export interface WorkspaceSummary {
 export interface WorkspaceStatusSource {
   sessions?: {
     subscribe(listener: () => void): () => void
-    getSnapshot(): {
-      current: string | undefined
-      byId: Record<string, { cwd?: string; blank?: boolean; displayTitle?: string; title?: string }>
-    }
+    getSnapshot(): SessionListView
   } | undefined
   workspaces?: {
     subscribe(listener: () => void): () => void
@@ -29,7 +27,7 @@ export interface WorkspaceStatusSource {
 export type WorkspaceState = 'vault' | 'other' | 'unknown'
 
 const NOOP_SUBSCRIBE = (): (() => void) => () => {}
-const EMPTY_SESSIONS = { current: undefined, byId: {} as Record<string, { cwd?: string; blank?: boolean; displayTitle?: string; title?: string }> }
+const EMPTY_SESSIONS: SessionListView = { byId: {} }
 const EMPTY_WORKSPACES: { items?: readonly WorkspaceSummary[] } = {}
 
 /** A host registry face as useSyncExternalStore consumes it. */
@@ -115,7 +113,7 @@ export function useWorkspaceStatus(source: WorkspaceStatusSource | undefined, va
   const sessions = useSyncExternalStore(sessionsFace.subscribe, sessionsFace.getSnapshot, sessionsFace.getSnapshot)
   const workspaces = useSyncExternalStore(workspacesFace.subscribe, workspacesFace.getSnapshot, workspacesFace.getSnapshot)
   const items = workspaces.items
-  const currentSessionId = sessions?.current
+  const currentSessionId = currentSessionIdOf(sessions ?? EMPTY_SESSIONS)
   const session = currentSessionId !== undefined ? sessions?.byId[currentSessionId] : undefined
   const sessionCwd = session?.cwd
   const state = inferWorkspaceState({ vaultRoot, currentSessionId, sessionCwd, workspaces: items })

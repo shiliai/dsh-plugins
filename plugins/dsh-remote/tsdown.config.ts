@@ -75,8 +75,7 @@ export default defineConfig([
     clean: false,
     external: [
       'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client',
-      '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-runtime/client',
-      '@deepseek-ai/dsh-client-ui-slots',
+      '@deepseek-ai/cordis',
     ],
     noExternal: id => id.startsWith('@deepseek-ai/') ? undefined : true,
     plugins: [inlineCssModules()],

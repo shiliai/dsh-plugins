@@ -62,9 +62,31 @@ else
   echo "prod-restart.sh: nothing is listening on $PORT; service will start fresh."
 fi
 
-echo "prod-restart.sh: kickstart -k (launchd stops the old process and waits for"
-echo "its port before starting the replacement - the single-writer guarantee)."
-launchctl kickstart -k "gui/$UID_N/$LABEL"
+# Optional plist reload: kickstart -k re-executes the launchd-cached program
+# and does NOT re-read an edited plist (verified empirically). When the marker
+# file below exists, the service is bootout+bootstrap-ed instead, so plist
+# edits (e.g. a repointed release path) take effect in the same sanctioned
+# restart. The marker is consumed on use.
+WORKFLOW_DIR="${DSH_DEV_WORKFLOW_DIR:-$HOME/.local/state/dsh-dev-workflow}"
+PLIST_RELOAD_MARKER="$WORKFLOW_DIR/prod-plist.reload"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+if [ -f "$PLIST_RELOAD_MARKER" ]; then
+  if [ ! -f "$PLIST" ]; then
+    echo "prod-restart.sh: reload marker present but plist '$PLIST' missing; aborting." >&2
+    exit 1
+  fi
+  echo "prod-restart.sh: reload marker present - bootout + bootstrap '$PLIST'"
+  echo "(the single-writer guarantee is preserved: the port-release wait below"
+  echo " still runs before anything new is started)."
+  rm -f "$PLIST_RELOAD_MARKER"
+  launchctl bootout "gui/$UID_N/$LABEL"
+  BOOTSTRAP_PLIST="$PLIST"
+else
+  echo "prod-restart.sh: kickstart -k (launchd stops the old process and waits for"
+  echo "its port before starting the replacement - the single-writer guarantee)."
+  launchctl kickstart -k "gui/$UID_N/$LABEL"
+  BOOTSTRAP_PLIST=""
+fi
 
 # Wait for the old listener (if any) to release the port first.
 if [ -n "$CUR_PID" ]; then
@@ -76,6 +98,12 @@ if [ -n "$CUR_PID" ]; then
     echo "prod-restart.sh: old pid $CUR_PID still holds $PORT after 30s; aborting." >&2
     exit 1
   fi
+fi
+
+if [ -n "$BOOTSTRAP_PLIST" ]; then
+  # The old job was bootout-ed; re-bootstrap from the (edited) plist only
+  # after the port-release wait above confirmed the single-writer handover.
+  launchctl bootstrap "gui/$UID_N" "$BOOTSTRAP_PLIST"
 fi
 
 UP=0

@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { SubagentRun, SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
+import type { SubagentActivation, SubagentActivationSpec } from '@deepseek-ai/dsh-subagent'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { normalizeConfig, type Config, type Worker } from '../src/config.ts'
@@ -52,21 +52,21 @@ function verdict(overrides: Partial<Pick<JevVerdict, 'complexity' | 'executor' |
   return { complexity: 1, executor: 'local-deepseek', confidence: 0.9, usage: { input_tokens: 10, output_tokens: 5 }, raw: {}, ...overrides }
 }
 
-function makeGateway(run: SubagentRun | Error) {
-  const start = vi.fn((_name: string, _request: SubagentStartRequest) => {
+function makeGateway(run: SubagentActivation | Error) {
+  const startActivation = vi.fn((spec: SubagentActivationSpec) => {
+    void spec
     if (run instanceof Error) return Promise.reject(run)
     return Promise.resolve(run)
   })
-  return { gateway: { start } as unknown as SubagentGateway, start }
+  return { gateway: { startActivation } as unknown as SubagentGateway, start: startActivation }
 }
 
-function completedRun(outputText: string, stopReason = 'completed'): SubagentRun {
+function completedRun(outputText: string, stopReason = 'completed'): SubagentActivation {
   return {
-    id: 'child-1',
-    localAgent: undefined,
+    childId: 'child-1' as never,
     result: Promise.resolve({ output: [{ type: 'text', text: outputText }], stopReason }),
     dispose: () => Promise.resolve(),
-  } as unknown as SubagentRun
+  } as unknown as SubagentActivation
 }
 
 function execute(tool: ReturnType<typeof createTeamDelegateTool>, args: { task: string; label?: string }, exec = fakeExec()): Promise<unknown> {
@@ -123,15 +123,17 @@ describe('team_delegate tool', () => {
     })
     const result = await execute(tool, { task: '把 README 摘要成 5 句话', label: 'summarize' }, fakeExec(signal)) as TeamDelegateResult
     expect(start).toHaveBeenCalledTimes(1)
-    const [provider, request] = start.mock.calls[0] as unknown as [string, SubagentStartRequest]
-    expect(provider).toBe('spawn')
+    const spec = start.mock.calls[0]![0] as SubagentActivationSpec
+    expect(spec.provider).toBe('spawn')
+    expect(spec.delivery).toBe('caller')
+    const request = spec.request as Record<string, unknown>
     expect(request.parent).toBe(PARENT)
-    expect(request.signal).toBe(signal)
+    expect(spec.signal).toBe(signal)
     expect(request.maxDepth).toBe(0)
     expect(request.label).toBe('summarize')
     expect(request.agentOptions).toEqual({ provider: 'ds-haitian', model: 'qwen3.8-27b' })
     expect(request.prompt).toHaveLength(1)
-    const text = (request.prompt[0] as { text: string }).text
+    const text = ((request.prompt as unknown[])[0] as { text: string }).text
     expect(text).toContain('worker')
     expect(text).toContain('不要再调用')
     expect(text.endsWith('把 README 摘要成 5 句话')).toBe(true)
@@ -153,7 +155,7 @@ describe('team_delegate tool', () => {
       judge: async () => verdict({ executor: 'local-deepseek' }),
     })
     await execute(tool, { task: '格式化以下 JSON' })
-    const [, request] = start.mock.calls[0] as unknown as [string, SubagentStartRequest]
+    const request = (start.mock.calls[0]![0] as SubagentActivationSpec).request as Record<string, unknown>
     expect(request.agentOptions).toEqual({ provider: 'ds-haitian', model: 'deepseek-v4-flash', reasoningEffort: 'low' })
   })
 
@@ -178,13 +180,13 @@ describe('team_delegate tool', () => {
 
   it('retries once without maxDepth when the provider rejects the depth capability', async () => {
     const { config } = await tmpStatsConfig({ workers: WORKERS })
-    const start = vi.fn((_name: string, request: SubagentStartRequest) => {
-      if (request.maxDepth !== undefined) return Promise.reject(new Error('provider "spawn" lacks capability depthLimit for maxDepth'))
+    const start = vi.fn((spec: SubagentActivationSpec) => {
+      if ((spec.request as Record<string, unknown>).maxDepth !== undefined) return Promise.reject(new Error('provider "spawn" lacks capability depthLimit for maxDepth'))
       return Promise.resolve(completedRun('ok'))
     })
     const tool = createTeamDelegateTool({
       config,
-      subagents: { start } as unknown as SubagentGateway,
+      subagents: { startActivation: start } as unknown as SubagentGateway,
       judge: async () => verdict({ executor: 'local-deepseek' }),
     })
     const result = await execute(tool, { task: 'x' }) as TeamDelegateResult

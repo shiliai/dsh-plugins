@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -59,6 +59,8 @@ describe('RemoteStateStore', () => {
     const path = await statePath()
     await mkdir(join(path, '..'), { recursive: true })
     await writeFile(path, JSON.stringify({ schema: 1, token: 'a'.repeat(43), sessionVersion: 1, createdAt: 'now', rotatedAt: 'now' }), { mode: 0o644 })
+    // A restrictive process umask (this machine ships 0077) would mask 0o644 to 0o600; pin the mode.
+    await chmod(path, 0o644)
     await expect(RemoteStateStore.open(path)).rejects.toThrow('mode 0600')
   })
 
