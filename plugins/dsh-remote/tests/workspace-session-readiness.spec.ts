@@ -1,5 +1,7 @@
-import type { ClientContext, SessionId, WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, type Context as ClientContext } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-api-session-controller/client'
+import type { SessionId } from '@deepseek-ai/dsh-client-connection/client'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { describe, expect, it, vi } from 'vitest'
 import {
   installWorkspaceSessionReadiness,

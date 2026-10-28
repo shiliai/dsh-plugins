@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/dsh-agent-team",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Team router for DeepSeek Harness: a global team_delegate tool lets the session model (leader) hand self-contained tasks to cheap worker models, with TypeSafe jev judging complexity and executor, and fail-open fallback to the leader",
   "license": "MIT",
   "repository": {
@@ -49,10 +49,10 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
-    "@deepseek-ai/dsh-agent": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-subagent": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-tools": "0.1.0-rc.6"
+    "@deepseek-ai/dsh-agent": "^0.2.1-rc.1",
+    "@deepseek-ai/dsh-llm": "^0.2.1-rc.1",
+    "@deepseek-ai/dsh-subagent": "^0.2.1-rc.1",
+    "@deepseek-ai/dsh-tools": "^0.2.1-rc.1"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
@@ -72,7 +72,7 @@
     }
   },
   "devDependencies": {
-    "@deepseek-ai/dsh": "0.1.0-rc.6",
+    "@deepseek-ai/dsh": "0.2.1-rc.2",
     "@types/node": "^24.0.0",
     "tsdown": "^0.15.6",
     "typescript": "^5.9.2",

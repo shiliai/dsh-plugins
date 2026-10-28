@@ -1,4 +1,4 @@
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { useEffect, useRef, useState } from 'react'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
@@ -9,7 +9,7 @@ import { VaultBrowser } from './VaultBrowser.tsx'
 import { VaultStore } from './store.ts'
 import { vaultApi } from './api.ts'
 import { appendVaultContext } from './context-reference.ts'
-import { currentSessionIsBlank, landInVaultWorkspace, type VaultLandingContext } from './vault-landing.ts'
+import { currentSessionIsBlank, currentSessionIdOf, landInVaultWorkspace, type SessionListView, type VaultLandingContext } from './vault-landing.ts'
 import { samePath, useWorkspaceStatus, vaultWorkspaceTitle, type WorkspaceStatusSource } from './workspace-status.ts'
 import { pluginVersion } from './version.ts'
 import type { VaultContextKind } from '../contracts.ts'
@@ -19,10 +19,57 @@ import css from './styles.module.css?dsh-inline'
 import { SkillBrowser } from './SkillBrowser.tsx'
 import { WorkspaceRegistry } from '@dsh-plugins/dsh-reading-core'
 
+/**
+ * Plugin-declared client faces, intersected onto the host `ClientContext`.
+ *
+ * dsh 0.2 renamed the surfaces this plugin reaches (`ctx.layout` lost
+ * `openDetails`/`closeDetails` to `openRightbar`/`closeRightbar`; the session
+ * list no longer carries `current` — the main view's selection is the row the
+ * conversation retains under `mainView`). The faces here are the plugin's own
+ * structural contract for exactly those reads; intersecting — instead of
+ * augmenting — `Context` keeps them conflict-free with whatever faces the
+ * host's own d.ts graph merges into the same interface. The `slots` face is
+ * deliberately loose: registration keys are host-versioned
+ * (`conversation`→`main.conversation`, `details`→`rightbar` across 0.1→0.2),
+ * and the loose signature typechecks against either generation's
+ * `SlotMap`-keyed overload.
+ */
+interface ClientFaces {
+  slots: {
+    inject(name: string, register: () => unknown): void
+    register(options: Record<string, unknown>, component: unknown): () => void
+  }
+  layout: {
+    /** 0.2 `ILayout`: show the right panel; `track` reserves the grid column. */
+    openRightbar(track: boolean, fullscreen: boolean): void
+    /** 0.2 `ILayout`: hide the right panel (no track, no handle). */
+    closeRightbar(): void
+  }
+  sessions: {
+    list: {
+      subscribe(listener: () => void): () => void
+      getSnapshot(): SessionListView
+    }
+    scope(id: string): import('@deepseek-ai/cordis').Context | undefined
+  }
+  workspaces: {
+    /** Legacy (0.1) connect face; 0.2 hosts carry it only on `uiWorkspace`. */
+    connectWorkspace?(workspaceId: string): Promise<string>
+    create(input: { path: string }): Promise<{ workspaceId: string }>
+    rename(workspaceId: string, title: string): Promise<unknown>
+    list?: {
+      subscribe(listener: () => void): () => void
+      getSnapshot(): { items?: readonly import('./workspace-status.ts').WorkspaceSummary[] }
+    }
+  }
+  /** Untyped, declaration-free service read (`uiWorkspace`); undefined when absent. */
+  get(name: string): unknown
+}
+
 // `uiWorkspace` is intentionally NOT declared here: `inject` entries are hard
-// activation dependencies, so hosts without the service (dsh-client-runtime
-// 0.1.0-rc.6) would park the whole plugin forever. Resolve it per call with
-// `ctx.get('uiWorkspace')`, which returns undefined where it is absent.
+// activation dependencies, so hosts without the service would park the whole
+// plugin forever. Resolve it per call with `ctx.get('uiWorkspace')`, which
+// returns undefined where it is absent.
 export const inject = ['slots', 'layout', 'sessions', 'conversation', 'workspaces']
 
 function ObsidianSkillsSettings({ store }: { store: VaultStore }) {
@@ -37,7 +84,14 @@ function ObsidianSkillsSettings({ store }: { store: VaultStore }) {
   </div>
 }
 
-export type PanelTarget = 'conversation' | 'conversation.session' | 'details'
+/**
+ * Where the note panel is seated, by host slot name (0.2 names):
+ * the whole center column when no conversation is selected
+ * (`main.conversation`), the session body of a blank conversation
+ * (`conversation.session`, composer stays), or the right column
+ * (`rightbar`) beside an active conversation.
+ */
+export type PanelTarget = 'main.conversation' | 'conversation.session' | 'rightbar'
 
 /** Outcome of adding Vault context to the composer (issue #135). */
 export interface VaultContextAddResult {
@@ -47,9 +101,10 @@ export interface VaultContextAddResult {
   sessionId: string
 }
 
-export function panelTargetFor(sessions: { current: string | undefined; byId: Record<string, { blank: boolean }> }): PanelTarget {
-  if (sessions.current === undefined) return 'conversation'
-  return sessions.byId[sessions.current]?.blank === false ? 'details' : 'conversation.session'
+export function panelTargetFor(sessions: SessionListView): PanelTarget {
+  const current = currentSessionIdOf(sessions)
+  if (current === undefined) return 'main.conversation'
+  return sessions.byId[current]?.blank === false ? 'rightbar' : 'conversation.session'
 }
 
 /** Non-modal exit confirmation shown by the footer for 8s (docs design §5.3). */
@@ -130,7 +185,7 @@ function FooterButton({ wide, store, addContextToChat, status, openVaultConversa
   )
 }
 
-export function apply(ctx: ClientContext): void {
+export function apply(ctx: ClientContext & ClientFaces): void {
   const workspaces = new WorkspaceRegistry(ctx.workspaces)
   let panelDispose: (() => void) | undefined
   let panelTarget: PanelTarget | undefined
@@ -183,7 +238,7 @@ export function apply(ctx: ClientContext): void {
 
   const addContextToChat = async (kind: VaultContextKind, value: string): Promise<VaultContextAddResult> => {
     const sessions = ctx.sessions.list.getSnapshot()
-    const sessionId = sessions.current
+    const sessionId = currentSessionIdOf(sessions)
     if (sessionId === undefined) throw new Error('Open a chat before adding Vault context.')
     const reference = await vaultApi.context(kind, value)
     const workspaceId = await workspaces.register(reference.vaultRoot)
@@ -210,20 +265,20 @@ export function apply(ctx: ClientContext): void {
     const previousTarget = panelTarget
     panelDispose?.()
     panelDispose = undefined
-    if (previousTarget === 'details') ctx.layout.closeDetails()
+    if (previousTarget === 'rightbar') ctx.layout.closeRightbar()
     panelTarget = target
     panelDispose = ctx.slots.register({
       name: target,
       priority: -10,
       inject: () => ({ store }),
     }, NotePanel)
-    if (target === 'details') ctx.layout.openDetails()
+    if (target === 'rightbar') ctx.layout.openRightbar(true, false)
   }
 
   const closePanel = (): void => {
     panelDispose?.()
     panelDispose = undefined
-    if (panelTarget === 'details') ctx.layout.closeDetails()
+    if (panelTarget === 'rightbar') ctx.layout.closeRightbar()
     panelTarget = undefined
   }
 

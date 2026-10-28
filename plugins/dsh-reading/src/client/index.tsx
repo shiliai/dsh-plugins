@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
@@ -16,7 +17,19 @@ import { WorkspaceRegistry } from '@dsh-plugins/dsh-reading-core'
 import { mountConfigPortabilityTab, registerPortabilityProvider } from '@dsh-plugins/dsh-config-portability/client'
 import css from './styles.module.css?dsh-inline'
 
-export const inject = ['slots', 'layout', 'sessions', 'conversation', 'workspaces']
+export const inject = ['slots', 'layout', 'sessions', 'conversation', 'workspaces', 'uiWorkspace']
+
+/**
+ * 0.2 session selection: the Controller list no longer carries `current`;
+ * the shell's main view is the session retained with the `mainView` source.
+ */
+function currentSessionId(ctx: ClientContext): string | undefined {
+  const snapshot = ctx.sessions.list.getSnapshot()
+  for (const id of snapshot.ids) {
+    if ((snapshot.byId[id] as { retainedBy?: { mainView?: number } } | undefined)?.retainedBy?.mainView) return id
+  }
+  return undefined
+}
 
 function ReadingSettingsPanel() {
   const [settings, setSettings] = useState<ReadingSettings | null>(null)
@@ -142,8 +155,8 @@ export function apply(ctx: ClientContext): void {
     // Keep the conversation cwd at the Reading root so projectPath remains
     // meaningful for both books and articles.
     const workspace = await ctx.workspaces.create({ path: settings.rootDir })
-    const sessionId = await ctx.workspaces.connectWorkspace(workspace.workspaceId)
-    ctx.sessions.open(sessionId)
+    const sessionId = await ctx.uiWorkspace.connectWorkspace(workspace.workspaceId)
+    ctx.uiWorkspace.openSession(sessionId)
   }
 
   // The settings plugin contributes this slot at runtime; older client UI
@@ -151,7 +164,7 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.register({ name: 'settings.plugins.tab', id: 'dsh-reading', order: 50, label: 'Reading', inject: () => ({}) } as never, ReadingSettingsPanel)
 
   const currentInput = () => {
-    const sessionId = ctx.sessions.list.getSnapshot().current
+    const sessionId = currentSessionId(ctx)
     if (sessionId === undefined) throw new Error('请先打开一个会话。')
     const actx = ctx.sessions.scope(sessionId)
     if (actx === undefined) throw new Error('当前会话不可用。')
@@ -189,7 +202,7 @@ export function apply(ctx: ClientContext): void {
    * preceding discussion.
    */
   const generateBookSummary = async (book: { title: string }): Promise<string> => {
-    const sessionId = ctx.sessions.list.getSnapshot().current
+    const sessionId = currentSessionId(ctx)
     if (sessionId === undefined) throw new Error('请先打开一个会话再生成概要。')
     const actx = ctx.sessions.scope(sessionId)
     if (actx === undefined) throw new Error('当前会话不可用。')

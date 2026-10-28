@@ -232,7 +232,7 @@ function chatKey(chatType: string, chatId: string): string {
 }
 
 /** Join the visible/reasoning text of a message's content blocks. */
-function extractPlainText(blocks: Array<{ type: string; text?: string }>): string {
+function extractPlainText(blocks: readonly { type: string; text?: string }[]): string {
   return blocks
     .filter((block) => block.type === 'text' || block.type === 'reasoning')
     .map((block) => block.text ?? '')

@@ -85,7 +85,7 @@ export default defineConfig([
     alias: { '@dsh-plugins/dsh-reading-core': READING_CORE_SOURCE },
     external: [
       'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client',
-      '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-runtime/client',
+      '@deepseek-ai/cordis',
       '@deepseek-ai/dsh-client-ui-slots',
     ],
     noExternal: id => id.startsWith('@deepseek-ai/') ? undefined : true,

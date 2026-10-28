@@ -18,7 +18,7 @@ export class RemoteService {
     const resolved = resolveRuntimeConfig(webServer, config)
     const state = await RemoteStateStore.open(resolved.stateFile, { initialToken: resolved.initialToken })
     const gateway = new RemoteGateway({
-      targetPort: webServer.port,
+      targetPort: boundWebServerPort(webServer),
       remoteOrigin: resolved.remoteOrigin,
       state,
       host: resolved.gatewayHost,
@@ -85,9 +85,16 @@ export class RemoteService {
 export function managementOrigins(config: RemoteConfig, webServer: WebServer): readonly string[] {
   const resolved = resolveRuntimeConfig(webServer, config)
   const local = config.managementOrigin === undefined
-    ? `http://${webServer.host}:${webServer.port}`
+    ? `http://${webServer.host}:${boundWebServerPort(webServer)}`
     : requiredHttpOrigin(config.managementOrigin, 'managementOrigin')
   return [local, resolved.remoteOrigin]
+}
+
+/** The listener is bound before plugin application; 0.2 types widen `port` until then. */
+function boundWebServerPort(webServer: Pick<WebServer, 'port'>): number {
+  const port = webServer.port
+  if (port === undefined) throw new Error('dsh-remote: webServer listener is not bound yet.')
+  return port
 }
 
 export interface ResolvedRemoteConfig {

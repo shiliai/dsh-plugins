@@ -21,3 +21,9 @@ onlyBuiltDependencies:
 
 patchedDependencies:
   foliate-js@1.0.1: patches/foliate-js-1.0.1.patch
+
+# Single cordis closure for the 0.2 migration: dsh 0.2.x peers ~4.0.5 while
+# legacy 0.1-era peers resolved 4.0.1, splitting Context augmentations across
+# two physical copies (TS2339 on ctx.effect/webServer in plugin builds).
+overrides:
+  '@deepseek-ai/cordis': 4.0.5

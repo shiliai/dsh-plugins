@@ -7,7 +7,7 @@
 
 import type { AgentOptions } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import type { SubagentRun, SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
+import type { SubagentActivation, SubagentActivationSpec, SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
 import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { ResolvedConfig, Worker } from './config.ts'
 import { judge as judgeTask, type JevVerdict } from './jev-client.ts'
@@ -16,7 +16,7 @@ import { appendStats } from './stats.ts'
 
 /** Structural subset of ctx.subagents the tool needs — injectable for tests. */
 export interface SubagentGateway {
-  start(name: string, request: SubagentStartRequest): Promise<SubagentRun>
+  startActivation(spec: SubagentActivationSpec): Promise<SubagentActivation>
 }
 
 export interface TeamDelegateDeps {
@@ -48,7 +48,7 @@ const WORKER_PROMPT_PREFIX = [
 ].join('\n')
 
 /** Render text blocks from a canonical JSON block array without trusting arbitrary values. */
-function outputText(blocks: ContentBlock[]): string {
+function outputText(blocks: readonly ContentBlock[]): string {
   return blocks
     .filter(block => block.type === 'text')
     .map(block => (block as { text?: unknown }).text)
@@ -68,7 +68,7 @@ function stopReasonError(stopReason: string): string | undefined {
   }
 }
 
-function withDiagnosticAndPartialText(error: string, result: { diagnostic?: string; output: ContentBlock[] }): string {
+function withDiagnosticAndPartialText(error: string, result: { diagnostic?: string; output: readonly ContentBlock[] }): string {
   const diagnostic = result.diagnostic === undefined ? '' : `\nDiagnostic: ${result.diagnostic}`
   const text = outputText(result.output)
   return `${error}${diagnostic}${text === '' ? '' : `\nPartial output before the run ended:\n${text}`}`
@@ -204,17 +204,26 @@ export function createTeamDelegateTool(deps: TeamDelegateDeps): ToolDefinition {
         agentOptions,
         maxDepth: config.maxDepth,
       }
-      let run: SubagentRun
+      let run: SubagentActivation
+      const startSpec = (childRequest: SubagentStartRequest): SubagentActivationSpec => ({
+        provider: config.subagentProvider,
+        label: childRequest.label ?? worker.name,
+        request: childRequest,
+        signal: exec.signal,
+        // The tool consumes the result inline; 'parent' would also notify the
+        // parent conversation with the child transcript.
+        delivery: 'caller',
+      })
       try {
         exec.signal.throwIfAborted()
-        run = await deps.subagents.start(config.subagentProvider, request)
+        run = await deps.subagents.startActivation(startSpec(request))
       } catch (error) {
         if (isDepthCapabilityError(error) && request.maxDepth !== undefined) {
           // spawn without depthLimit capability: retry once without maxDepth
           // (the capability check runs before any child exists).
           const { maxDepth: _omitted, ...withoutDepth } = request
           try {
-            run = await deps.subagents.start(config.subagentProvider, withoutDepth)
+            run = await deps.subagents.startActivation(startSpec(withoutDepth as SubagentStartRequest))
           } catch (retryError) {
             await record({ decision: 'fallback-leader', worker: worker.name, jevDurationMs, verdict: { complexity: verdict.complexity, executor: verdict.executor, confidence: verdict.confidence }, error: String(retryError) })
             return { decision: 'fallback-leader', reason: decision.reason, error: String(retryError), jev: jevSummary(verdict) }

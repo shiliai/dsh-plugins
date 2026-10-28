@@ -3,25 +3,28 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { inject, name } from '../src/index.ts'
 
-describe('DSH rc.6 package contract', () => {
-  it('supports the audited rc.6 through rc.11 range', async () => {
+describe('DSH 0.2 package contract', () => {
+  it('declares the 0.2 host peer contract', async () => {
     const source = await readFile(resolve(import.meta.dirname, '../package.json'), 'utf8')
     const patch = await readFile(resolve(import.meta.dirname, '../cordis.patch.yml'), 'utf8')
     const manifest = JSON.parse(source) as { peerDependencies: Record<string, string>; peerDependenciesMeta: Record<string, { optional?: boolean }>; devDependencies: Record<string, string>; files: string[]; bin: Record<string, string>; scripts: Record<string, string> }
     for (const dependency of [
-      '@deepseek-ai/dsh-client-runtime',
+      '@deepseek-ai/dsh-api-session-controller',
+      '@deepseek-ai/dsh-api-workspace-controller',
+      '@deepseek-ai/dsh-client-connection',
       '@deepseek-ai/dsh-client-ui-layout',
+      '@deepseek-ai/dsh-client-ui-renderer',
       '@deepseek-ai/dsh-client-ui-sidebar',
       '@deepseek-ai/dsh-client-ui-slots',
       '@deepseek-ai/dsh-client-ui-directory-picker-browse',
       '@deepseek-ai/dsh-host-webserver',
       '@deepseek-ai/dsh-host-directory-picker-browse',
     ]) {
-      expect(manifest.peerDependencies[dependency]).toBe('>=0.1.0-rc.6 <0.2.0')
+      expect(manifest.peerDependencies[dependency]).toBe('^0.2.1-rc.1')
     }
     expect(manifest.peerDependenciesMeta['@deepseek-ai/dsh-host-directory-picker-browse']?.optional).toBe(true)
     expect(manifest.peerDependenciesMeta['@deepseek-ai/dsh-client-ui-directory-picker-browse']?.optional).toBe(true)
-    expect(manifest.devDependencies['@deepseek-ai/dsh']).toBe('0.1.0-rc.6')
+    expect(manifest.devDependencies['@deepseek-ai/dsh']).toBe('0.2.1-rc.2')
     expect(manifest.bin['dsh-remote-edge']).toBe('./scripts/dsh-remote-edge.mjs')
     expect(manifest.bin['dsh-remote-install-node']).toBe('./scripts/install-dsh-remote-instance.sh')
     expect(manifest.files).toEqual(expect.arrayContaining(['scripts/', 'templates/', 'docs/operations/vps-edge.md']))

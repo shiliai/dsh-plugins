@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/dsh-obsidian",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "Obsidian vault browser, tags, chat context, note tools, and vault-scoped skills for DeepSeek Harness",
   "license": "MIT",
   "repository": {
@@ -48,39 +48,25 @@
       "patch": "./cordis.patch.yml"
     },
     "client": {
-      "platform": "web",
-      "inject": [
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-ui-conversation",
-        "@deepseek-ai/dsh-client-ui-layout",
-        "@deepseek-ai/dsh-client-ui-sidebar",
-        "@deepseek-ai/dsh-client-ui-slots",
-        "@deepseek-ai/dsh-client-ui-input-trigger",
-        "@deepseek-ai/dsh-client-ui-skill",
-        "@deepseek-ai/dsh-client-ui-settings-plugins"
-      ]
+      "platform": "web"
     }
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
-    "@deepseek-ai/dsh-client-runtime": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-conversation": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-layout": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-sidebar": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-slots": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-input-trigger": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-skill": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-settings-plugins": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-host-webserver": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-skill": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-conversation": "^0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-layout": "^0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-sidebar": "^0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-input-trigger": "^0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-skill": "^0.2.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-settings-plugins": "^0.2.1-rc.1",
+    "@deepseek-ai/dsh-host-webserver": "^0.2.1-rc.1",
+    "@deepseek-ai/dsh-skill": "^0.2.1-rc.1",
+    "@deepseek-ai/dsh-tools": "^0.2.1-rc.1",
     "react": ">=18.2.0"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
-      "optional": true
-    },
-    "@deepseek-ai/dsh-client-runtime": {
       "optional": true
     },
     "@deepseek-ai/dsh-client-ui-conversation": {
@@ -121,7 +107,7 @@
     "yaml": "^2.8.1"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh": "0.1.0-rc.6",
+    "@deepseek-ai/dsh": "0.2.1-rc.2",
     "@playwright/test": "^1.55.0",
     "@types/node": "^24.0.0",
     "@types/react": "~18.3.1",
