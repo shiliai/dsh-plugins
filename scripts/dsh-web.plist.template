@@ -60,6 +60,12 @@
          through this PATH; without it host-spawned subprocesses break. -->
     <key>PATH</key>
     <string>__HOME__/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <!-- UTF-8 locale: without it host-spawned subprocesses inherit POSIX/C and
+         mangle non-ASCII (CJK) output in tool results and logs. -->
+    <key>LANG</key>
+    <string>en_US.UTF-8</string>
+    <key>LC_CTYPE</key>
+    <string>en_US.UTF-8</string>
     <!-- Environment the previous service injected goes here VERBATIM. Check how
          the old service really provided it: `launchctl print gui/$UID/<old-label>`
          may show a wrapper command (e.g. `/bin/zsh -lc 'source .../.env; exec
