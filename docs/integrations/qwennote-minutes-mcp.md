@@ -12,16 +12,18 @@ kind: "integration-guide"
 在目标 profile 的用户 patch 层(`$DSH_HOME/profiles/<profile>/cordis.patch.yml`)追加条目;dsh HMR 会监听该文件并在变更时热加载 MCP 连接:
 
 ```yaml
-- id: mcp-qwennote-minutes
-  name: '@deepseek-ai/dsh-mcp-client'
-  config:
-    serverName: qwennote_minutes
-    transport: streamable-http
-    url: https://minutes.qwennote.cn/mcp
-    headers:
-      Authorization: Bearer <access_token>
+- insert:
+    - id: mcp-qwennote-minutes
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: qwennote_minutes
+        transport: streamable-http
+        url: https://minutes.qwennote.cn/mcp
+        headers:
+          Authorization: Bearer <access_token>
 ```
 
+- 新增行必须放在顶层 `- insert:` 列表里。profile patch 的顶层 `- id: <name>` 条目是按 id **覆盖已有行**,直接写顶层会得到 `patch: entry "mcp-qwennote-minutes" not found` 并被静默忽略(不报错、不加载)。改完用 `dsh --profile <profile> --dump-config` 校验条目确实出现在组合结果里。
 - 工具以 `mcp__qwennote_minutes__<tool>` 暴露,共 27 个。
 - `dsh-mcp-client` 只接受**静态 header**,不内置 OAuth 流程;token 必须由外部流程获取并写入配置。
 - 不要把 token 提交进仓库;它只存在于 `$DSH_HOME` 下的凭据文件与 profile patch。
@@ -37,15 +39,15 @@ kind: "integration-guide"
 | 自动续期 | `node $DSH_HOME/qwennote-minutes-refresh.mjs` | 到期前 10 分钟用 refresh_token 换新,并**同步改写** patch 中的 `Authorization` 行(触发 HMR 重连) |
 | 定时续期 | launchd `cn.qwennote.minutes-mcp-refresh`,每 15 分钟 | 日志 `$DSH_HOME/qwennote-minutes-refresh.log` |
 
-- 已注册 OAuth client:`qnmcp-59bac78074a54306ba98ee1dfb08db5e`(固定回调端口 8799,授权时该端口需空闲)。
+- 已注册 OAuth client:`qnmcp-59bac78074a54306ba98ee1dfb08db5e`(固定回调端口 8799,授权时该端口需空闲)。重授权脚本必须复用该 client 注册时的 redirect URI;换端口需重新注册 client。
 - access_token 1 小时过期;脚本化调用遇 401 时先执行 `node $DSH_HOME/qwennote-minutes-refresh.mjs --force` 再重试。
 - 若 refresh_token 也失效(长期未开机等),重跑重授权脚本即可,无需重新注册 client。
 
 ## 3. 定时抓取转写
 
-`node $DSH_HOME/qwennote-minutes-fetch-latest.mjs` 抓取「最新一篇转写已生成且未保存」的笔记,存为 `minutes/YYYY-MM-DD_<标题>.md`(`[mm:ss] 发言人: 内容` 逐段),状态存 `minutes/.fetch-state.json` 去重。launchd `cn.qwennote.minutes-daily-fetch` 每天 09:00 运行,日志 `$DSH_HOME/qwennote-minutes-fetch.log`;转写未生成的笔记会跳过并在下次重试。
+`node $DSH_HOME/qwennote-minutes-fetch-latest.mjs` 抓取「最新一篇转写已生成且未保存」的笔记,存为工作目录下 `minutes/YYYY-MM-DD_<标题>.md`(`[mm:ss] 发言人: 内容` 逐段),状态存 `minutes/.fetch-state.json` 去重。launchd `cn.qwennote.minutes-fetch-latest` 的 `StartInterval` 可按需设置(示例每天 09:00;本机实际采用 1800 秒即每 30 分钟),日志 `$DSH_HOME/qwennote-minutes-fetch.log`;转写未生成的笔记会跳过并在下次重试。抓取脚本应先执行续期检查(`qwennote-minutes-refresh.mjs`),token 失效时先续期再调用工具,避免 401。
 
-两个 launchd 任务都是**用户级**代理(`~/Library/LaunchAgents/`),手动触发:`launchctl kickstart gui/$(id -u)/cn.qwennote.minutes-daily-fetch`。
+两个 launchd 任务都是**用户级**代理(`~/Library/LaunchAgents/`),手动触发:`launchctl kickstart gui/$(id -u)/cn.qwennote.minutes-fetch-latest`。
 
 ## 4. 工具要点
 
